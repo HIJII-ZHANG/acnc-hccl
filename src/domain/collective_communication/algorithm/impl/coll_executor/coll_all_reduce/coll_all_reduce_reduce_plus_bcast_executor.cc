@@ -102,6 +102,9 @@ HcclResult CollAllReduceReducePlusBcastExecutor::KernelRun(const OpParam &param,
         execMem.inputMem, execMem.outputMem, const_cast<Stream&>(param.stream));
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("MemcpyAsync failed"), ret);
 
+    bool isSelectAHC = (UseInterServerAHCAlgo(algType_) || UseInterServerAHCBrokeAlgo(algType_));
+    CommPlane commPlaneLevel1 = isSelectAHC ? COMM_LEVEL1_AHC : COMM_LEVEL1;
+
     // 执行server间allreduce
     if (topoAttr_.devicePhyId == 0) {
         std::unique_ptr<ExecutorBase> allreduceExecutor = nullptr;
@@ -124,13 +127,13 @@ HcclResult CollAllReduceReducePlusBcastExecutor::KernelRun(const OpParam &param,
         } else if (UseInterServerAHCAlgo(algType_)) {
             // 获取通信域分组信息
             std::vector<std::vector<u32>> subGroups;
-            CHK_RET(topoMatcher_->GetLevelSubGroups(COMM_LEVEL1, subGroups));
+            CHK_RET(topoMatcher_->GetLevelSubGroups(commPlaneLevel1, subGroups));
             allreduceExecutor.reset(new (std::nothrow) AllReduceAHC(dispatcher_, reduceAttr, execMem.count, subGroups));
             HCCL_INFO("allreduce recursive hd: using ahc algo inter-server.");
         } else if (UseInterServerAHCBrokeAlgo(algType_)) {
             // 获取通信域分组信息
             std::vector<std::vector<u32>> subGroups;
-            CHK_RET(topoMatcher_->GetLevelSubGroups(COMM_LEVEL1, subGroups));
+            CHK_RET(topoMatcher_->GetLevelSubGroups(commPlaneLevel1, subGroups));
             allreduceExecutor.reset(new (std::nothrow) AllReduceAHCBroke(dispatcher_, reduceAttr, execMem.count, subGroups));
             HCCL_INFO("allreduce recursive hd: using ahc-broke algo inter-server.");
         } else if (UseInterServerNBAlgo(algType_)) {
@@ -146,8 +149,8 @@ HcclResult CollAllReduceReducePlusBcastExecutor::KernelRun(const OpParam &param,
             param.DataDes.dataType, param.stream, param.reduceType, 0,
             std::vector<Slice>(0), 0, nicRankList));
 
-        CHK_RET(CheckCommSize(COMM_LEVEL1, COMM_INDEX_0 + 1));
-        SubCommInfo innerCommInfo = GetSubCommInfo(COMM_LEVEL1, COMM_INDEX_0);
+        CHK_RET(CheckCommSize(commPlaneLevel1, COMM_INDEX_0 + 1));
+        SubCommInfo innerCommInfo = GetSubCommInfo(commPlaneLevel1, COMM_INDEX_0);
         CHK_RET(RunTemplate(allreduceExecutor, innerCommInfo));
     }
 

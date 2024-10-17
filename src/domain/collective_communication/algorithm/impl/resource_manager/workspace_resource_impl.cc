@@ -349,7 +349,7 @@ HcclResult WorkspaceResourceImpl::CreateOrUpdateRemoteOpBasedResources(u64 memSi
     auto interStreamIter = remoteOpStreamMap_.find(tag);
     if (interStreamIter != remoteOpStreamMap_.end()) {
         // 复用workspace stream 资源
-        for (auto stream : interStreamIter->second) {
+        for (auto &stream : interStreamIter->second) {
             streamPtr.push_back(stream.ptr());
         }
     } else {

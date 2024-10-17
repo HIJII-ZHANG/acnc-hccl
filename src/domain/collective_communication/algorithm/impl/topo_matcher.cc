@@ -195,7 +195,9 @@ HcclResult TopoMatcher::GetIsUsedRdma(const CommParaInfo &commParaInfo, bool &is
         commP2PRankVec.push_back(commParaInfo.peerUserRank);
         commP2PPlaneVec.push_back(commP2PRankVec);
     } else if (commParaInfo.commType == CommType::COMM_TAG_WHOLE_AHC ||
-               commParaInfo.commType == CommType::COMM_TAG_WHOLE_AHC_BROKE) {
+               commParaInfo.commType == CommType::COMM_TAG_WHOLE_AHC_BROKE ||
+               commParaInfo.commType == CommType::COMM_TAG_ASYMMETRIC_HIERARCHICAL_CONCATENATE ||
+               commParaInfo.commType == CommType::COMM_TAG_ASYMMETRIC_HIERARCHICAL_CONCATENATE_BROKE) {
         // COMM 场景，支持 HCCS 和 ROH 混合链路
         isUsedRdma = false;
         return HCCL_SUCCESS;
@@ -227,7 +229,9 @@ HcclResult TopoMatcher::SetIsUsedRdma(const CommParaInfo &commParaInfo,
 
     for (u32 ringIndex = 0; ringIndex < ringSize; ringIndex++) {
         SingleSubCommTransport &subCommTransport = commTransport[ringIndex];
-        subCommTransport.isUsedRdma = isUsedRdma;
+        for (auto &transportRequest : subCommTransport.transportRequests) {
+            transportRequest.isUsedRdma = isUsedRdma;
+        }
     }
     HCCL_INFO("[TopoMatcher][SetIsUsedRdma] commPlane[%d] isUsedRdma[%d]", commParaInfo.commPlane, isUsedRdma);
     return HCCL_SUCCESS;
@@ -392,6 +396,8 @@ u32 TopoMatcher::GetSubRootUserRank(const u32 userRank, const u32 rootUserRank)
     if (serverIdx != INVALID_VALUE_RANKID && rankIdx != INVALID_VALUE_RANKID) {
         tmpUserRank = serverAndsuperPodToRank_[0][serverIdx][rankIdx];
     }
+    HCCL_DEBUG("[GetSubRootUserRank] userRank:[%u] rootUserRank:[%u], tmpUserRank[%u]",
+        userRank, rootUserRank, tmpUserRank);
     return tmpUserRank;
 }
 
@@ -456,10 +462,32 @@ u32 TopoMatcher::GetSubRootWithSuperPod(const u32 userRank, const u32 rootUserRa
     return tmpUserRank;
 }
 
+HcclResult TopoMatcher::GetLocalSuperPodRankSize(const u32 userRank, u32& devNumInlocalPod, u32& rankIdxInPod)
+{
+    u32 superPodIdx = INVALID_VALUE_RANKID;
+    for (u32 i = 0; i < serverAndsuperPodToRank_[1].size(); i++) {
+        for (u32 j = 0; j < serverAndsuperPodToRank_[1][0].size(); j++) {
+            if (serverAndsuperPodToRank_[1][i][j] == userRank) {
+                superPodIdx = i;
+                rankIdxInPod = j;
+                break;
+            }
+        }
+    }
+    if (superPodIdx == INVALID_VALUE_RANKID || rankIdxInPod == INVALID_VALUE_RANKID) {
+        HCCL_ERROR("[GET][GetSubRootForScatter]get rankId in inner failed.");
+        return HCCL_E_PARA;
+    }
+    devNumInlocalPod = serverAndsuperPodToRank_[1][superPodIdx].size();
+    HCCL_DEBUG("[GetLocalSuperPodRankSize] userRank[%u], superPodIdx[%u], rankIdxInPod[%u] devNumInlocalPod[%u]",
+        userRank, superPodIdx, rankIdxInPod, devNumInlocalPod);
+    return HCCL_SUCCESS;
+}
+
 HcclResult TopoMatcher::SetDeterministicConfig(const u8 deterministic)
 {
     if (deterministic > 1) {
-        HCCL_ERROR("[SetDeterministicConfig] deterministic[%d] should be 0 or 1.");
+        HCCL_ERROR("[SetDeterministicConfig] deterministic should be 0 or 1.");
         return HCCL_E_PARA;
     }
     externalEnable_.deterministic = deterministic;

@@ -39,6 +39,20 @@ HcclResult HcclAlg::Init(const void* transportResourceInfoAddr, size_t transport
     const std::unique_ptr<QueueNotifyManager> &queueNotifyManager,
     HcclAlgoAttr &algoAttr, HcclTopoAttr &topoAttr, bool isHeterogComm)
 {
+    CHK_RET(Init(algoAttr, topoAttr, isHeterogComm));
+
+    // 老流程使用，新流程的LLT不编译相关的代码
+    pimpl_.reset((new (std::nothrow) hcclImpl(dispatcher_, notifyPool, netDevCtxMap, queueNotifyManager,
+        workSpaceRes, cclBufferManager_, transportResourceInfoAddr, transportResourceInfoSize, algoAttr_, topoAttr_,
+        algConfigurator_, topoInfoEx_)));
+    CHK_SMART_PTR_NULL(pimpl_);
+    CHK_RET(pimpl_->Init(isHeterogComm));
+
+    return HCCL_SUCCESS;
+}
+
+HcclResult HcclAlg::Init(HcclAlgoAttr &algoAttr, HcclTopoAttr &topoAttr, bool isHeterogComm)
+{
     algoAttr_ = algoAttr;
     topoAttr_ = topoAttr;
     algConfigurator_.reset(new (std::nothrow) AlgConfigurator(algoAttr_, topoAttr_));
@@ -48,13 +62,6 @@ HcclResult HcclAlg::Init(const void* transportResourceInfoAddr, size_t transport
     algConfigurator_->GetTopoType(topoType);
     topoInfoEx_.reset(new (std::nothrow) TopoInfoExtractor(algoAttr_, topoAttr_, topoType));
     CHK_RET(topoInfoEx_->Init());
-
-    // 老流程使用，新流程的LLT不编译相关的代码
-    pimpl_.reset((new (std::nothrow) hcclImpl(dispatcher_, notifyPool, netDevCtxMap, queueNotifyManager,
-        workSpaceRes, cclBufferManager_, transportResourceInfoAddr, transportResourceInfoSize, algoAttr_, topoAttr_,
-        algConfigurator_, topoInfoEx_)));
-    CHK_SMART_PTR_NULL(pimpl_);
-    CHK_RET(pimpl_->Init(isHeterogComm));
 
     std::vector<std::vector<std::vector<u32>>> CommPlaneRanks;
     CHK_RET(topoInfoEx_->GetCommPlaneRanks(CommPlaneRanks));
@@ -203,11 +210,12 @@ HcclResult HcclAlg::InitTopoInfo(HcclTopoInfo& topoInfo, HcclTopoAttr &topoAttr)
     topoInfo.nicList = topoAttr.nicList;
     topoInfo.isSingleMeshAggregation = topoAttr.isSingleMeshAggregation;
     topoInfo.deviceNumPerAggregation = topoAttr.deviceNumPerAggregation;
-    topoInfo.devNumInLevel2 = topoAttr.devNumInLevel2;
+    topoInfo.superPodNum = topoAttr.superPodNum;
     topoInfo.deviceType = topoAttr.deviceType;
     topoInfo.serverNum = topoAttr.serverNum;
     topoInfo.meshAggregationRankSize = topoAttr.meshAggregationRankSize;
     topoInfo.multiModuleDiffDeviceNumMode = topoAttr.multiModuleDiffDeviceNumMode;
+    topoInfo.multiSuperPodDiffServerNumMode = topoAttr.multiSuperPodDiffServerNumMode;
     topoInfo.pairLinkCounter = topoAttr.pairLinkCounter;
     topoInfo.isDiffDeviceModule = topoAttr.isDiffDeviceModule;
     topoInfo.realUserRank = topoAttr.realUserRank;

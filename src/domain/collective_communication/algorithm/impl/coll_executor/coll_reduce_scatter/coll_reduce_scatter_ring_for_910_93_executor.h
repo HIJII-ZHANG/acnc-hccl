@@ -35,7 +35,8 @@ private:
 
     /* *************** 算法编排 *************** */
     u64 CalcLoopMaxCount(const u32 unitSize) override;
-    bool IsHugeData(const u64 curSize) override;
+    bool IsHugeData(const u64 curSize, OpParam *param = nullptr) override;
+    bool IsDataSplitForRdmaSdmaConcurrent(const u64 curSize) override;
     virtual HcclResult RunIntraSeverReduceScatter(const std::string &tag, DeviceMem &inputMem, DeviceMem &outputMem,
         const u64 count, const HcclDataType &dataType, const HcclReduceOp &reductionOp,
         const std::vector<std::vector<Slice>> &multRingsSliceZero, const Stream &stream, s32 profStage,

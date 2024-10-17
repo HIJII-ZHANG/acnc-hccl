@@ -25,6 +25,7 @@ HcclResult CollAlignedReduceScatterDoubleRingFor91093Executor::DoubleRingReduceS
     const u64 baseOffset, const HcomCollOpInfo *opInfo,
     const std::vector<std::vector<Slice>> multRingsUserMemSlice)
 {
+    (void)tag;
     HCCL_INFO(
         "[CollAlignedReduceScatterDoubleRingFor91093Executor][DoubleRingReduceScatter] DoubleRingReduceScatter starts");
     HcclResult ret = HCCL_SUCCESS;

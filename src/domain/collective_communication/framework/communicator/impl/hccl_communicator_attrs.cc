@@ -46,18 +46,22 @@ bool HcclCommunicatorAttrs::IsStandardCard()
            (pairLinkInfo_[static_cast<u32>(LinkTypeInServer::HCCS_SW_TYPE)].size() == 0) &&
            (pairLinkInfo_[static_cast<u32>(LinkTypeInServer::SIO_TYPE)].size() == 0));
 }
+
 bool HcclCommunicatorAttrs::Is310PDuoCard()
 {
     return (Is310P3Common() && (pairLinkInfo_[static_cast<u32>(LinkTypeInServer::HCCS_TYPE)].size() == userRankSize_));
 }
+
 bool HcclCommunicatorAttrs::Is310P3Common()
 {
     return !isHaveCpuRank_ && !Is310PDevice() && deviceType_ == DevType::DEV_TYPE_310P3;
 }
+
 bool HcclCommunicatorAttrs::CompareWithUserRank(const RankInfo &left, const RankInfo &right)
 {
     return left.userRank < right.userRank;
 }
+
 HcclResult HcclCommunicatorAttrs::CheckDeviceType(const DevType deviceType) const
 {
     if ((deviceType >= DevType::DEV_TYPE_COUNT) || (deviceType < DevType::DEV_TYPE_910)) {
@@ -68,6 +72,7 @@ HcclResult HcclCommunicatorAttrs::CheckDeviceType(const DevType deviceType) cons
 
     return HCCL_SUCCESS;
 }
+
 HcclResult HcclCommunicatorAttrs::GetNicInfo(const NICDeployment &nicDeploy, const u32 curRankIndex,
     const std::vector<RankInfo_t> &servRankList, RankInfo &rankInfo) const
 {
@@ -140,6 +145,7 @@ HcclResult HcclCommunicatorAttrs::SetServerNum(const std::vector<RankInfo_t> &ra
     serverNum_ = serverIds.size();
     return HCCL_SUCCESS;
 }
+
 HcclResult HcclCommunicatorAttrs::SetInnerServerAverageDevice(const RankTable_t &rankTable)
 {
     deviceNumPerServer_ = 0;
@@ -188,6 +194,7 @@ HcclResult HcclCommunicatorAttrs::GetPairDeviceLinkType(const RankTable_t &rankT
     }
     return HCCL_SUCCESS;
 }
+
 // sub group适配获取server内设配数
 HcclResult HcclCommunicatorAttrs::SetInnerServerAverageDevice(const std::vector<RankInfo> &rankList)
 {
@@ -249,6 +256,7 @@ bool HcclCommunicatorAttrs::CompareWithDevicePhyId(const RankInfo_t &left, const
 {
     return left.deviceInfo.devicePhyId < right.deviceInfo.devicePhyId;
 }
+
 HcclResult HcclCommunicatorAttrs::SetModuleInfo(const std::vector<RankInfo_t> &rankList)
 {
     isDiffDeviceModule_ = IsDiffDeviceModule(rankList);
@@ -277,21 +285,52 @@ HcclResult HcclCommunicatorAttrs::SetModuleInfo(const std::vector<RankInfo_t> &r
     moduleNum_ = moduleMap.size();
     u32 preDeviceNum = moduleMap.begin()->second.size();
     u32 curDeviceNum = preDeviceNum;
-    for (auto moduleInfo: moduleMap) {
+    for (auto &moduleInfo: moduleMap) {
         curDeviceNum = moduleInfo.second.size();
         if (curDeviceNum != preDeviceNum) {
             multiModuleDiffDeviceNumMode_ = true;
-            HCCL_RUN_INFO("different module contains different numbers of cards:[%d]", multiModuleDiffDeviceNumMode_);
         }
         HCCL_INFO("module[%d] contains [%d]devices", moduleInfo.first, moduleInfo.second.size());
-        for (auto rankInfo : moduleInfo.second) {
+        for (auto &rankInfo : moduleInfo.second) {
             HCCL_INFO("moduleIdx[%d] Info: rankId[%d], serverId[%s], serverIdx[%d], devicePhyId[%d]",
                       moduleInfo.first, rankInfo.rankId, rankInfo.serverId.c_str(), rankInfo.serverIdx,
                       rankInfo.deviceInfo.devicePhyId);
         }
     }
+    HCCL_RUN_INFO("different module contains different numbers of cards:[%d]", multiModuleDiffDeviceNumMode_);
     return HCCL_SUCCESS;
 }
+
+HcclResult HcclCommunicatorAttrs::SetSuperPodInfo(const std::vector<RankInfo_t> &rankList)
+{
+    //1.超节点数目 2.超节点间server数是否一致 3.
+    superPodNum_ = 0;
+    multiSuperPodDiffServerNumMode_ = false;
+    std::map<std::string, std::set<u32>> superPodToServerNum; //记录每个超节点中的server数目
+    for (RankInfo_t rankInfo : rankList) {
+        // superPodId为空时, 返回超节点数量为0, 按照非超节点模式处理
+        CHK_PRT_RET(rankInfo.superPodId.empty(),
+            HCCL_DEBUG("ranks[%u] superPodId[%s] is empty, set superPodNum to zero", rankInfo.rankId,
+            rankInfo.superPodId.c_str()),
+            HCCL_SUCCESS);
+
+        superPodToServerNum[rankInfo.superPodId].insert(rankInfo.serverIdx);
+    }
+    superPodNum_ = superPodToServerNum.size();
+    u32 preServerNum = superPodToServerNum.begin()->second.size();
+    u32 curServerNum = preServerNum;
+    for (auto superPodItem: superPodToServerNum) {
+        curServerNum = superPodItem.second.size();
+        if (curServerNum != preServerNum) {
+            multiSuperPodDiffServerNumMode_ = true;
+        }
+        HCCL_INFO("[Set][SuperPodInfo]SuperPod[%s] contains [%d]servers", superPodItem.first.c_str(), superPodItem.second.size());
+    }
+    HCCL_RUN_INFO("[Set][SuperPodInfo]different surperPod contains different numbers of servers:[%d]",
+        multiSuperPodDiffServerNumMode_);
+    return HCCL_SUCCESS;
+}
+
 // 集群中存在910B A+X时，0-7卡: moduleIdx = 2 * serverIdx; 8-15卡: moduleIdx = 2 * serverIdx + 1
 // 集群中不存在910B A+X时，moduleIdx = serverIdx
 HcclResult HcclCommunicatorAttrs::GetModuleIdx(const RankInfo_t &rankInfo, u32 &moduleIdx)
@@ -334,9 +373,8 @@ bool HcclCommunicatorAttrs::IsDiffDeviceModule(const std::vector<RankInfo_t> &ra
     return isDiffMeshAggregation;
 }
 
-HcclResult HcclCommunicatorAttrs::SetNiclistInfo()
-{
-    for (auto iter : servRankInfo_[serverId_]) {
+HcclResult HcclCommunicatorAttrs::SetNiclistInfo(){
+    for (auto &iter : servRankInfo_[serverId_]) {
         if (((!iter.hostIp.IsInvalid()) || (!iter.deviceInfo.deviceIp[0].IsInvalid())) &&
             (iter.deviceInfo.devicePhyId != HOST_DEVICE_ID)) {
             nicList_.push_back(iter.deviceInfo.devicePhyId);
@@ -360,6 +398,7 @@ HcclResult HcclCommunicatorAttrs::InitTopoInfo(const RankTable_t &rankTable)
     CHK_RET(topoInfoParse_->ParseAndCheck(nicList_));
     return HCCL_SUCCESS;
 }
+
 HcclResult HcclCommunicatorAttrs::InitTopoInfo(const std::vector<RankInfo> &rankList)
 {
     topoInfoParse_.reset(new (std::nothrow) TopoInfoParse());
@@ -376,6 +415,7 @@ HcclResult HcclCommunicatorAttrs::InitTopoInfo(const std::vector<RankInfo> &rank
     }
     return HCCL_SUCCESS;
 }
+
 HcclResult HcclCommunicatorAttrs::SetInterModeInSuperPod()
 {
     // 硬件配置为非超节点模式或软件（ranktable）中未配置sdid，后面按照非超节点形态处理
@@ -392,6 +432,7 @@ HcclResult HcclCommunicatorAttrs::SetInterModeInSuperPod()
     }
     return HCCL_SUCCESS;
 }
+
 // 910B A+X 在RDMA未启用情况下，两模块间的device数目需要一致且两模块中使用的卡都在同一平面上
 HcclResult HcclCommunicatorAttrs::CheckSingleServerComm(const std::vector<RankInfo_t> &rankList) const
 {
@@ -429,6 +470,7 @@ HcclResult HcclCommunicatorAttrs::CheckSingleServerComm(const std::vector<RankIn
     }
     return HCCL_SUCCESS;
 }
+
 HcclResult HcclCommunicatorAttrs::SetRankInfoList(const RankTable_t &rankTable)
 {
     // 检查rank table入参正确性
@@ -484,6 +526,7 @@ HcclResult HcclCommunicatorAttrs::SetRankInfoList(const RankTable_t &rankTable)
     CHK_RET(SortRankInfoList());
     return HCCL_SUCCESS;
 }
+
 HcclResult HcclCommunicatorAttrs::CheckRankTable(const RankTable_t &rankTable, const ServRankInfo &servRankInfo)
 {
     // 检查网卡挂载位置
@@ -768,14 +811,14 @@ HcclResult HcclCommunicatorAttrs::InitRankInfo(const RankTable_t &rankTable)
     if (superDeviceId_ != INVALID_UINT) {
         CHK_RET(IsSuperPodMode(useSuperPodMode_)); // 使能superPod
     }
-    // 获取superPod数
-    CHK_RET(GetSuperPodNum(rankTable.rankList, superPodNum_));
     // 获取server内设备数, 赋值 ishavecpurank_
     CHK_RET(SetInnerServerAverageDevice(rankTable));
     // 根据server整理rank信息
     CHK_RET(TransformRankInfoByServerId(rankTable.rankList, servRankInfo_));
     // 获取module相关信息，moduleNum_, isDiffDeviceModule_, multiModuleDiffDeviceNumMode_;
     CHK_RET(SetModuleInfo(rankTable.rankList));
+    // 获取超节点相关信息，superPodNum_, multiSuperPodDiffServerNumMode_
+    CHK_RET(SetSuperPodInfo(rankTable.rankList));
     // 生成nicList
     CHK_RET(SetNiclistInfo());
     // 解析拓扑信息
@@ -820,6 +863,7 @@ u32 HcclCommunicatorAttrs::CalMeshAggRankSize(int halfDevNum) const
     }
     return size;
 }
+
 HcclResult HcclCommunicatorAttrs::SetMeshAggregationRankSize(u32 size)
 {
     HCCL_INFO("[Set][HcclCommunicatorAttrs][MeshAggregationRankSize]set MeshAggregationRankSize[%u].", size);
@@ -857,10 +901,10 @@ HcclResult HcclCommunicatorAttrs::InitRankInfoSubGroup(const std::vector<RankInf
     CHK_RET(TransformRankList(rankList, rankListNew));
     // 获取server数
     CHK_RET(SetServerNum(rankListNew));
-    // 获取superPod数
-    CHK_RET(GetSuperPodNum(rankListNew, superPodNum_));
     // 获取module相关信息，moduleNum_, isDiffDeviceModule_, multiModuleDiffDeviceNumMode_;
     CHK_RET(SetModuleInfo(rankListNew));
+    // 获取超节点相关信息，superPodNum_, multiSuperPodDiffServerNumMode_
+    CHK_RET(SetSuperPodInfo(rankListNew));
     // 根据server整理rank信息
     CHK_RET(TransformRankInfoByServerId(rankListNew, servRankInfo_));
     // 解析拓扑信息
@@ -958,7 +1002,8 @@ bool HcclCommunicatorAttrs::IsSupportEnableRoce()
         roceSwitch = (GetExternalInputIntraRoceSwitch() && (!isSingleMeshAggregation_ || isStandardCard_)) ||
                      multiModuleDiffDeviceNumMode_;
     } else if (deviceType_ == DevType::DEV_TYPE_910_93) {
-        roceSwitch = GetExternalInputEnableRdmaSdmaConcurrent();
+        roceSwitch = GetExternalInputEnableRdmaSdmaConcurrent() || multiSuperPodDiffServerNumMode_ || 
+                     (multiModuleDiffDeviceNumMode_ && superPodNum_ > 1);
     } else { // 其他单机场景为了防止用户误用roce开关
         roceSwitch = isStandardCard_ ? GetExternalInputIntraRoceSwitch() : false;
     }
@@ -968,11 +1013,12 @@ bool HcclCommunicatorAttrs::IsSupportEnableRoce()
 void HcclCommunicatorAttrs::GetTopoAttr(HcclTopoAttr &topoAttr)
 {
     topoAttr.serverNum = serverNum_;
-    topoAttr.devNumInLevel2 = superPodNum_;
+    topoAttr.superPodNum = superPodNum_;
     topoAttr.moduleNum = moduleNum_;
     topoAttr.deviceNumPerServer = deviceNumPerServer_;
     topoAttr.deviceNumPerAggregation = deviceNumPerAggregation_;
     topoAttr.multiModuleDiffDeviceNumMode = multiModuleDiffDeviceNumMode_;
+    topoAttr.multiSuperPodDiffServerNumMode = multiSuperPodDiffServerNumMode_;
     topoAttr.meshAggregationRankSize = meshAggregationRankSize_;
     topoAttr.isDiffDeviceModule = isDiffDeviceModule_;
     topoAttr.isSingleMeshAggregation = isSingleMeshAggregation_;
@@ -1085,6 +1131,11 @@ u32 HcclCommunicatorAttrs::GetModuleNum()
 bool HcclCommunicatorAttrs::GetMultiModuleDiffDeviceNumMode()
 {
     return multiModuleDiffDeviceNumMode_;
+}
+
+bool HcclCommunicatorAttrs::GetMultiSuperPodDiffServerNumMode()
+{
+    return multiSuperPodDiffServerNumMode_;
 }
 
 std::vector<u32> HcclCommunicatorAttrs::GetNicList()

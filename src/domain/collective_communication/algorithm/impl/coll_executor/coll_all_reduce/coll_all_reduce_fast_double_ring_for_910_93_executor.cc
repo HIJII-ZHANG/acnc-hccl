@@ -29,6 +29,7 @@ HcclResult CollAllReduceFastDoubleRingFor91093Executor::DoubleRingReduceScatter(
     s32 profStage, const u64 baseOffset, const HcomCollOpInfo *opInfo,
     const std::vector<std::vector<Slice>> multRingsUserMemSlice)
 {
+    (void)tag;
     HCCL_INFO("[CollAllReduceFastDoubleRingFor91093Executor][DoubleRingReduceScatter] DoubleRingReduceScatter starts");
     HcclResult ret = HCCL_SUCCESS;
     u32 ringNum = multRingsSliceZero.size();
@@ -83,6 +84,7 @@ HcclResult CollAllReduceFastDoubleRingFor91093Executor::DoubleRingAllGather(
     Stream stream, s32 profStage, const u64 baseOffset, const HcomCollOpInfo *opInfo,
     const std::vector<std::vector<Slice>> multRingsUserMemSlice)
 {
+    (void)tag;
     HCCL_INFO("[CollAllReduceFastDoubleRingFor91093Executor][DoubleRingAllGather] DoubleRingAllGather starts");
     HcclResult ret = HCCL_SUCCESS;
     u32 ringNum = multRingsSliceZero.size();
@@ -126,7 +128,7 @@ HcclResult CollAllReduceFastDoubleRingFor91093Executor::DoubleRingAllGather(
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAllReduceFastDoubleRingFor91093Executor][DoubleRingAllGather] Double ring "
                    "reduce scatter failed failed,return[%d]", ret), ret);
-    // 添加空task,保证执行时不乱序
+
     CHK_RET(ExecutorBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     return HCCL_SUCCESS;
 }

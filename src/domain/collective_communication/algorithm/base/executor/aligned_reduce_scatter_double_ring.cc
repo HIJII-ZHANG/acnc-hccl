@@ -254,7 +254,7 @@ HcclResult AlignedReduceScatterDoubleRing::MemcpyInitSlices(
     u64 ringIndex, DeviceMem &dstInit, DeviceMem &srcInit, DeviceMem &dstSubInit, DeviceMem &srcSubInit)
 {
     CHK_RET(MemcpyInitSlicesOnMainStreams(ringIndex, dstInit, srcInit));
-    if (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB) {
+    if (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB && (!GetExternalInputEnableInplace())) {
         HCCL_DEBUG("[AlignedReduceScatterDoubleRing][MemcpyInitSlices] no graph mode");
         CHK_RET(LocalNotify::Post(subStreams_[ringIndex + 1], dispatcher_, mainSignals_[ringIndex + 1], profilerInput_.stage));
         CHK_RET(LocalNotify::Wait(subStreams_[ringIndex + 1], dispatcher_, subSignals_[ringIndex + 1], profilerInput_.stage));
@@ -453,6 +453,9 @@ HcclResult AlignedReduceScatterDoubleRing::RunMainStream(
     const u32 step, const u32 rank, const u32 rankSize, u32 ringIndex,
     std::vector<SenderMemoryInfo> &txReduceMems, std::vector<ReducerMemoryInfo> &rxReduceMems)
 {
+    (void)txReduceMems;
+    (void)rank;
+    (void)rankSize;;
     Stream stream;
     LINK preLink;
     LINK nextLink;
@@ -475,7 +478,7 @@ HcclResult AlignedReduceScatterDoubleRing::LocalMemcpy(const u32 step, const u32
     DeviceMem &localSrcMem, DeviceMem &localDstMem)
 {
     // 通过校验流数判断是单算子模式还是图模式
-    if (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB) {
+    if (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB && (!GetExternalInputEnableInplace())) {
         CHK_RET(LocalNotify::Post(subStreams_[ringIndex + 1], dispatcher_, mainSignals_[ringIndex + 1], profilerInput_.stage));
         CHK_RET(LocalNotify::Wait(subStreams_[ringIndex + 1], dispatcher_, subSignals_[ringIndex + 1], profilerInput_.stage));
         if (localSrcMem != localDstMem && step != rankSize - DMA_REDUCE_TWO_OFFSET) {
@@ -515,6 +518,8 @@ HcclResult AlignedReduceScatterDoubleRing::RunAllStreams(const u32 step, const u
     std::vector<DeviceMem> &mainLocalSrcMems, std::vector<DeviceMem> &mainLocalDstMems,
     std::vector<DeviceMem> &subLocalSrcMems, std::vector<DeviceMem> &subLocalDstMems)
 {
+    (void)subTxReduceMems;
+    (void)mainTxReduceMems;
     Stream mainStream;
     LINK mainPreLink;
     LINK mainNextLink;
@@ -574,15 +579,16 @@ HcclResult AlignedReduceScatterDoubleRing::PreRunStreams(
 HcclResult AlignedReduceScatterDoubleRing::RunReduceScatter(const u32 rank, const u32 rankSize)
 {
     HCCL_INFO("AlignedReduceScatterDoubleRing starts, the input param rank[%u]", rank);
-
     CHK_RET(ExecutorBase::ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
     // 主环主流通知从环主流开始通信
     CHK_RET(MainRecordSub());
     // 从环主流等待主环主流通知
     CHK_RET(SubWaitMain());
-    CHK_RET(ExecutorBase::ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
-    CHK_RET(ExecEmptyTasks());
-    CHK_RET(RunInitStep(rank, rankSize));
+    if (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB) {
+        CHK_RET(ExecutorBase::ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
+        CHK_RET(ExecEmptyTasks());
+        CHK_RET(RunInitStep(rank, rankSize));
+    }
     CHK_RET(ExecutorBase::ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
     CHK_RET(ExecEmptyTasks());
 
@@ -631,9 +637,27 @@ HcclResult AlignedReduceScatterDoubleRing::RunReduceScatter(const u32 rank, cons
     return HCCL_SUCCESS;
 }
 
+HcclResult AlignedReduceScatterDoubleRing::GetActiveSubstreamNum(u32 &activeSubstreamNum)
+{
+    activeSubstreamNum = subStreams_.size();
+    if (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB &&
+        GetExternalInputEnableInplace()) {
+        if (subStreams_.size() <= 2) {
+            HCCL_ERROR("[AlignedReduceScatterDoubleRing][GetActiveSubstreamNum]subStreams_.size()[%zu] <= 2",
+                subStreams_.size());
+            return HCCL_E_PARA;
+        }
+        activeSubstreamNum = subStreams_.size() - 2;
+    }
+    return HCCL_SUCCESS;
+}
+
+
 HcclResult AlignedReduceScatterDoubleRing::ExecEmptyTasks()
 {
-    for (u32 signalIndex = 0; signalIndex < subStreams_.size(); signalIndex++) {
+    u32 activeSubstreamNum = 0;
+    CHK_RET(GetActiveSubstreamNum(activeSubstreamNum));
+    for (u32 signalIndex = 0; signalIndex < activeSubstreamNum; signalIndex++) {
         CHK_RET(ExecutorBase::ExecEmptyTask(inputMem_, outputMem_, subStreams_[signalIndex], dispatcher_));
     }
     return HCCL_SUCCESS;
@@ -642,7 +666,9 @@ HcclResult AlignedReduceScatterDoubleRing::ExecEmptyTasks()
 // 主流通知从流干活
 HcclResult AlignedReduceScatterDoubleRing::MainRecordSub()
 {
-    for (u32 signalIndex = 0; signalIndex < subSignals_.size(); signalIndex++) {
+    u32 activeSubstreamNum = 0;
+    CHK_RET(GetActiveSubstreamNum(activeSubstreamNum));
+    for (u32 signalIndex = 0; signalIndex < activeSubstreamNum; signalIndex++) {
         CHK_RET(LocalNotify::Post(stream_, dispatcher_, subSignals_[signalIndex],
             profilerInput_.stage));
     }
@@ -651,7 +677,9 @@ HcclResult AlignedReduceScatterDoubleRing::MainRecordSub()
 // 从流等待主流
 HcclResult AlignedReduceScatterDoubleRing::SubWaitMain()
 {
-    for (u32 streamIndex = 0; streamIndex < subSignals_.size(); streamIndex++) {
+    u32 activeSubstreamNum = 0;
+    CHK_RET(GetActiveSubstreamNum(activeSubstreamNum));
+    for (u32 streamIndex = 0; streamIndex < activeSubstreamNum; streamIndex++) {
         CHK_RET(LocalNotify::Wait(subStreams_[streamIndex], dispatcher_, subSignals_[streamIndex],
             profilerInput_.stage));
     }
@@ -660,7 +688,9 @@ HcclResult AlignedReduceScatterDoubleRing::SubWaitMain()
 // 主流等待从流
 HcclResult AlignedReduceScatterDoubleRing::MainWaitSub()
 {
-    for (u32 signalIndex = 0; signalIndex < mainSignals_.size(); signalIndex++) {
+    u32 activeSubstreamNum = 0;
+    CHK_RET(GetActiveSubstreamNum(activeSubstreamNum));
+    for (u32 signalIndex = 0; signalIndex < activeSubstreamNum; signalIndex++) {
         CHK_RET(LocalNotify::Wait(stream_, dispatcher_, mainSignals_[signalIndex], profilerInput_.stage));
     }
     return HCCL_SUCCESS;
@@ -668,7 +698,9 @@ HcclResult AlignedReduceScatterDoubleRing::MainWaitSub()
 // 从流告诉主流活干完了
 HcclResult AlignedReduceScatterDoubleRing::SubRecordMain()
 {
-    for (u32 streamIndex = 0; streamIndex < mainSignals_.size(); streamIndex++) {
+    u32 activeSubstreamNum = 0;
+    CHK_RET(GetActiveSubstreamNum(activeSubstreamNum));
+    for (u32 streamIndex = 0; streamIndex < activeSubstreamNum; streamIndex++) {
         CHK_RET(LocalNotify::Post(subStreams_[streamIndex], dispatcher_, mainSignals_[streamIndex],
             profilerInput_.stage));
     }

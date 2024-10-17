@@ -11,7 +11,7 @@
 #ifndef CALC_AHC_TRANSPORT_REQ_PUB_H
 #define CALC_AHC_TRANSPORT_REQ_PUB_H
 
-#include "calc_transport_req_base_pub.h"
+
 #include "calc_ahc_transport_req_base_pub.h"
 
 namespace hccl {

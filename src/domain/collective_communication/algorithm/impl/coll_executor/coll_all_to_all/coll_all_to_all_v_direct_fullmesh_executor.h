@@ -12,7 +12,6 @@
 #define COLL_RUN_ALLTOALLV_DIRECT_FULLMESH_EXECUTOR_H
 #include "coll_all_to_all_executor.h"
 namespace hccl {
-const uint32_t ALLTOALLV_DIRECT_FULLMESH_MAX_SINGLE_GROUP_SIZE = 16; // 分组做fullmesh 每个mesh的最大size
 class CollRunAlltoAllDirectFullmesh : public CollAlltoAllExecutor {
 public:
     CollRunAlltoAllDirectFullmesh(const HcclDispatcher dispatcher, std::unique_ptr<TopoMatcher> &topoMatcher);

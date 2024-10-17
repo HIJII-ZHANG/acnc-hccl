@@ -32,7 +32,7 @@ private:
 
     /* *************** 算法编排 *************** */
     u64 CalcLoopMaxCount(const u64 cclBuffSize, const u32 unitSize) override;
-    u32 IsDataSplit(const u64 curSize) override;
+    bool IsDataSplitForRdmaSdmaConcurrent(const u64 curSize) override;
     HcclResult KernelRun(const OpParam &param, ExecMem &execMem) override;
 };
 

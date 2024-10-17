@@ -55,7 +55,7 @@ private:
 
     std::unordered_map<u32, std::vector<u64>> intraScratchOffsetMap_;
     std::unordered_map<u32, std::vector<u64>> intraScratchLengMap_;
-    u64 localScratchOffset_;
+    u64 localScratchOffset_ = 0;
 };
 }  // namespace hccl
 

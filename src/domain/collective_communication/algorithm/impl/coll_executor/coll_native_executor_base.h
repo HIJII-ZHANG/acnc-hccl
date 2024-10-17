@@ -53,7 +53,6 @@ protected:
     virtual HcclResult CalcScratchMemSize(u64& scratchMemSize);
     HcclResult CalcNotifyNum(u32 streamNum, u32 &notifyNum);
     virtual HcclResult GetIfNeedAivBuffer(bool &needAivBuffer);
-    virtual HcclResult CheckIfAllowAHC();
 
     // 考虑新建一个资源计算类ResourceCalculator，将资源推导、资源解析的都放进去。
     // 推导通信域信息的公用函数，不同Executor的在计算inner、outer、level2时使用。

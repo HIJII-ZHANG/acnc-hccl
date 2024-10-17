@@ -78,7 +78,7 @@ u64 CollReduceScatterExecutor::CalcLoopMaxCount(const u32 unitSize)
     return maxCountPerLoop;
 }
 
-bool CollReduceScatterExecutor::IsHugeData(const u64 curSize)
+bool CollReduceScatterExecutor::IsHugeData(const u64 curSize, OpParam *param)
 {
     if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT) {
         return true;
@@ -94,10 +94,10 @@ bool CollReduceScatterExecutor::IsSmallData(const u64 totalSize, const u64 curSi
     return false;
 }
 
-u32 CollReduceScatterExecutor::IsDataSplit(const u64 curSize)
+bool CollReduceScatterExecutor::IsDataSplitForRdmaSdmaConcurrent(const u64 curSize)
 {
-    HCCL_INFO("[CollReduceScatterExecutor][IsDataSplit]opMeta is using the default option: not data split.");
-    return 0;
+    HCCL_INFO("[CollReduceScatterExecutor]opMeta is using the default option: not data split.");
+    return false;
 }
 
 HcclResult CollReduceScatterExecutor::RunLoop(OpParam &param, AlgResourceResponse &algRes)
@@ -168,11 +168,13 @@ HcclResult CollReduceScatterExecutor::RunLoopInner(OpParam &param, const ReduceT
     if (!is310P3Common_) {
         /* 设置子图复用标志 */
         auto autoSelectedAlgTypeLevel1 = static_cast<u32>(algType_) >> HCCL_LEVEL_ALGO_WIDTH;
-        bool hugeData = IsHugeData(curSize);
+        bool hugeData = IsHugeData(curSize, &param);
         bool smallData = IsSmallData(param.DataDes.count * unitSize, curSize);
+        bool dataSplit = IsDataSplitForRdmaSdmaConcurrent(curSize);
+        bool isDeterministic = topoMatcher_->GetExternalInputHcclDeterministic();
         auto opMeta = HcclOpMetaInfo::GetOneForReduceScatter(autoSelectedAlgTypeLevel1,
-            param.DataDes.dataType, reduceType, hugeData, smallData);
-        opMeta.dataSplit = IsDataSplit(curSize);
+            param.DataDes.dataType, reduceType, hugeData, smallData, CopyPattern::BCOPY, dataSplit, isDeterministic);
+
         CHK_RET(InitTask(dispatcher_, param.stream, opMeta.isEnableCache, opMeta.GetCacheKey()));
     }
 

@@ -37,7 +37,7 @@ TopoInfoDetect::~TopoInfoDetect()
     return;
 }
 
-HcclResult TopoInfoDetect::GetServerConnections(std::map<std::string, std::shared_ptr<HcclSocket>> &connectSockets)
+HcclResult TopoInfoDetect::GetServerConnections(std::map<u32, std::shared_ptr<HcclSocket>> &connectSockets)
 {
     if (pTopoExchangeServer_) {
         return pTopoExchangeServer_->GetConnections(connectSockets);

@@ -175,12 +175,8 @@ HcclResult CollBatchSendRecvExecutor::Orchestrate(OpParam& param, AlgResourceRes
 
     algResResp_ = &algResource;
 
-    HCCL_PROFILER_ADD_TAG_SENDRECV(param.tag, algoAttr_.identifier, workflowMode_);
+    HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
     HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
-    HCCL_PROFILER_ADD_OPDATA_OP(param.tag, param.DataDes.count, param.inputPtr, param.outputPtr,
-        param.DataDes.dataType, param.root, algoAttr_.identifier, HcclReduceOp::HCCL_REDUCE_RESERVED);
-    HCCL_PROFILER_ADD_GROUPRANK_SENDRECV(algoAttr_.identifier, topoAttr_.userRankSize, topoAttr_.userRank, \
-        remoteUserRank_);
     CHK_RET(AddSubStreamToProfiling());
 
     std::vector<HcclSendRecvItem*> orderedList(param.BatchSendRecvDataDes.itemNum, nullptr);
@@ -189,6 +185,14 @@ HcclResult CollBatchSendRecvExecutor::Orchestrate(OpParam& param, AlgResourceRes
 
     u32 itemStartIndex = 0;
     CHK_RET(ProcessSelfSendRecvTasks(orderedList, param.BatchSendRecvDataDes.itemNum, itemStartIndex, param.stream));
+
+    if (topoAttr_.userRankSize == 1) {
+        HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());
+        HCCL_PROFILER_DEL_TAG(param.tag);
+        HCCL_INFO("tag[%s] BatchSendRecv Excutor orchestrate success, take time [%lld]us.",
+            param.tag.c_str(), DURATION_US(TIME_NOW() - startut));
+        return HCCL_SUCCESS;
+    }
 
     if (topoMatcher_->GetExternalInputHcclEnableFfts()) {
         auto meta = HcclOpMetaInfo::GetOneForBatchSendRecv();
@@ -230,8 +234,6 @@ HcclResult CollBatchSendRecvExecutor::Orchestrate(OpParam& param, AlgResourceRes
     }
     HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());
     HCCL_PROFILER_DEL_TAG(param.tag);
-    HCCL_PROFILER_DEL_OPDATA(param.tag);
-    HCCL_PROFILER_DEL_GROUPRANK(algoAttr_.identifier);
     HCCL_INFO("tag[%s] BatchSendRecv Excutor orchestrate success, take time [%lld]us.",
         param.tag.c_str(), DURATION_US(TIME_NOW() - startut));
     return HCCL_SUCCESS;

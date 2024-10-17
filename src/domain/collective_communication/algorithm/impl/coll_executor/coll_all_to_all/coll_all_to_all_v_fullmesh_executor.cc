@@ -21,7 +21,8 @@ CollRunAlltoAllVFullMesh::CollRunAlltoAllVFullMesh(const HcclDispatcher dispatch
 
 HcclResult CollRunAlltoAllVFullMesh::CalcStreamNum(u32& streamNum)
 {
-    if (SatisfyIntraSuperPod(topoAttr_.deviceType, topoAttr_.userRankSize, topoAttr_.useSuperPodMode)) {
+    if (SatisfyIntraSuperPod(topoAttr_.deviceType, topoAttr_.userRankSize, topoAttr_.useSuperPodMode,
+                             topoAttr_.superPodNum)) {
         streamNum = topoAttr_.userRankSize - 1;
     } else {
         streamNum = 0;
@@ -110,7 +111,7 @@ HcclResult CollRunAlltoAllVFullMesh::KernelRun(const OpParam &param, ExecMem &ex
         GetExternalInputHcclAlgoConfig(HcclCMDType::HCCL_CMD_ALLTOALL)[0] == HcclAlgoType::HCCL_ALGO_TYPE_NA &&
         GetExternalInputHcclAlgoConfig(HcclCMDType::HCCL_CMD_ALLTOALL)[1] == HcclAlgoType::HCCL_ALGO_TYPE_PAIRWISE;
     if (SatisfyIntraSuperPod(topoAttr_.deviceType, topoAttr_.userRankSize,
-        topoAttr_.useSuperPodMode) && !usePairwiseAlgorithm) {
+        topoAttr_.useSuperPodMode, topoAttr_.superPodNum) && !usePairwiseAlgorithm) {
         HCCL_INFO("[CollRunAlltoAllVFullMesh] one level read only algo");
 
         if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB) {

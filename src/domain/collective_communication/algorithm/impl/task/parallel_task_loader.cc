@@ -27,7 +27,7 @@ HcclResult ParallelTaskLoader::Prepare(std::vector<Stream *> streamsPtr, SubComm
         streamsPtr_[streamIndex] = streamsPtr[streamIndex];
     }
     commInfo_ = outerCommInfo;
-    HCCL_INFO("[ParallelTaskLoader]Prepare streams size[%d], taskLoaderNum_[%u]", streamsPtr_.size(), taskLoaderNum_);
+    HCCL_INFO("[ParallelTaskLoader]Prepare streams size[%u], taskLoaderNum_[%u]", streamsPtr_.size(), taskLoaderNum_);
 
     // 当前现有的taskLoader线程可以满足业务多流的使用
     if (taskLoaderNum_ >= streamsPtr_.size()) {
@@ -61,7 +61,6 @@ HcclResult ParallelTaskLoader::StartTaskLoad()
         // 获取线程ID
         tidInfo_[streamIndex] = streamTaskLoader_[streamIndex]->GetTid();
     }
-
     CHK_RET(hccl::ProfilingManagerPub::CallMsprofReportMultiThreadInfo(tidInfo_));
 
     // 通知流线程执行

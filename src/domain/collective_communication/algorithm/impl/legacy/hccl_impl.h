@@ -250,7 +250,7 @@ private:
     std::mutex ringNicListLock_;
     std::map<std::string, std::vector<std::vector<u32>>> ringNicList_;
     u32 serverNum_;
-    u32 devNumInLevel2_;
+    u32 superPodNum_;
     u32 moduleNum_;
     OpBaseStreamManager opBaseStreamManager_;
     std::vector<Stream> auxRingStreamsDev_;
@@ -312,6 +312,7 @@ private:
     bool isStandardCard_;
     bool is310PDuoCard_;
     bool multiModuleDiffDeviceNumMode_;
+    bool multiSuperPodDiffServerNumMode_;
     bool isUsedInterHccsMode_ = false;
     bool useSuperPodMode_ = false;
     u32 pid_ = 0;

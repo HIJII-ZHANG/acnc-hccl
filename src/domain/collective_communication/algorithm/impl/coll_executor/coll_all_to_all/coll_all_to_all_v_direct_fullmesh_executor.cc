@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+
 #include "coll_all_to_all_v_direct_fullmesh_executor.h"
 
 namespace hccl {
@@ -35,10 +36,7 @@ HcclResult CollRunAlltoAllDirectFullmesh::Orchestrate(OpParam& param, AlgResourc
     execMem.inputMem = algRes.cclInputMem;
     execMem.outputMem = algRes.cclOutputMem;
 
-    auto opMeta = GetOpMeta(param.opType, algRes.paramInputMem.size());   // override
-    CHK_RET(InitTask(dispatcher_, param.stream, opMeta.isEnableCache, opMeta.GetCacheKey()));
     ret = KernelRun(param, execMem);
-    CHK_RET(LaunchTaskExtend(dispatcher_, param.stream, algResResp_->slaveStreams));
 
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollRunAlltoAllDirectFullmesh][Orchestrate]errNo[0x%016llx]excutor run failed",
@@ -54,16 +52,31 @@ HcclResult CollRunAlltoAllDirectFullmesh::Orchestrate(OpParam& param, AlgResourc
 
 HcclOpMetaInfo CollRunAlltoAllDirectFullmesh::GetOpMeta(HcclCMDType opType, const u64 size)
 {
+    (void)opType;
     HcclOpMetaInfoDef opMeta = HcclOpMetaInfo::GetOneForAllToAllV(CopyPattern::ZCOPY, size, true);
     return opMeta;
 }
 
 HcclResult CollRunAlltoAllDirectFullmesh::CalcStreamNum(u32& streamNum)
 {
-    if (topoAttr_.userRankSize < ALLTOALLV_DIRECT_FULLMESH_MAX_SINGLE_GROUP_SIZE) {
-        streamNum = topoAttr_.userRankSize;
-    } else {
-        streamNum = ALLTOALLV_DIRECT_FULLMESH_MAX_SINGLE_GROUP_SIZE;
+    // 每个超节点内的卡数
+    u32 devNumInlocalPod = INVALID_VALUE_RANKSIZE;
+    u32 rankIdxInPod = INVALID_VALUE_RANKID;
+    CHK_RET(topoMatcher_->GetLocalSuperPodRankSize(topoAttr_.userRank, devNumInlocalPod, rankIdxInPod));
+    CHK_PRT_RET(devNumInlocalPod == INVALID_VALUE_RANKSIZE,
+        HCCL_ERROR("[CollRunAlltoAllDirectFullmesh][KernelRun]get local superPod total ranksize failed."),
+        HCCL_E_PARA);
+
+    // 单超节点场景需要的从流数量
+    streamNum = (devNumInlocalPod > ALLTOALLV_DIRECT_FULLMESH_SDMA_CONCURRENT_SIZE) ?
+        (ALLTOALLV_DIRECT_FULLMESH_SDMA_CONCURRENT_SIZE) : (devNumInlocalPod);
+
+    // 多超节点场景下，RDMA会设置独立的并发度
+    if (topoAttr_.superPodNum > 1) {
+        streamNum += 1; // 一条从流专门用来管理超节点间的RDMA通信
+        u32 totalRdmaRankNum = topoAttr_.userRankSize - devNumInlocalPod;
+        streamNum += (totalRdmaRankNum > ALLTOALLV_DIRECT_FULLMESH_RDMA_CONCURRENT_SIZE) ?
+            (ALLTOALLV_DIRECT_FULLMESH_RDMA_CONCURRENT_SIZE) : (totalRdmaRankNum);
     }
 
     HCCL_INFO("[CollRunAlltoAllDirectFullmesh][CalcStreamNum] tag[%s] streamNum[%u]",
@@ -72,11 +85,19 @@ HcclResult CollRunAlltoAllDirectFullmesh::CalcStreamNum(u32& streamNum)
 }
 
 // level0-level1 打平fullmesh
+// 超节点内建SDMA链路；超节点间建RDMA链路
 HcclResult CollRunAlltoAllDirectFullmesh::CalcLevel0CommInfo(TransportMemType inputType, TransportMemType outputType,
     std::vector<LevelNSubCommTransport>& opTransport)
 {
     CommParaInfo commCombinePara(COMM_COMBINE_ORDER, CommType::COMM_TAG_MESH);
     CHK_RET(CalcCommPlaneInfo(tag_, commCombinePara, opTransport[COMM_COMBINE_ORDER], inputType, outputType));
+
+    LevelNSubCommTransport &commTransportLevel0 = opTransport[COMM_COMBINE_ORDER];
+    for (u32 subCommIndex = 0; subCommIndex < commTransportLevel0.size(); subCommIndex++) {
+        for (auto &transportRequest : commTransportLevel0[subCommIndex].transportRequests) {
+            transportRequest.isUsedRdma = topoAttr_.isUsedRdmaMap.at(transportRequest.remoteUserRank);
+        }
+    }
     return HCCL_SUCCESS;
 }
 
@@ -222,27 +243,32 @@ HcclResult CollRunAlltoAllDirectFullmesh::KernelRun(const OpParam &param, ExecMe
     // 准备数据
     CHK_RET(GetAlltoAllvTmpRankSendRecvInfo(param));
 
+    // 获取当前超节点内总卡数
+    u32 devNumInlocalPod = INVALID_VALUE_RANKSIZE;
+    u32 rankIdxInPod = INVALID_VALUE_RANKID;
+    CHK_RET(topoMatcher_->GetLocalSuperPodRankSize(topoAttr_.userRank, devNumInlocalPod, rankIdxInPod));
+    CHK_PRT_RET(devNumInlocalPod == INVALID_VALUE_RANKSIZE,
+        HCCL_ERROR("[CollRunAlltoAllDirectFullmesh][KernelRun]get local superPod total ranksize failed."),
+        HCCL_E_PARA);
+
     // 获取通信域
     CHK_RET(CheckCommSize(COMM_COMBINE_ORDER, COMM_INDEX_0 + 1));
     SubCommInfo outerCommInfo = GetSubCommInfo(COMM_COMBINE_ORDER, COMM_INDEX_0);
 
     CHK_RET(AddSubStreamToProfiling());
 
-    // 确认每组fullmesh的group size
-    u32 groupRankSize = (topoAttr_.userRankSize > ALLTOALLV_DIRECT_FULLMESH_MAX_SINGLE_GROUP_SIZE) ?
-        (ALLTOALLV_DIRECT_FULLMESH_MAX_SINGLE_GROUP_SIZE) : (topoAttr_.userRankSize);
-
     // 执行
     std::unique_ptr<AlltoAllVDirectFullMesh> executor = nullptr;
     executor.reset(new (std::nothrow) AlltoAllVDirectFullMesh(dispatcher_, const_cast<Stream&>(param.stream),
-        algResResp_->slaveStreams, algResResp_->notifiesM2S, algResResp_->notifiesS2M, topoAttr_.userRank,
+        topoAttr_.userRank,
         topoAttr_.userRankSize, outerCommInfo.links, localSendRecvInfo_,
-        groupRankSize));
+        topoAttr_.superPodNum, devNumInlocalPod, rankIdxInPod));
 
     CHK_SMART_PTR_NULL(executor);
 
     CHK_RET(executor->Prepare(algResResp_->paramInputMem, algResResp_->paramOutputMem, execMem.inputMem,
-        execMem.outputMem, workflowMode_));
+        execMem.outputMem, workflowMode_,algResResp_->slaveStreams, algResResp_->notifiesM2S,
+        algResResp_->notifiesS2M));
 
     CHK_RET(executor->RunAsync());
 

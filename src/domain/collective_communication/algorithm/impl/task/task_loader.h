@@ -47,7 +47,7 @@ private:
     std::shared_ptr<std::thread> ringThread_;
     uint32_t threadId_ = 0;
     s32 deviceLogicId_;
-    u32 userRank_;
+    u32 userRank_ = 0;
     const HcclDispatcher dispatcher_;  // dispatcher引用
     Stream *stream_;                           // 执行线程对应的stream
     SubCommInfo commInfo_;

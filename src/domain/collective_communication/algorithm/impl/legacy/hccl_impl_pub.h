@@ -85,11 +85,12 @@ using HcclAlgoAttr = struct HcclAlgoAttrDef {
 
 using HcclTopoAttr = struct HcclTopoAttrDef {
     u32 serverNum;                   // 集群中总的服务器数
-    u32 devNumInLevel2;                 // 集群中总的超节点数
+    u32 superPodNum;                 // 集群中总的超节点数
     u32 moduleNum;                   // 集群中的总的module数
     u32 deviceNumPerServer;          // 服务器上的Device数量
     u32 deviceNumPerAggregation;     // 每个module中的Device数量
     bool multiModuleDiffDeviceNumMode; // 每个module内的设备数是否相等，如果不相同即为多module不同卡模式 （走大RING环）
+    bool multiSuperPodDiffServerNumMode; // 每个超节点内的server数是否相等
 
     u32 meshAggregationRankSize;
     bool isDiffDeviceModule;
@@ -117,11 +118,12 @@ using HcclTopoAttr = struct HcclTopoAttrDef {
 
     HcclTopoAttrDef()
         : serverNum(0),
-        devNumInLevel2(0),
+        superPodNum(0),
         moduleNum(0),
         deviceNumPerServer(0),
         deviceNumPerAggregation(0),
         multiModuleDiffDeviceNumMode(false),
+        multiSuperPodDiffServerNumMode(false),
         meshAggregationRankSize(0),
         isDiffDeviceModule(false),
         isSingleMeshAggregation(false),

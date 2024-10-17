@@ -32,6 +32,7 @@ HcclResult SendOperator::SelectAlg(const std::string& tag, const OpParam& param,
     } else {
         newTag = tag + algName;
     }
+    newTag += (param.aicpuUnfoldMode ? "_device" : "_host");
     HCCL_INFO("[SelectAlg] send newTag is [%s]", newTag.c_str());
     return HCCL_SUCCESS;
 }

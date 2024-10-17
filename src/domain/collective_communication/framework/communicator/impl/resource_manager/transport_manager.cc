@@ -61,7 +61,7 @@ HcclResult TransportManager::ExceptionHandle(const std::string &tag, OpCommTrans
             for (auto &transportRequest : singleSubCommTransport.transportRequests) {
                 if (transportRequest.isValid) {
                     bool isInterRdma;
-                    UpdateIsInterRdma(transportRequest.remoteUserRank, isInterRdma, singleSubCommTransport.isUsedRdma);
+                    UpdateIsInterRdma(transportRequest.remoteUserRank, isInterRdma, transportRequest.isUsedRdma);
 
                     HcclRankLinkInfo remoteLinkInfo;
                     MakeRemoteLinkInfo(transportRequest.remoteUserRank, isInterRdma, 1, remoteLinkInfo);
@@ -142,8 +142,10 @@ HcclResult TransportManager::Alloc(const std::string &tag, const TransportIOMem 
 
                     std::vector<std::shared_ptr<HcclSocket> > connectSockets;
                     bool isInterRdma;
+                    HCCL_DEBUG("[TransportManager][Alloc]: remoteUserRank[%u], userRank[%u], isUsedRdma[%u]",
+                        transportRequest.remoteUserRank, userRank_, transportRequest.isUsedRdma);
                     HcclResult ret = CreateDestSockets(tag, transportRequest.remoteUserRank, singleSubCommTransport.taskNum,
-                        connectSockets, isInterRdma, singleSubCommTransport.isUsedRdma);
+                        connectSockets, isInterRdma, transportRequest.isUsedRdma);
                     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[Alloc]Create dest sockets failed"), ret);
 
                     MachineType machineType = transportRequest.localUserRank < transportRequest.remoteUserRank?
@@ -157,7 +159,7 @@ HcclResult TransportManager::Alloc(const std::string &tag, const TransportIOMem 
                             machineType, rankInfoList_[userRank_].serverId, transportRequest.remoteUserRank,
                             singleSubCommTransport.supportDataReceivedAck, singleSubCommTransport.linkMode,
                             singleSubCommTransport.enableUseOneDoorbell, threadStr, connectSockets,
-                            inputMem, outputMem, singleSubCommTransport.isUsedRdma,
+                            inputMem, outputMem, transportRequest.isUsedRdma,
                             std::ref(singleSubCommTransport.links.back()), isAicpuModeEn));
                         CHK_SMART_PTR_NULL(linkThreads[threadsRapplyNum]); // 异常时其他线程待处理
 
@@ -231,7 +233,7 @@ HcclResult TransportManager::IncreAlloc(const std::string &tag, const TransportI
                     std::vector<std::shared_ptr<HcclSocket> > connectSockets;
                     bool isInterRdma;
                     HcclResult ret = CreateDestSockets(tag, transportRequest.remoteUserRank, reqSingleSubComm.taskNum,
-                        connectSockets, isInterRdma, reqSingleSubComm.isUsedRdma);
+                        connectSockets, isInterRdma, transportRequest.isUsedRdma);
                     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[IncreAlloc]Create dest sockets failed"), ret);
 
                     MachineType machineType = transportRequest.localUserRank < transportRequest.remoteUserRank?
@@ -243,7 +245,7 @@ HcclResult TransportManager::IncreAlloc(const std::string &tag, const TransportI
                             machineType, rankInfoList_[userRank_].serverId, transportRequest.remoteUserRank,
                             reqSingleSubComm.supportDataReceivedAck, reqSingleSubComm.linkMode,
                             reqSingleSubComm.enableUseOneDoorbell, threadStr, connectSockets, inputMem, outputMem,
-                            reqSingleSubComm.isUsedRdma, std::ref(respSingleSubComm.links[rankIndex]), isAicpuModeEn));
+                            transportRequest.isUsedRdma, std::ref(respSingleSubComm.links[rankIndex]), isAicpuModeEn));
                         CHK_SMART_PTR_NULL(linkThreads[threadsRapplyNum]); // 异常时其他线程待处理
                     threadsRapplyNum++;
                 }
@@ -383,7 +385,7 @@ u32 TransportManager::GetSocketsPerLink(u64 taskNum)
 {
     if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT &&
         GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-        return 2; // 2：多QP方式下额外创建一个socket用于同步QP状态迁移完成状态
+        return 2;
     }
     u32 socketsPerLink = 1;
     if (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
@@ -614,9 +616,9 @@ void TransportManager::UpdateIsInterRdma(const u32 remoteRank, bool &isInterRdma
     // 超节点内节点间采用HCCS通信的, 放至dstIntraClientVec_, 采用p2p建链
     bool isInterHccs = IsSupportInterHccs(remoteRank);
     bool isConcurrent = GetExternalInputEnableRdmaSdmaConcurrent();
-    LinkTypeInServer linkType;
-    hrtGetPairDeviceLinkType(rankInfoList_[userRank_].devicePhyId, rankInfoList_[remoteRank].devicePhyId, linkType);
     if (isConcurrent && forceRdma && rankInfoList_[userRank_].deviceType == DevType::DEV_TYPE_910_93) {
+        LinkTypeInServer linkType;
+        hrtGetPairDeviceLinkType(rankInfoList_[userRank_].devicePhyId, rankInfoList_[remoteRank].devicePhyId, linkType);
         if (linkType == LinkTypeInServer::SIO_TYPE) {
             isInterRdma = false;
         } else {
@@ -624,10 +626,12 @@ void TransportManager::UpdateIsInterRdma(const u32 remoteRank, bool &isInterRdma
         }
     } else if (isInterHccs && (!forceRdma)) {
         isInterRdma = false;
+    } else if (rankInfoList_[userRank_].serverId != rankInfoList_[remoteRank].serverId) {
+        isInterRdma = true;
     } else {
-        isInterRdma = rankInfoList_[userRank_].serverId != rankInfoList_[remoteRank].serverId ||
-            (isUsedRdmaOuter_ && linkType == LinkTypeInServer::PXI_TYPE) ||
-            (rankInfoList_[userRank_].serverId == rankInfoList_[remoteRank].serverId && forceRdma);
+        LinkTypeInServer linkType;
+        hrtGetPairDeviceLinkType(rankInfoList_[userRank_].devicePhyId, rankInfoList_[remoteRank].devicePhyId, linkType);
+        isInterRdma = (isUsedRdmaOuter_ && linkType == LinkTypeInServer::PXI_TYPE) || forceRdma;
     }
 }
 

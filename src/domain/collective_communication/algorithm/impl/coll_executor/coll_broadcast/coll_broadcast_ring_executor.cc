@@ -38,8 +38,7 @@ HcclResult CollBroadcastRingExecutor::CalcStreamNum(u32& streamNum)
     }
 
     streamNum = totalStreamNum - 1;
-    HCCL_INFO("[CollBroadcastRingExecutor][CalcStreamNum] tag[%s] streamNum_[%u]",
-        tag_.c_str(), streamNum);
+    HCCL_INFO("[CollBroadcastRingExecutor][CalcStreamNum] tag[%s] streamNum_[%u]", tag_.c_str(), streamNum);
     return HCCL_SUCCESS;
 }
 
@@ -65,7 +64,7 @@ HcclResult CollBroadcastRingExecutor::CalcLevel0CommInfo(TransportMemType inputT
 
 HcclResult CollBroadcastRingExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollBroadcastRingExecutor][Run]The CollBroadcastRingExecutor starts.");
+    HCCL_INFO("[CollBroadcastRingExecutor][KernelRun]The CollBroadcastRingExecutor starts.");
     u32 perDataSize = 0;
     CHK_RET(SalGetDataTypeSize(param.DataDes.dataType, perDataSize));
 

@@ -22,6 +22,7 @@
 #include "local_notify.h"
 #include "hccl_opbase_atrace_info_pub.h"
 #include "common.h"
+#include "threadManage.h"
 
 namespace hccl {
 using RankId = u32;
@@ -53,12 +54,12 @@ struct TransportRequest {
     RankId remoteUserRank = 0;
     TransportMemType inputMemType = TransportMemType::RESERVED;
     TransportMemType outputMemType = TransportMemType::RESERVED;
+    bool isUsedRdma = false;
 };
 
 struct SingleSubCommTransport {
     std::vector<TransportRequest> transportRequests;
     std::vector<LINK> links;
-    bool isUsedRdma = false;
     u64 taskNum = 0;
     std::map<u32, u32> userRank2subCommRank;
     std::map<u32, u32> subCommRank2UserRank;
@@ -101,6 +102,7 @@ struct AlgResourceResponse {
     std::vector<std::shared_ptr<LocalNotify> > notifiesDevM2S;  // 大小等同于slaveStreams
     std::vector<std::shared_ptr<LocalNotify> > notifiesDevS2M;  // 大小等同于slaveStreams
     OpCommTransport opTransportResponse;
+    std::vector<std::shared_ptr<ThreadManage>> threadManage;
 };
 
 struct OpParam {
@@ -138,13 +140,9 @@ struct OpParam {
         } BatchSendRecvDataDes;
     };
     HcclCMDType opType = HcclCMDType::HCCL_CMD_INVALID;
-};
-
-struct SubCommInfo {
-    u32 localRank;
-    u32 localRankSize;
-    std::vector<LINK> links;
-    std::vector<LINK> virtualLinks; // for alltoall 多线程性能提升使用
+    bool inplaceSupportRetry = false;
+    u8 isInplaceStatus = 0;
+    u8 inPlaceSupportRetryStatus = 0;
 };
 
 }   // namespace hccl

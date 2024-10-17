@@ -36,6 +36,7 @@ private:
     /* *************** 算法编排 *************** */
     bool IsHugeData(const u64 curSize) override;
     bool IsSmallData(const u64 totalSize, const u64 curSize) override;
+    bool IsDataSplitForRdmaSdmaConcurrent(const u64 curSize) override;
     HcclResult KernelRun(const OpParam &param, ExecMem &execMem) override;
 };
 

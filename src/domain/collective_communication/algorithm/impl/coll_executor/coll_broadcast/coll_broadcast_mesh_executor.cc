@@ -46,8 +46,7 @@ HcclResult CollBroadcastMeshExecutor::CalcStreamNum(u32& streamNum)
 
     streamNum = totalStreamNum > 0 ? totalStreamNum - 1 : 0;
 
-    HCCL_INFO("[CollBroadcastMeshExecutor][CalcStreamNum] tag[%s] streamNum_[%u]",
-        tag_.c_str(), streamNum);
+    HCCL_INFO("[CollBroadcastMeshExecutor][CalcStreamNum] tag[%s] streamNum_[%u]", tag_.c_str(), streamNum);
     return HCCL_SUCCESS;
 }
 
@@ -158,7 +157,7 @@ HcclResult CollBroadcastMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
     } else {
         HCCL_ERROR("[BroadCastOperator][BroadCastMeshExecutor]invalid root[%u] to get userrank", param.root);
     }
-    HCCL_INFO("broadcast meshhd stage0 run success");
+    HCCL_INFO("[BroadCastOperator][BroadCastMeshExecutor] stage0 run success");
     u64 hdCount = slice[outerCommInfo.localRank].size / perDataSize;
     /* 节点间执行器 stage1 */
 
@@ -182,7 +181,7 @@ HcclResult CollBroadcastMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
         PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
     CHK_RET(RunTemplate(innerExecutor, innerCommInfo));
-    HCCL_INFO("broadcast meshhd stage1 run success");
+    HCCL_INFO("[BroadCastOperator][BroadCastMeshExecutor] stage1 run success");
 
     /* 节点内执行器 stage2 */
     {
@@ -203,7 +202,7 @@ HcclResult CollBroadcastMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
         CHK_RET(RunTemplate(outer2Executor, outerCommInfo));
     }
 
-    HCCL_INFO("broadcast meshhd stage2 run success");
+    HCCL_INFO("[BroadCastOperator][BroadCastMeshExecutor] stage2 run success");
     return HCCL_SUCCESS;
 }
 

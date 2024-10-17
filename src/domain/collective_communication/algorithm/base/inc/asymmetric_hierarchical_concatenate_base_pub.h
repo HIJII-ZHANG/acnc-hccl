@@ -39,19 +39,19 @@ public:
     static HcclResult CheckSubGroups(std::vector<std::vector<u32>> &subGroups);
 
     virtual HcclResult InitDstRanks(u32 rank, std::set<u32> &dstRanks);
-    virtual HcclResult CalcIntraSlicesAndLinks(const u32 rank, const u32 dataUnitSize, const u32 count,
+    virtual HcclResult CalcIntraSlicesAndLinks(const u32 rank, const u32 dataUnitSize, const u64 count,
         const std::vector<LINK> &links, std::vector<LINK> &intraLinks, std::vector<Slice> &intraSlices);
-    virtual HcclResult CalcInterSlicesAndLinks(const u32 rank, const u32 dataUnitSize, const u32 count,
+    virtual HcclResult CalcInterSlicesAndLinks(const u32 rank, const u32 dataUnitSize, const u64 count,
         const std::vector<LINK> &links, std::vector<std::vector<LINK>> &interLinksVector,
         std::vector<std::vector<Slice>> &interSlicesVector, std::vector<u32> &logicCardList);
     virtual bool IsNeedInterProc(const u32 rank);
 
-    bool IsIntraAlgNB();
-    bool IsInterAlgNB();
+    const bool IsIntraAlgNB();
+    const bool IsInterAlgNB();
 
     u32 GetIntraRank(const u32 rank);
     u32 GetInterRank(const u32 rank);
-    HcclResult GetExecutorOpInstance(HcclCMDType opType, std::unique_ptr<ExecutorBase> &executor,
+    HcclResult GetExecutorOpInstance(const HcclCMDType opType, std::unique_ptr<ExecutorBase> &executor,
         const HcclDispatcher &dispatcher, const u64 reduceAttr);
 protected:
     u32 minSubGroupIdx_; // 第一层分组最小的分组下标
@@ -63,8 +63,8 @@ protected:
 private:
     HcclResult GetIntraCommGroup(u32 rank, std::vector<u32> &intraCommGroup);
     HcclResult GetInterCommGroupList(u32 rank, std::vector<std::vector<u32>> &interCommGroupList);
-    HcclResult InputRingDstRanks(u32 rank, std::vector<u32> commGroups, std::set<u32> &dstRanks);
-    HcclResult InputNBDstRanks(u32 rank, std::vector<u32> commGroups, std::set<u32> &dstRanks);
+    HcclResult InputRingDstRanks(const u32 groupRank, const std::vector<u32> commGroups, std::set<u32> &dstRanks);
+    HcclResult InputNBDstRanks(const u32 groupRank, const std::vector<u32> commGroups, std::set<u32> &dstRanks);
 
     ConcAlgType intraAlgType_;
     ConcAlgType interAlgType_;
@@ -76,9 +76,9 @@ public:
     ~CommBrokeAlignInfo();
 
     bool IsNeedInterProc(const u32 rank) override;
-    HcclResult CalcIntraSlicesAndLinks(const u32 rank, const u32 dataUnitSize, const u32 count,
+    HcclResult CalcIntraSlicesAndLinks(const u32 rank, const u32 dataUnitSize, const u64 count,
         const std::vector<LINK> &links, std::vector<LINK> &intraLinks, std::vector<Slice> &intraSlices) override;
-    HcclResult CalcInterSlicesAndLinks(const u32 rank, const u32 dataUnitSize, const u32 count,
+    HcclResult CalcInterSlicesAndLinks(const u32 rank, const u32 dataUnitSize, const u64 count,
         const std::vector<LINK> &links, std::vector<std::vector<LINK>> &interLinksVector,
         std::vector<std::vector<Slice>> &interSlicesVector, std::vector<u32> &logicCardList) override;
 private:
@@ -89,9 +89,9 @@ public:
     explicit CommAHCAlignInfo(const std::vector<std::vector<u32>> &subGroups);
     ~CommAHCAlignInfo();
 
-    HcclResult CalcIntraSlicesAndLinks(const u32 rank, const u32 dataUnitSize, const u32 count,
+    HcclResult CalcIntraSlicesAndLinks(const u32 rank, const u32 dataUnitSize, const u64 count,
         const std::vector<LINK> &links, std::vector<LINK> &intraLinks, std::vector<Slice> &intraSlices) override;
-    HcclResult CalcInterSlicesAndLinks(const u32 rank, const u32 dataUnitSize, const u32 count,
+    HcclResult CalcInterSlicesAndLinks(const u32 rank, const u32 dataUnitSize, const u64 count,
         const std::vector<LINK> &links, std::vector<std::vector<LINK>> &interLinksVector,
         std::vector<std::vector<Slice>> &interSlicesVector, std::vector<u32> &logicCardList) override;
 private:
@@ -104,7 +104,7 @@ private:
         std::vector<Slice> &logicGroupSlice, std::vector<u32> &logicCardList);
     HcclResult PreparePartialLogicSlices(const Slice intraSlice, const u64 sliceSizeAligned, const u32 originOffset,
         std::vector<Slice> &logicGroupSlice, std::vector<u32> &logicCardList);
-    HcclResult PrepareEmptyLogicSlices(std::vector<Slice> &logicGroupSlice, std::vector<u32> &logicCardList);
+    HcclResult PrepareEmptyLogicSlices(std::vector<Slice> &logicGroupSlice, const std::vector<u32> &logicCardList);
     HcclResult CalcLogicSlicesAndLinks(std::vector<Slice> &logicGroupSlice, std::vector<u32> &logicCardList,
         const std::vector<LINK> &links, std::vector<std::vector<LINK>> &interLinksVector,
         std::vector<std::vector<Slice>> &interSlicesVector);
@@ -140,13 +140,13 @@ protected:
     std::vector<std::vector<u32>> subGroups_;
 
 private:
-    HcclResult RunIntraReduceScatter(u32 rank, const std::vector<LINK> &links,
+    HcclResult RunIntraReduceScatter(const u32 rank, const std::vector<LINK> &links,
         const std::unique_ptr<CommAHCBaseInfo> &commAHCBaseInfo);
-    HcclResult RunIntraAllGather(u32 rank, const std::vector<LINK> &links,
+    HcclResult RunIntraAllGather(const u32 rank, const std::vector<LINK> &links,
         const std::unique_ptr<CommAHCBaseInfo> &commAHCBaseInfo);
 
     virtual HcclResult CommAHCInfoInit(std::vector<std::vector<u32>> &subGroups);
-    virtual HcclResult RunInterAllReduce(u32 rank, const std::vector<LINK> &links,
+    virtual HcclResult RunInterAllReduce(const u32 rank, const std::vector<LINK> &links,
         const std::unique_ptr<CommAHCBaseInfo> &commAHCBaseInfo);
 
     u32 fftsPhase_; // 表示 AHC 算法内部的多个子图阶段，0为默认phase，算法内部从1开始

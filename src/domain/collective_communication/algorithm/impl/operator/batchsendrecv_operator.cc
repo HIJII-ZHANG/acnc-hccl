@@ -25,6 +25,7 @@ HcclResult BatchSendRecvOperator::SelectAlg(const std::string& tag, const OpPara
 {
     algName = "BatchSendRecv";
     newTag = tag;
+    newTag += (param.aicpuUnfoldMode ? "_device" : "_host");
     return HCCL_SUCCESS;
 }
 

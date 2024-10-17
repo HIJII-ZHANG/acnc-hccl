@@ -103,8 +103,8 @@ HcclResult TopoInfoParse::GetServerInnerLinkInfo(std::unordered_map<u32, u32> &p
     pairLinkCounter[static_cast<u32>(LinkTypeInServer::PXI_TYPE)] = 0;
     pairLinkCounter[static_cast<u32>(LinkTypeInServer::SIO_TYPE)] = 0;
     pairLinkCounter[static_cast<u32>(LinkTypeInServer::HCCS_SW_TYPE)] = 0;
-    for (auto it_local : serverInnerInfo) {
-        for (auto it_dest : serverInnerInfo) {
+    for (auto &it_local : serverInnerInfo) {
+        for (auto &it_dest : serverInnerInfo) {
             if (it_local.devicePhyId == it_dest.devicePhyId || it_local.devicePhyId == HOST_DEVICE_ID ||
                 it_dest.devicePhyId == HOST_DEVICE_ID) {
                 continue;

@@ -31,14 +31,12 @@ constexpr s32 HCCL_EXEC_STEP_NOT_SET = -1;
 constexpr s32 HCCL_EXEC_PLANE_NOT_SET = -1;
 constexpr u64 ZERO_SLICE = 0;
 constexpr u32 TWO_RANK_SIZE = 2;
-constexpr u32 HCCL_SPLIT_FLAG = 2;
 constexpr u32 DMA_REDUCE_TWO_OFFSET = 2;
 constexpr u32 DMA_REDUCE_THREE_OFFSET = 3;
 constexpr u64 HCCL_CHUNK_SIZE = 1024 * 1024 * 1024; // 1024*1024*1024的size
 constexpr u64 HCCL_MIN_PIPLINE_SLICE_ALIGN = 512;
 constexpr u64 HCCL_MIN_SLICE_ALIGN_910B = 16384;
 constexpr u64 HCCL_MIN_SLICE_ALIGN_910_93 = 16384;
-constexpr u64 HCCL_SDMA_RDMA_SPLIT_SIZE = 67108864;
 constexpr u64 HCCL_MIN_SLICE_ALIGN_ONCHIP = 512;
 constexpr u64 HCCL_MIN_SLICE_ALIGN = 128;
 constexpr u64 HCCL_NIC_MAX_NUM = 8;
@@ -46,6 +44,12 @@ constexpr u64 DOUBLE_RING_NUM = 2;
 constexpr u64 DOUBLE_RING_STREAM_NUM = 3;
 constexpr u32 ALIGNED_SUB_RING_INDEX = 0;
 constexpr u32 ALIGNED_MAIN_RING_INDEX = 1;
+
+// AnyPath相关，SDMA数据量切分比例
+constexpr u32 MAX_SPLIT_VALUE = 100;
+constexpr u32 BEST_SPLIT_VALUE_SR = 87;
+constexpr u32 BEST_SPLIT_VALUE_DR = 90;
+constexpr u64 HCCL_SPLIT_SIZE_INTER_SERVER = 8388608; // 每卡通信量的切分边界
 
 enum class SliceType {
     SLICE_TYPE_TX,

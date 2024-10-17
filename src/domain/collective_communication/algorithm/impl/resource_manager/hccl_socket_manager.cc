@@ -203,7 +203,7 @@ HcclResult HcclSocketManager::CreateSockets(const std::string &commTag,
         ret = CreateSockets(commTag, isInterLink, netDevCtx, socketType, localRole,
             localIp, remoteIpIter, rankSockets, isSupportReuse);
         CHK_PRT_RET(ret != HCCL_SUCCESS,
-            HCCL_ERROR("[Create][Sockets]create to rank[%d] connection is failed. ret[%d]",
+            HCCL_ERROR("[Create][Sockets]create to rank[%u] connection is failed. ret[%u]",
                 iter->first, ret), ret);
 
         if (rankSockets.size() > 0) {

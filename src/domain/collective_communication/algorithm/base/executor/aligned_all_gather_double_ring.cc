@@ -188,15 +188,18 @@ HcclResult AlignedAllGatherDoubleRing::RunInitStep(const u32 rank, const u32 ran
             // 需要+userMemIn_的offset
             if (opInfo_->inputAddr != nullptr) {
                 // AllGather算子调用AlignedAllGatherDoubleRing场景
+                HCCL_DEBUG("Memcpy operation: step[-1] stream[main] src rank[%u] starts to copy(rcv) offset[%llu], "
+                    "size[%llu] on userMemOutput to offset[%llu], size[%llu] on CCL",
+                    userRank_, firstStepOffset, initSlice.size, initSlice.offset, initSlice.size);
                 srcInit = DeviceMem::create(static_cast<u8 *>(opInfo_->inputAddr) + firstStepOffset, initSlice.size);
             } else {
                 // AllReduce算子调用AlignedAllGatherDoubleRing场景
+                HCCL_DEBUG("Memcpy operation: step[-1] stream[main] src rank[%u] starts to copy(rcv) offset[%llu], "
+                    "size[%llu] on CCL to offset[%llu], size[%llu] on CCL",
+                    userRank_, initSlice.offset, initSlice.size, initSlice.offset, initSlice.size);
                 srcInit = inputMem_.range(initSlice.offset, initSlice.size);
             }
             dstInit = outputMem_.range(initSlice.offset, initSlice.size);
-            HCCL_DEBUG("Memcpy operation: step[-1] stream[main] src rank[%u] starts to copy(rcv) offset[%llu], "
-                "size[%llu] on userMemOutput to offset[%llu], size[%llu] on CCL",
-                userRank_, firstStepOffset, initSlice.size, initSlice.offset, initSlice.size);
             // 若src与dst一样，则不需要搬运
             if (srcInit == dstInit) {
                 continue;
@@ -234,6 +237,8 @@ HcclResult AlignedAllGatherDoubleRing::RunAllStreams(const u32 step, const u32 r
     std::vector<DeviceMem> &mainLocalSrcMems, std::vector<DeviceMem> &mainLocalDstMems,
     std::vector<DeviceMem> &subLocalSrcMems, std::vector<DeviceMem> &subLocalDstMems)
 {
+    (void)mainTxMems;
+    (void)subTxMems;
     Stream mainStream;
     LINK mainPreLink;
     LINK mainNextLink;
@@ -265,6 +270,7 @@ HcclResult AlignedAllGatherDoubleRing::RunAllStreams(const u32 step, const u32 r
 
 HcclResult AlignedAllGatherDoubleRing::RxAsyncMemcpy(const u32 step, const u32 ringIndex, RxMemoryInfo& mem, Stream &stream, LINK &link)
 {
+    (void)step;
     // PreSync
     if (ringIndex == 1) {
         CHK_RET(MainWaitSub());
@@ -340,7 +346,7 @@ HcclResult AlignedAllGatherDoubleRing::PrepareDeviceMems(
         dst = DeviceMem::create(static_cast<u8 *>(opInfo_->outputAddr) + subSlice.offset,
             subSlice.size);
         HCCL_DEBUG("Memcpy operation: step[%u] stream[sub], src rank[%u] starts to send offset[%llu] size[%llu], "
-            "dst rank[%u] starts to rcv offset[%llu] size[%llu] at userMemOutput_",
+            "dst rank starts to rcv offset[%llu] size[%llu] at userMemOutput_",
             step, userRank_, subSlice.offset, subSlice.size, txSlice.offset, txSlice.size);
         localSrcMems.emplace_back(src);
         localDstMems.emplace_back(dst);
@@ -351,17 +357,19 @@ HcclResult AlignedAllGatherDoubleRing::PrepareDeviceMems(
 HcclResult AlignedAllGatherDoubleRing::RunAllGather(const u32 rank, const u32 rankSize)
 {
     HCCL_INFO("AlignedAllGatherDoubleRing starts, the input param rank[%u]", rank);
-    // 主环主流通知从环主流开始通信
-    CHK_RET(LocalNotify::Post(stream_, dispatcher_, subSignals_[0], profilerInput_.stage));
-    // 从环主流等待主环主流通知
-    CHK_RET(LocalNotify::Wait(subStreams_[0], dispatcher_, subSignals_[0], profilerInput_.stage));
-    CHK_RET(RunInitStep(rank, rankSize));
-    CHK_RET(ExecutorBase::ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
-    CHK_RET(ExecutorBase::ExecEmptyTask(inputMem_, outputMem_, subStreams_[0], dispatcher_));
-    // 从流通知主流通信完成
-    CHK_RET(LocalNotify::Post(subStreams_[0], dispatcher_, mainSignals_[0], profilerInput_.stage));
-    // 主流等待从流通知
-    CHK_RET(LocalNotify::Wait(stream_, dispatcher_, mainSignals_[0], profilerInput_.stage));
+    if (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB) {
+        // 主环主流通知从环主流开始通信
+        CHK_RET(LocalNotify::Post(stream_, dispatcher_, subSignals_[0], profilerInput_.stage));
+        // 从环主流等待主环主流通知
+        CHK_RET(LocalNotify::Wait(subStreams_[0], dispatcher_, subSignals_[0], profilerInput_.stage));
+        CHK_RET(RunInitStep(rank, rankSize));
+        CHK_RET(ExecutorBase::ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
+        CHK_RET(ExecutorBase::ExecEmptyTask(inputMem_, outputMem_, subStreams_[0], dispatcher_));
+        // 从流通知主流通信完成
+        CHK_RET(LocalNotify::Post(subStreams_[0], dispatcher_, mainSignals_[0], profilerInput_.stage));
+        // 主流等待从流通知
+        CHK_RET(LocalNotify::Wait(stream_, dispatcher_, mainSignals_[0], profilerInput_.stage));
+    }
     // 主环主流通知从环主流开始通信
     CHK_RET(ExecutorBase::ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
     CHK_RET(MainRecordSub());

@@ -61,7 +61,7 @@ HcclResult StreamActiveManager::StreamActive(HcclRtStream activeStream, HcclRtSt
 HcclResult StreamActiveManager::StreamsUnactive(const std::vector<Stream> &streams)
 {
     if (initFlag_) {
-        for (auto curStream : streams) {
+        for (auto &curStream : streams) {
             std::unique_lock<std::mutex> lock(streamActiveManagerMutex_);
                 if (streamActiveManager_.count(curStream.ptr()) == 1) {
                     streamActiveManager_.erase(curStream.ptr());

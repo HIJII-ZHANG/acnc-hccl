@@ -50,6 +50,16 @@ public:
         AlgResourceRequest& resourceRequest);
     AlgType GetAlgType();
     void SetLegacyHcclImpl(std::unique_ptr<hcclImpl> &hcclImpl);
+    bool CheckUserInMemNotLargerThanCCLInMem(const HcclCMDType &opType, OpParam &param);
+    bool ExecutorOnlySupportDMAReduce(const std::string& algName);
+    bool ExecutorCanSupportDMAReduce(const std::string& algName);
+    bool ExecutorNoSupportDMAReduce(const std::string& algName);
+    bool FitRetryConditionforInPlaceOp(const HcclCMDType &opType, OpParam &param, std::string& algName,
+        u8 &inPlaceSupportRetryStatus);
+    bool IsHcclOpInplace(const HcclCMDType &opType, OpParam &param, u8 &isInplaceStatus);
+    bool SupportRetryWithInplaceCheck(
+        const HcclCMDType &opType, OpParam &param, std::string& algName, u8 &isInplaceStatus,
+        u8 &inPlaceSupportRetryStatus);
 protected:
     std::string GenerateNewTagByAlgTypeLevel1(std::string tag, std::string algTypeLevel1Tag) const;
     u32 CalcContextNumForPipeline(HcclCMDType hcclCMDType);
@@ -61,9 +71,6 @@ protected:
     bool IsMultiMeshInlineReduce(void *inputPtr, void *outputPtr, HcclDataType dataType, HcclReduceOp op);
     bool Is910BSingleMesh();
     bool NeedCreateSingleMeshPlane(const bool isInlineReduce);
-    HcclResult RunExecutor(std::unique_ptr<CommBase> &commCombine, std::unique_ptr<ExecutorBase> &executor,
-                              DeviceMem &inputMem, DeviceMem &outputMem, u64 count, HcclDataType dataType,
-                              HcclReduceOp op, u32 root, Stream &stream) const;
     virtual HcclResult SetExecutorAttr(const OpParam& param);
 
     AlgType algType_;    // 算法类型
@@ -79,10 +86,11 @@ protected:
 
     u32 serverNum_;
     u32 moduleNum_;
-    u32 devNumInLevel2_;
+    u32 superPodNum_;
     u32 deviceNumPerServer_;
     u32 deviceNumPerAggregation_;
     bool multiModuleDiffDeviceNumMode_;
+    bool multiSuperPodDiffServerNumMode_;
     u32 meshAggregationRankSize_;
     bool isDiffDeviceModule_;
     bool isSingleMeshAggregation_ = false;

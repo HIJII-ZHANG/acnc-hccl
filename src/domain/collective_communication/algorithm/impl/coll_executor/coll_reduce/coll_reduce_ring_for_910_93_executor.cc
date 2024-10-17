@@ -143,7 +143,7 @@ HcclResult CollReduceRingFor91093Executor::KernelRun(const OpParam &param, ExecM
     u32 segmentIdx = 0;
     CHK_RET(PrepareInnerCommInfo(segmentIdx, commIndex, hdSize, outerCommInfo, multiRingsSliceZero, param.tag));
     u64 hdCount = hdSize / perDataSize;
-    if (topoAttr_.devNumInLevel2 <= 1) {
+    if (topoAttr_.superPodNum <= 1) {
         DeviceMem reduceInput = execMem.inputMem.range(dataSegsSlice[segmentIdx].offset, hdSize);
         CHK_SMART_PTR_NULL(reduceInput);
         DeviceMem reduceOutput = execMem.outputMem.range(dataSegsSlice[segmentIdx].offset, hdSize);

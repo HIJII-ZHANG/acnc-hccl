@@ -67,6 +67,7 @@ using RankInfo_t = struct tagRankInfo {
     std::string podName;                // [DEPRECATED]容器名称
     DeviceInfo_t deviceInfo;            // 设备信息
     std::vector<TransportInfo_t> transportInfo; // [DEPRECATED]本rank与其余rank的数据传输信息（抽象信息）
+    s32 bindDeviceId = INVALID_INT;     // 绑定的device id
 };
 
 // 对外的ranktable格式

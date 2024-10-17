@@ -394,11 +394,16 @@ HcclResult CheckRankIpFamily(const std::vector<RankInfo_t> &rankList)
                 HCCL_ERROR("[Check][RankIpFamily]rank[%u] device ip family[%d] is invalid.", rankList[index].rankId,
                 iter.GetFamily()),
                 HCCL_E_PARA);
-
+            std::string localIpFamily = iter.GetFamily() == AF_INET ? "AF_INET" : "AF_INET6";
+            std::string otherIpFamily = iter.GetFamily() == AF_INET ? "AF_INET6" : "AF_INET";
+            std::string rankId = std::to_string(rankList[index].rankId);
             if (deviceFamily != 0 && deviceFamily != iter.GetFamily()) {
-                const std::string ipFamilyError = "rank[" + std::to_string(rankList[index].rankId) + \
-                    "] device ip family[" + std::to_string(iter.GetFamily()) + "] is not same with others[" + \
-                    std::to_string(deviceFamily) + "].";
+                const std::string ipFamilyError = "rank[" + rankId + \
+                    "] device ip family[" + localIpFamily + "] is not same with others[" + otherIpFamily + \
+                    "]The possible causes are as follows: If ipfamily is AF_INET6, the NPU IP address is not "
+                    "configured for the rank[" + rankId + "]. The default NPU IP address is used for communication. "
+                    "Therefore, the IP address cannot be used for communication. Configure an NPU IP address of "
+                    "the AF_INET type for the rank[" + rankId + "].";
                 RPT_ENV_ERR(true, "EI0001", std::vector<std::string>({"env", "tips"}),
                     std::vector<std::string>({ "RankIpFamily", ipFamilyError }));
                 CHK_PRT_RET(true,
@@ -437,7 +442,7 @@ HcclResult CheckDeviceNumValid(const std::vector<RankInfo_t> &rankList, u32 devi
         DevType deviceType;
         CHK_RET(hrtGetDeviceType(deviceType));
         // 不对910B进行Server间卡数一致性的校验
-        if (deviceType == DevType::DEV_TYPE_910B) {
+        if (deviceType == DevType::DEV_TYPE_910B || deviceType == DevType::DEV_TYPE_910_93) {
             return HCCL_SUCCESS;
         }
     }

@@ -20,6 +20,7 @@
 #include "hccl_comm_pub.h"
 #include "task_abort_handler_pub.h"
 #include "coll_alg_utils.h"
+#include "i_hccl_one_sided_service.h"
 
 namespace hccl {
 RankTable_t g_hcclDefaultRankTable;
@@ -833,6 +834,13 @@ HcclResult hcclComm::CreateBarrierMemory()
     return HCCL_SUCCESS;
 }
 
+HcclResult hcclComm::GetOneSidedService(IHcclOneSidedService** service)
+{
+    CHK_RET(communicator_->GetOneSidedService(service));
+
+    return HCCL_SUCCESS;
+}
+
 HcclResult hcclComm::GetInCCLbuffer(void* &buffer, u64 &size)
 {
     CHK_RET(communicator_->GetInCCLbuffer(buffer, size));
@@ -1042,6 +1050,18 @@ bool hcclComm::GetCommResource(const std::string &tag, void **commContext)
     HCCL_INFO("HCCL_KEY_INFO: GetCommResource commContext[%p]", commContext);
 
     return (communicator_->GetCommResource(tag, commContext));
+}
+
+bool hcclComm::GetCommResource(void *&commContext)
+{
+    HCCL_INFO("HCCL_KEY_INFO: GetCommResource commContext[%p]", commContext);
+    return communicator_->GetCommResource(commContext);
+}
+
+HcclResult hcclComm::AllocComResourceByTiling(const std::string &algConfig,
+    const std::string &tag, uint32_t opType, uint32_t reduceType, rtStream_t stream)
+{
+    return communicator_->AllocComResourceByTiling(algConfig, tag, opType, reduceType, stream);
 }
 
 HcclResult hcclComm::CreateCommResource(const std::string &tag, rtStream_t aiCpuStream, bool isOpbaseMode,

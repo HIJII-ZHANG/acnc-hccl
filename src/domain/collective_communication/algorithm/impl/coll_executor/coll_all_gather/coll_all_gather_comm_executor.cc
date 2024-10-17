@@ -44,7 +44,12 @@ HcclResult CollAllGatherCommExecutor::CalcTransportMemType(TransportMemType &inp
 HcclResult CollAllGatherCommExecutor::CalcCombinedCommInfo(TransportMemType inputType, TransportMemType outputType,
     std::vector<LevelNSubCommTransport>& opTransport)
 {
-    CommParaInfo commParaInfo(COMM_COMBINE, CommType::COMM_TAG_MAX);
+    CommPlane commPlane = COMM_COMBINE;
+    if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
+        commPlane = COMM_COMBINE_ORDER;
+    }
+
+    CommParaInfo commParaInfo(commPlane, CommType::COMM_TAG_MAX);
     if (UseInterServerNHRAlgo(algType_)) {
         commParaInfo.commType = CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING;
     } else if (UseInterServerNHRV1Algo(algType_)) {
@@ -54,15 +59,20 @@ HcclResult CollAllGatherCommExecutor::CalcCombinedCommInfo(TransportMemType inpu
     } else {
         commParaInfo.commType = CommType::COMM_TAG_RING_INNER;
     }
-    CHK_RET(CalcCommPlaneInfo(tag_, commParaInfo, opTransport[COMM_COMBINE], inputType, outputType));
+    CHK_RET(CalcCommPlaneInfo(tag_, commParaInfo, opTransport[commPlane], inputType, outputType));
 
     return HCCL_SUCCESS;
 }
 
 HcclResult CollAllGatherCommExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    CHK_RET(CheckCommSize(COMM_COMBINE, COMM_INDEX_0 + 1));
-    SubCommInfo combinedCommInfo = GetSubCommInfo(COMM_COMBINE, COMM_INDEX_0);
+    CommPlane commPlane = COMM_COMBINE;
+    if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
+        commPlane = COMM_COMBINE_ORDER;
+    }
+
+    CHK_RET(CheckCommSize(commPlane, COMM_INDEX_0 + 1));
+    SubCommInfo combinedCommInfo = GetSubCommInfo(commPlane, COMM_INDEX_0);
 
     // 构造ring algorithm对应的all_gather实例
     std::unique_ptr<ExecutorBase> executor;

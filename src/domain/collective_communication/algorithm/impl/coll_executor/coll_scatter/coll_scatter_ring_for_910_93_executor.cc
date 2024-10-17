@@ -143,7 +143,7 @@ HcclResult CollScatterRingFor91093Executor::KernelRunLevel1(const OpParam &param
 
     CHK_RET(topoMatcher_->GetSubRootForScatter(subUserRankRootSupperPod_, subRoot_));
     CHK_PRT_RET(subRoot_ == INVALID_VALUE_RANKID, \
-        HCCL_ERROR("[CollScatterRingFor91093Executor][KernelRun]GetSubRootForScatter failed, ", \
+        HCCL_ERROR("[CollScatterRingFor91093Executor][KernelRun]GetSubRootForScatter failed, " \
             "userRank[%u], root[%u], subRoot[%u]", topoAttr_.userRank, param.root, subRoot_), HCCL_E_INTERNAL);
     HCCL_DEBUG("[CollScatterRingFor91093Executor][KernelRun]GetSubRootForScatter, userRank[%u], root[%u], subRoot[%u]",
         topoAttr_.userRank, param.root, subRoot_);

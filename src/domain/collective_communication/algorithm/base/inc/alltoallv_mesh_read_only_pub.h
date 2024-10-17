@@ -60,7 +60,7 @@ private:
     std::vector<std::shared_ptr<LocalNotify>> meshSignalMainToSub_;
     std::vector<std::shared_ptr<LocalNotify>> meshSignalSubToMain_;
     u32 userRank_;
-    u32 intraRank_;
+    u32 intraRank_ = 0;
     u32 intraRankSize_;
     const std::vector<LINK> links_;
     const std::vector<SendRecvInfo>& allMeshAggregationSendRecvInfo_;
@@ -72,10 +72,10 @@ private:
     std::map<u32, std::vector<OneSendRecvAddrInfo>> sendAddrInfo_;
     std::map<u32, std::vector<OneSendRecvAddrInfo>> recvAddrInfo_;
     HcclWorkflowMode workMode_;
-    u64 dataBlockSize_;
+    u64 dataBlockSize_ = 0;
     std::unordered_map<u32, RemoteMem> destRankRemoteMem_;
 
-    bool useScratchPingMem_;
+    bool useScratchPingMem_ = false;
     std::unordered_map<u32, AlltoallSendRecvInfo> subStreamSendRecvInfo_;       // 从流当前收发长度和接收到的本地偏移
     std::unordered_map<u32, DataTrace> sendIndexTrace_;            // 当前步骤每个对端发送到第几个大块数据，中的第几个小块数据
     std::unordered_map<u32, DataTrace> recvIndexTrace_;            // 当前步骤每个对端接收到第几个大块数据，中的第几个小块数据

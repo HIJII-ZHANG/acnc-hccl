@@ -23,8 +23,9 @@ protected:
     // AllGather Loop Executor公共接口
     virtual u64 CalcLoopMaxCount(const u64 cclBuffSize, const u32 unitSize);
     virtual bool IsHugeData(const u64 curSize);
-    virtual u32 IsDataSplit(const u64 curSize);
+    virtual bool IsDataSplitForRdmaSdmaConcurrent(const u64 curSize);
     HcclResult RunLoop(OpParam &param, AlgResourceResponse &algRes);
+    bool IsAllGatherSmallData(const u64 curSize);
 
     // 工具类
     HcclResult PrepareAllgatherSlice(u32 sliceNum, u64 inputMemSize, std::vector<Slice> &dataSegsSlice) const;

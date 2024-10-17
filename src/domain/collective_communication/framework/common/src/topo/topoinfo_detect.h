@@ -37,7 +37,7 @@ public:
     HcclResult GetRankId(u32 &rankId);
     HcclResult TransformRankTableStr(const RankTable_t &clusterInfo, std::string &ranktableStr);
     HcclResult GetAgentConnection(std::shared_ptr<HcclSocket> &connectSocket);
-    HcclResult GetServerConnections(std::map<std::string, std::shared_ptr<HcclSocket>> &connectSockets);
+    HcclResult GetServerConnections(std::map<u32, std::shared_ptr<HcclSocket>> &connectSockets);
     HcclResult GenerateRootInfo(const HcclIpAddress &hostIP, u32 hostPort, u32 devicePhysicID, HcclRootHandle &rootInfo);
 
 protected:

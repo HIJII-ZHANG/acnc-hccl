@@ -77,16 +77,16 @@ protected:
     DeviceMem cclIn_;
     DeviceMem cclOut_;
 
-    u32 groupRankSize_;
-    u32 intraRankSize_;
-    u32 interRankSize_;
-
-    u32 userRank_;
-    u32 intraRankId_;
-    u32 interRankId_;
-
-    u32 meshRankStart_;
-    u32 meshRankEnd_;
+    u32 groupRankSize_ = 0;
+    u32 intraRankSize_ = 0;
+    u32 interRankSize_ = 0;
+ 
+    u32 userRank_ = 0;
+    u32 intraRankId_ = 0;
+    u32 interRankId_ = 0;
+ 
+    u32 meshRankStart_ = 0;
+    u32 meshRankEnd_ = 0;
 
     Stream mainStream_;
     std::vector<Stream> subStream_;

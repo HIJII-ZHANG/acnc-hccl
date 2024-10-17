@@ -32,7 +32,7 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::CalcStreamNum(u32& streamN
         totalStreamNum = OUTER_PLANE_NUM_IN_NPRING_DOUBLE;
     }
     if (topoMatcher_->GetExternalInputEnableRdmaSdmaConcurrent()) {
-        totalStreamNum += RDMA_PLANE_NUM_IN_NPRING_DOUBLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
+        totalStreamNum += RDMA_PLANE_NUM_IN_NPRING_DOUBLE;
     }
     streamNum = totalStreamNum - 1;
     HCCL_INFO("[CollAllReduceDoubleRingConcurrentExecutor][CalcStreamNum] tag[%s] streamNum_[%u]",
@@ -89,7 +89,7 @@ bool CollAllReduceDoubleRingConcurrentExecutor::IsSmallData(const u64 totalSize,
 
 bool CollAllReduceDoubleRingConcurrentExecutor::IsHugeData(const u64 curSize)
 {
-    if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT && topoAttr_.devNumInLevel2 > 1) {
+    if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT && topoAttr_.superPodNum > 1) {
         return true;
     }
     bool hugeData = curSize / topoAttr_.deviceNumPerAggregation / HCCL_INTERNODE_MAX_DATA_RATE > RDMA_SEND_MAX_SIZE ||
@@ -109,6 +109,12 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::CalcLevel2CommInfo(Transpo
     }
     CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel2, opTransport[COMM_LEVEL2], inputType, outputType));
     return HCCL_SUCCESS;
+}
+
+bool CollAllReduceDoubleRingConcurrentExecutor::IsDataSplitForRdmaSdmaConcurrent(const u64 curSize)
+{
+    bool isLargeSize = (curSize / topoAttr_.deviceNumPerAggregation >= HCCL_SPLIT_SIZE_INTER_SERVER);
+    return GetExternalInputEnableRdmaSdmaConcurrent() && isLargeSize;
 }
 
 HcclResult CollAllReduceDoubleRingConcurrentExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
@@ -137,9 +143,9 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
         HCCL_E_INTERNAL);
 
     // 根据数据量计算每个环上数据的偏移和大小
-    u32 syncTrans = BEST_SPLIT_VALUE;
+    u32 syncTrans = BEST_SPLIT_VALUE_SR;
     u64 totalDataSize = execMem.count * perDataSize;
-    if (totalDataSize <= HCCL_SDMA_RDMA_SPLIT_SIZE) {
+    if ((totalDataSize / sliceNum) < HCCL_SPLIT_SIZE_INTER_SERVER) {
         syncTrans = MAX_SPLIT_VALUE;
     }
     multi4RingsSlice.resize(multi2RingsSlice.size() * SLICES_FACTOR);
@@ -177,7 +183,7 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
     HcomCollOpInfo reduceScatterOpInfo = {
         "", execMem.inputPtr, nullptr, execMem.count, param.DataDes.dataType, param.root, param.reduceType
     };
-    if (DMAReduceFlag_) {
+    if (DMAReduceFlag_ && (!GetExternalInputEnableInplace())) {
         reduceScatterOpInfoPtr = &reduceScatterOpInfo;
     }
     CHK_RET(MultiRingReduceScatterConcurrent(param.tag, execMem.inputMem, execMem.outputMem, execMem.count,
@@ -195,7 +201,11 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
     auto devicePhyId = topoAttr_.devicePhyId;
     commIndex = RefreshCommIdx(commIndex, nicList, devicePhyId);
     u64 hdCount = hdSize / perDataSize;
-    if (topoAttr_.devNumInLevel2 <= 1) {
+    u32 syncTrans1 = BEST_SPLIT_VALUE_DR;
+    if (hdSize < HCCL_SPLIT_SIZE_INTER_SERVER) {
+        syncTrans1 = MAX_SPLIT_VALUE;
+    }
+    if (topoAttr_.superPodNum <= 1) {
         DeviceMem allreduceInput;
         DeviceMem allreduceOutput;
         CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
@@ -205,8 +215,8 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
         innerMultSlice.resize(RDMA_PLANE_NUM_IN_NPRING_DOUBLE);
         Slice sdmaSlice;
         Slice rdmaSlice;
-        auto sdmaSliceSize = ((hdSize <= HCCL_MIN_SLICE_ALIGN_910_93) || (syncTrans == MAX_SPLIT_VALUE)) ? hdSize:
-                ((syncTrans * hdSize / MAX_SPLIT_VALUE) / HCCL_MIN_SLICE_ALIGN_910_93) * HCCL_MIN_SLICE_ALIGN_910_93;
+        auto sdmaSliceSize = ((hdSize <= HCCL_MIN_SLICE_ALIGN_910_93) || (syncTrans1 == MAX_SPLIT_VALUE)) ? hdSize:
+                ((syncTrans1 * hdSize / MAX_SPLIT_VALUE) / HCCL_MIN_SLICE_ALIGN_910_93) * HCCL_MIN_SLICE_ALIGN_910_93;
         sdmaSlice.size = sdmaSliceSize;
         sdmaSlice.offset = dataSegsSlice[segmentIdx].offset;
         rdmaSlice.size = hdSize - sdmaSlice.size;
@@ -215,7 +225,7 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
             hdSize, sdmaSlice.offset, sdmaSlice.offset, sdmaSlice.size, rdmaSlice.offset, rdmaSlice.size);
         innerMultSlice[0] = std::make_pair(true, sdmaSlice);
         innerMultSlice[1] = std::make_pair(false, rdmaSlice);
-        if (syncTrans == MAX_SPLIT_VALUE) {
+        if (syncTrans1 == MAX_SPLIT_VALUE) {
             innerMultSlice.erase(innerMultSlice.end() - 1, innerMultSlice.end());
         }
         // SDMA和RDMA通信域
@@ -386,7 +396,7 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
     HcomCollOpInfo allgatherOpInfo = {
         "", nullptr, execMem.outputPtr, execMem.count, param.DataDes.dataType, param.root, param.reduceType
     };
-    if (DMAReduceFlag_) {
+    if (DMAReduceFlag_ && (!GetExternalInputEnableInplace())) {
         allgatherOpInfoPtr = &allgatherOpInfo;
     }
     CHK_RET(MultiRingAllGatherConcurrent(param.tag, execMem.inputMem, execMem.outputMem, hdCount,

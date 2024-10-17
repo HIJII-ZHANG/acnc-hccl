@@ -24,10 +24,10 @@ HcclResult CollAllGatherSingleRankExecutor::KernelRun(const OpParam &param, Exec
     bool hugeData = (execMem.count * unitSize) > SDMA_SEND_MAX_SIZE;
     if (execMem.inputPtr == execMem.outputPtr) {
         // 通过CopyPattern字段区分不同的子图
-        auto opMeta = HcclOpMetaInfo::GetOneForAllGather(originalAlgTypeLevel1, hugeData, CopyPattern::ZCOPY);
+        auto opMeta = HcclOpMetaInfo::GetOneForAllGather(originalAlgTypeLevel1, hugeData, false, CopyPattern::ZCOPY);
         CHK_RET(InitTask(dispatcher_, const_cast<Stream&>(param.stream), opMeta.isEnableCache, opMeta.GetCacheKey()));
     } else {
-        auto opMeta = HcclOpMetaInfo::GetOneForAllGather(originalAlgTypeLevel1, hugeData, CopyPattern::BCOPY);
+        auto opMeta = HcclOpMetaInfo::GetOneForAllGather(originalAlgTypeLevel1, hugeData, false, CopyPattern::BCOPY);
         CHK_RET(InitTask(dispatcher_, const_cast<Stream&>(param.stream), opMeta.isEnableCache, opMeta.GetCacheKey()));
         // ranksize = 1; intput、output地址不同，input->output
         DeviceMem srcMem(execMem.inputPtr, execMem.count * unitSize);

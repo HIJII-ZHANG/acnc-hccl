@@ -80,7 +80,7 @@ private:
     std::map<std::string, DeviceMem> opBaseDeviceMemMap_;
     u32 devicePhyId_;
     s32 deviceLogicId_;
-    u64 bufferQuota_;  // 可分配的buffer大小
+    u64 bufferQuota_ = 0;  // 可分配的buffer大小
     std::mutex memResMutex_;
     CCLBufferManager *cclBufferManagerPtr_;
 };

@@ -30,7 +30,7 @@ public:
     HcclResult Setup();
     HcclResult SetupByMasterInfo();
     HcclResult Teardown();
-    HcclResult GetConnections(std::map<std::string, std::shared_ptr<HcclSocket>> &connectSockets);
+    HcclResult GetConnections(std::map<u32, std::shared_ptr<HcclSocket>> &connectSockets);
 
 private:
     HcclResult Connect(std::map<std::string, std::shared_ptr<HcclSocket>> &connectSockets);
@@ -64,6 +64,7 @@ private:
     std::shared_ptr<HcclSocket> listenSocket_;
     friend class TopoInfoExchangeDispather;
     std::map<std::string, std::shared_ptr<HcclSocket>> connectSockets_;
+    std::map<u32, std::shared_ptr<HcclSocket>> connectSocketsWithRankID_;
     std::mutex lock_;
     std::string identifier_;
 };

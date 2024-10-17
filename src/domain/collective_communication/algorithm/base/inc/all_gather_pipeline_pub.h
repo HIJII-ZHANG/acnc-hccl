@@ -46,11 +46,11 @@ private:
     HcclResult SubRecordMain();
 
     HcomCollOpInfo *opInfo_;
-    u64 memSliceCount_;
-    u32 userRank_;
+    u64 memSliceCount_ = 0;
+    u32 userRank_ = 0;
 
-    void* usrInMemAddr_;
-    void* usrOutMemAddr_;
+    void* usrInMemAddr_ = nullptr;
+    void* usrOutMemAddr_ = nullptr;
     std::vector<DeviceMem> dmaMem_;
 
     std::vector<Stream> subStream_;
@@ -58,10 +58,10 @@ private:
     std::vector<std::shared_ptr<LocalNotify>> streamNotifyMain_;
     std::vector<std::shared_ptr<LocalNotify>> streamNotifySub_;
 
-    u32 intraRankSize_;
-    u32 interRankSize_;
-    u32 intraRankId_;
-    u32 interRankId_;
+    u32 intraRankSize_ = 0;
+    u32 interRankSize_ = 0;
+    u32 intraRankId_ = 0;
+    u32 interRankId_ = 0;
 
     std::vector<LINK> intraLinks_;
     std::vector<LINK> interLinks_;

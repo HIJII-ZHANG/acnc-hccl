@@ -880,7 +880,9 @@ HcclResult CommFactory::SetIsUsedRdma(const CommParaInfo &commParaInfo,
 
     for (u32 ringIndex = 0; ringIndex < ringSize; ringIndex++) {
         SingleSubCommTransport &subCommTransport = commTransport[ringIndex];
-        subCommTransport.isUsedRdma = isUsedRdma;
+        for (auto &transportRequest : subCommTransport.transportRequests) {
+            transportRequest.isUsedRdma = isUsedRdma;
+        }
     }
     HCCL_INFO("[CommFactory][SetIsUsedRdma] commPlane[%d] isUsedRdma[%d]", commParaInfo.commPlane, isUsedRdma);
     return HCCL_SUCCESS;

@@ -11,6 +11,7 @@
 #include "queue_notify_manager.h"
 #include <algorithm>
 #include "device_capacity.h"
+#include "adapter_rts_common.h"
 
 namespace hccl {
 constexpr u32 NOTIFY_MAX_NUM = 2048;
@@ -116,4 +117,12 @@ HcclResult QueueNotifyManager::DestroyNotifies(NotifyPoolNoIPC &notifies)
     return HCCL_SUCCESS;
 }
 
+HcclResult QueueNotifyManager::ResetNotify()
+{
+    for (auto &localNotify : deviceNotifies_) {
+        CHK_SMART_PTR_NULL(localNotify);
+        CHK_RET(hrtNotifyReset(localNotify->ptr()));
+    }
+    return HCCL_SUCCESS;
+}
 }  // namespace hccl

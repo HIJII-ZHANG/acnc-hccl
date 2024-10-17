@@ -95,7 +95,13 @@ bool CollAllReduceExecutor::IsSmallData(const u64 totalSize, const u64 curSize)
     return false;
 }
 
-HcclResult CollAllReduceExecutor::GetSliceNum(const u64 totalSize, u64& sliceNum)
+bool CollAllReduceExecutor::IsDataSplitForRdmaSdmaConcurrent(const u64 curSize)
+{
+    HCCL_INFO("[CollAllGatherExecutor]opMeta is using the default option: not data split.");
+    return false;
+}
+
+HcclResult CollAllReduceExecutor::GetSliceNum(const u64 totalSize, const bool isSmallData, u64& sliceNum)
 {
     const AlgTypeLevel0 algLevel0 = GetLevel0AlgType(algType_);
     u64 actualSize = 0;
@@ -128,8 +134,12 @@ HcclResult CollAllReduceExecutor::GetSliceNum(const u64 totalSize, u64& sliceNum
             CHK_PRT_RET(sliceSize == 0,
                 HCCL_ERROR("[CollAllReduceExecutor][GetSliceNum]sliceSize is zero."),
                 HCCL_E_PARA);
-            sliceNum = std::ceil(actualSize * 1.0f / sliceSize);
+            sliceNum = static_cast<u64>(std::ceil(actualSize * 1.0f / sliceSize));
         }
+    } else if (UseInterServerNHRAlgo(algType_)) {
+        u64 sliceSize = (actualSize + (actualRankSize - 1)) / actualRankSize;
+        u64 sliceSizeAligned = ExecutorBase::RoundUpWithDivisor(sliceSize, HCCL_MIN_SLICE_ALIGN);
+        sliceNum = isSmallData ? 1 : static_cast<u64>(std::ceil(actualSize * 1.0f / sliceSizeAligned));
     }
     return HCCL_SUCCESS;
 }
@@ -205,13 +215,14 @@ HcclResult CollAllReduceExecutor::RunLoopInner(OpParam &param, const ReduceType 
             hugeData = hugeData || param.DataDes.count > INT32_MAX;
         }
 
-        u64 sliceNum = 0;
-        CHK_RET(GetSliceNum(execMem.count * unitSize, sliceNum));
         bool smallData = IsSmallData(param.DataDes.count * unitSize, curSize);  // override
-        u32 dataSplit = curSize <= HCCL_SDMA_RDMA_SPLIT_SIZE ? 1 : 0;
+        u64 sliceNum = 0;
+        CHK_RET(GetSliceNum(execMem.count * unitSize, smallData, sliceNum));
+        bool dataSplit = IsDataSplitForRdmaSdmaConcurrent(curSize);
+        bool isDeterministic = topoMatcher_->GetExternalInputHcclDeterministic();
         auto opMeta = HcclOpMetaInfo::GetOneForAllReduce(autoSelectedAlgTypeLevel1,
-            param.DataDes.dataType, reduceType, smallData, 1, hugeData, CopyPattern::BCOPY, sliceNum);
-        opMeta.dataSplit = dataSplit;
+            param.DataDes.dataType, reduceType, smallData, 1, hugeData, CopyPattern::BCOPY, sliceNum,
+            false, true, dataSplit, isDeterministic);
         CHK_RET(InitTask(dispatcher_, param.stream, opMeta.isEnableCache, opMeta.GetCacheKey()));
     }
 
@@ -263,11 +274,12 @@ HcclResult CollAllReduceExecutor::AvoidSubgraphLoop(OpParam &param, AlgResourceR
     bool hugeData =
         (param.DataDes.count * unitSize) / topoAttr_.deviceNumPerAggregation / HCCL_INTERNODE_MAX_DATA_RATE >
         RDMA_SEND_MAX_SIZE || (param.DataDes.count * unitSize) > SDMA_SEND_MAX_SIZE;
+    bool isDeterministic = topoMatcher_->GetExternalInputHcclDeterministic();
     auto opMeta =
         HcclOpMetaInfo::GetOneForAllReduce(originalAlgTypeLevel1, param.DataDes.dataType, reduceType,
-            param.DataDes.count * unitSize <= HCCL_SMALL_COUNT_128_KB, 1, hugeData, CopyPattern::ZCOPY);
+            param.DataDes.count * unitSize <= HCCL_SMALL_COUNT_128_KB, 1, hugeData, CopyPattern::ZCOPY, 1,
+            false, true, false, isDeterministic);
     CHK_RET(InitTask(dispatcher_, param.stream, opMeta.isEnableCache, opMeta.GetCacheKey()));
-
     DeviceMem src(param.inputPtr, 0);
     DeviceMem dst(algRes.cclInputMem.ptr(), 0);
     CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dst, src, param.stream));
@@ -356,12 +368,6 @@ HcclResult CollAllReduceExecutor::PrepareAivBuffers(u32 rankSize, u32 rankId, u3
             flagBuffers[i] = static_cast<u8 *>(outputMem.ptr()) + flagMemOffset;
         }
     }
-    return HCCL_SUCCESS;
-}
-
-HcclResult CollAllReduceExecutor::CheckIfAllowAHC()
-{
-    // 当前仅 AllReduce 场景支持 AHC
     return HCCL_SUCCESS;
 }
 

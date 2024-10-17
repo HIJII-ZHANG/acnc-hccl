@@ -28,9 +28,10 @@ HcclResult CollReduceSingleRankExecutor::KernelRun(const OpParam &param, ExecMem
     auto autoSelectedAlgTypeLevel1 = static_cast<u32>(algType_) >> HCCL_LEVEL_ALGO_WIDTH;
     bool isRootRank = param.root == topoAttr_.realUserRank ? true : false;
     bool hugeData = IsHugeData(totalSize); // override
+    bool isDeterministic = topoMatcher_->GetExternalInputHcclDeterministic();
 
     auto opMeta = HcclOpMetaInfo::GetOneForReduce(isRootRank, param.root, autoSelectedAlgTypeLevel1,
-        param.DataDes.dataType, reduceType, hugeData);
+        param.DataDes.dataType, reduceType, hugeData, isDeterministic);
     CHK_RET(InitTask(dispatcher_, const_cast<Stream&>(param.stream), opMeta.isEnableCache, opMeta.GetCacheKey()));
 
     DeviceMem srcMem(execMem.inputPtr, totalSize);

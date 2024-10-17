@@ -27,13 +27,7 @@ HcclResult CollCommExecutor::GetSubStreamInfoOnOneRing(const u32 ringIndex,
                                                        std::vector<std::shared_ptr<LocalNotify>> &subSignalsInOneRing)
 {
     u32 ringNum = algResResp_->slaveStreams.size() + 1;
-    if (topoMatcher_->GetExternalInputEnableRdmaSdmaConcurrent() &&
-        (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) &&
-        (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING)) {
-        subStreamsInOneRing.push_back(algResResp_->slaveStreams[ringIndex + RDMA_ADD_STREAMS_NUM]);
-        mainSignalsInOneRing.push_back(algResResp_->notifiesM2S[ringIndex + RDMA_ADD_STREAMS_NUM]);
-        subSignalsInOneRing.push_back(algResResp_->notifiesS2M[ringIndex + RDMA_ADD_STREAMS_NUM]);
-    } else if (ringNum == OUTER_PLANE_NUM_IN_NPRING_DOUBLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING) {
+    if (ringNum == OUTER_PLANE_NUM_IN_NPRING_DOUBLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING) {
         // double ring
         subStreamsInOneRing.push_back(algResResp_->slaveStreams[ringIndex + 1]);
         mainSignalsInOneRing.push_back(algResResp_->notifiesM2S[ringIndex + 1]);
@@ -142,7 +136,7 @@ HcclResult CollCommExecutor::MultiRingAllReduce(const std::string &tag, DeviceMe
             }
         }
     }
-    // 添加空task,保证执行时不乱序
+
     CHK_RET(ExecutorBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     return HCCL_SUCCESS;
 }
@@ -194,18 +188,11 @@ HcclResult CollCommExecutor::MultiRingAllGather(const std::string &tag, DeviceMe
             CHK_RET(GetSubStreamInfoOnOneRing(ringIndex, subStreamsInOneRing, mainSignalsInOneRing,
                                               subSignalsInOneRing));
         }
-        std::vector<std::shared_ptr<ThreadManage>> threadManage;
-        if (!topoMatcher_->GetExternalInputHcclEnableFfts() &&
-            workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-            u32 slaveNum = algResResp_->slaveStreams.size();
-            threadManage.resize(slaveNum);
-            CHK_RET(GetStreamThreadManage(tag, slaveNum + 1, threadManage));
-        }
         if (ringIndex != (ringNum - 1)) { // 最后一个环是主stream，所以这里减1，符合条件的走从stream
             if (!topoMatcher_->GetExternalInputHcclEnableFfts() &&
                 workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
                 if (opInfo != nullptr) {
-                    threadManage[ringIndex]->Prepare(
+                    algResResp_->threadManage[ringIndex]->Prepare(
                         outputMem, outputMem, inputMem, count, dataType,
                         algResResp_->slaveStreams[ringIndex], HcclReduceOp::HCCL_REDUCE_RESERVED, OUTER_BRIDGE_RANK_ID,
                         singleRingSliceZero, baseOffset, ringNics[ringIndex], tag, profStage,
@@ -213,13 +200,13 @@ HcclResult CollCommExecutor::MultiRingAllGather(const std::string &tag, DeviceMe
                         ringIndex, ExecutorType::ALLGATHER_RING_DIRECT, 0, opInfo, subStreamsInOneRing,
                         mainSignalsInOneRing, subSignalsInOneRing, rankOrder, userMemOutputSlices);
                 } else {
-                    threadManage[ringIndex]->Prepare(outputMem, outputMem, inputMem, count, dataType,
+                    algResResp_->threadManage[ringIndex]->Prepare(outputMem, outputMem, inputMem, count, dataType,
                         algResResp_->slaveStreams[ringIndex], HcclReduceOp::HCCL_REDUCE_RESERVED, OUTER_BRIDGE_RANK_ID,
                         singleRingSliceZero, baseOffset, ringNics[ringIndex], tag, profStage,
                         outerRingCommInfo, algResResp_->notifiesS2M[ringIndex], algResResp_->notifiesM2S[ringIndex],
                         ringIndex, ExecutorType::ALLGATHER_RING);
                 }
-                threadManage[ringIndex]->NotifyStart();    // 给线程发信号启动处理
+                algResResp_->threadManage[ringIndex]->NotifyStart();    // 给线程发信号启动处理
             } else {
                 ret = LocalNotify::Wait(algResResp_->slaveStreams[ringIndex], dispatcher_,
                     algResResp_->notifiesS2M[ringIndex], profStage);
@@ -296,7 +283,7 @@ HcclResult CollCommExecutor::MultiRingAllGather(const std::string &tag, DeviceMe
             for (u32 ring = 0; ring < (ringNum - 1); ring++) {
                 if (!topoMatcher_->GetExternalInputHcclEnableFfts() &&
                     workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-                    threadManage[ring]->WaitDone(); // 单算子模式，等待线程处理完成信号
+                    algResResp_->threadManage[ring]->WaitDone(); // 单算子模式，等待线程处理完成信号
                 }
                 ret = LocalNotify::Wait(stream, dispatcher_, algResResp_->notifiesM2S[ring], profStage);
                 CHK_PRT_RET(ret != HCCL_SUCCESS,
@@ -304,7 +291,7 @@ HcclResult CollCommExecutor::MultiRingAllGather(const std::string &tag, DeviceMe
             }
         }
     }
-    // 添加空task,保证执行时不乱序
+
     CHK_RET(ExecutorBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     return HCCL_SUCCESS;
 }
@@ -362,13 +349,6 @@ HcclResult CollCommExecutor::MultiRingAllGatherConcurrent(const std::string &tag
             CHK_RET(GetSubStreamInfoOnOneRing(ringIndex, subStreamsInOneRing, mainSignalsInOneRing,
                                               subSignalsInOneRing));
         }
-        std::vector<std::shared_ptr<ThreadManage>> threadManage;
-        if (!topoMatcher_->GetExternalInputHcclEnableFfts() &&
-            workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-            u32 slaveNum = algResResp_->slaveStreams.size();
-            threadManage.resize(slaveNum);
-            CHK_RET(GetStreamThreadManage(tag, slaveNum + 1, threadManage));
-        }
         bool isSdma = multRingsSliceZero[ringIndex].first;
         if (ringIndex != (ringNum - 1)) { // 最后一个环是主stream，所以这里减1，符合条件的走从stream
             if (!topoMatcher_->GetExternalInputHcclEnableFfts() &&
@@ -376,7 +356,7 @@ HcclResult CollCommExecutor::MultiRingAllGatherConcurrent(const std::string &tag
                 if (opInfo != nullptr) {
                     ExecutorType type = isSdma ?
                         ExecutorType::ALLGATHER_RING_DIRECT : ExecutorType::ALLGATHER_RING_DIRECT_RDMA;
-                    threadManage[ringIndex]->Prepare(
+                    algResResp_->threadManage[ringIndex]->Prepare(
                         outputMem, outputMem, inputMem, count, dataType,
                         algResResp_->slaveStreams[ringIndex], HcclReduceOp::HCCL_REDUCE_RESERVED, OUTER_BRIDGE_RANK_ID,
                         singleRingSliceZero, baseOffset, ringNics[ringIndex%halfRingSize], tag, profStage,
@@ -384,13 +364,13 @@ HcclResult CollCommExecutor::MultiRingAllGatherConcurrent(const std::string &tag
                         ringIndex, type, 0, opInfo, subStreamsInOneRing,
                         mainSignalsInOneRing, subSignalsInOneRing, rankOrder, userMemOutputSlices);
                 } else {
-                    threadManage[ringIndex]->Prepare(outputMem, outputMem, inputMem, count, dataType,
+                    algResResp_->threadManage[ringIndex]->Prepare(outputMem, outputMem, inputMem, count, dataType,
                         algResResp_->slaveStreams[ringIndex], HcclReduceOp::HCCL_REDUCE_RESERVED, OUTER_BRIDGE_RANK_ID,
                         singleRingSliceZero, baseOffset, ringNics[ringIndex%halfRingSize], tag, profStage,
                         outerRingCommInfo, algResResp_->notifiesS2M[ringIndex], algResResp_->notifiesM2S[ringIndex],
                         ringIndex, ExecutorType::ALLGATHER_RING);
                 }
-                threadManage[ringIndex]->NotifyStart();    // 给线程发信号启动处理
+                algResResp_->threadManage[ringIndex]->NotifyStart();    // 给线程发信号启动处理
             } else {
                 ret = LocalNotify::Wait(algResResp_->slaveStreams[ringIndex], dispatcher_,
                     algResResp_->notifiesS2M[ringIndex], profStage);
@@ -468,7 +448,7 @@ HcclResult CollCommExecutor::MultiRingAllGatherConcurrent(const std::string &tag
             for (u32 ring = 0; ring < (ringNum - 1); ring++) {
                 if (!topoMatcher_->GetExternalInputHcclEnableFfts() &&
                     workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-                    threadManage[ring]->WaitDone(); // 单算子模式，等待线程处理完成信号
+                    algResResp_->threadManage[ring]->WaitDone(); // 单算子模式，等待线程处理完成信号
                 }
                 ret = LocalNotify::Wait(stream, dispatcher_, algResResp_->notifiesM2S[ring], profStage);
                 CHK_PRT_RET(ret != HCCL_SUCCESS,
@@ -476,7 +456,98 @@ HcclResult CollCommExecutor::MultiRingAllGatherConcurrent(const std::string &tag
             }
         }
     }
-    // 添加空task,保证执行时不乱序
+
+    CHK_RET(ExecutorBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollCommExecutor::Level1AllGatherConcurrent(DeviceMem inputMem, DeviceMem outputMem,const u64 count,
+    const HcclDataType dataType, Stream stream, s32 profStage,std::vector<Slice> &level1DataSegsSlice, u32 syncTrans)
+{
+    std::vector<std::pair<bool, std::vector<Slice>>> innerMultSlice;
+    std::vector<Slice> level1DataSegsSliceSdma;
+    std::vector<Slice> level1DataSegsSliceRdma;
+    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    u32 level0ServerIndex = outerCommInfo.localRank;
+    SubCommInfo innerCommInfo = GetSubCommInfo(COMM_LEVEL1, level0ServerIndex);
+    CHK_RET(CheckCommSize(COMM_LEVEL2, COMM_INDEX_0 + 1));
+    SubCommInfo level2CommInfo = GetSubCommInfo(COMM_LEVEL2, COMM_INDEX_0);
+    HcclResult ret = HCCL_SUCCESS;
+    innerMultSlice.resize(RDMA_PLANE_NUM_IN_NPRING_DOUBLE);
+
+    for (u32 i = 0; i < innerCommInfo.localRankSize; i++) {
+        Slice sdmaSlice;
+        Slice rdmaSlice;
+        u64 sdmaSliceSize =
+            ((level1DataSegsSlice[i].size <= HCCL_MIN_SLICE_ALIGN_910_93) || (syncTrans == MAX_SPLIT_VALUE))
+                ? level1DataSegsSlice[i].size
+                : ((syncTrans * level1DataSegsSlice[i].size / MAX_SPLIT_VALUE) / HCCL_MIN_SLICE_ALIGN_910_93) *
+                      HCCL_MIN_SLICE_ALIGN_910_93;
+        sdmaSlice.size = sdmaSliceSize;
+        sdmaSlice.offset = level1DataSegsSlice[i].offset;
+        rdmaSlice.size = level1DataSegsSlice[i].size - sdmaSliceSize;
+        rdmaSlice.offset = level1DataSegsSlice[i].offset + sdmaSliceSize;
+        level1DataSegsSliceSdma.push_back(sdmaSlice);
+        level1DataSegsSliceRdma.push_back(rdmaSlice);
+        HCCL_DEBUG("Level1 index:[%u], Orignal [offset %llu, size %llu], sdma [offset %llu, size %llu], "
+                   "rdma [offset %llu, size %llu]", i, level1DataSegsSlice[i].offset, level1DataSegsSlice[i].size,
+            sdmaSlice.offset, sdmaSlice.size, rdmaSlice.offset, rdmaSlice.size);
+    }
+    innerMultSlice[0] = std::make_pair(true, level1DataSegsSliceSdma);
+    innerMultSlice[1] = std::make_pair(false, level1DataSegsSliceRdma);
+
+    u32 commPlaneNum = innerMultSlice.size();
+    for (u32 planeIndex = 0; planeIndex < commPlaneNum; planeIndex++) {
+        std::vector<Slice> &singleSlice = innerMultSlice[planeIndex].second;
+        SubCommInfo innerRdmaCommInfo = GetSubCommInfo(COMM_LEVEL1_RDMA, level0ServerIndex);
+        SubCommInfo level1CommInfo = innerMultSlice[planeIndex].first ? innerCommInfo : innerRdmaCommInfo;
+        std::unique_ptr<ExecutorBase> innerExecutor;
+        if (UseInterServerNBAlgo(algType_)) {
+            innerExecutor.reset(new (std::nothrow) AllGatherNB(dispatcher_));
+            HCCL_INFO("allgather ring: using nonuniform-bruck algo inter-server.");
+        } else {
+            innerExecutor.reset(new (std::nothrow) AllGatherRing(dispatcher_));
+            HCCL_INFO("allgather ring: using ring algo inter-server.");
+        }
+        CHK_SMART_PTR_NULL(innerExecutor);
+
+        if (planeIndex != (commPlaneNum - 1)) {
+            ret = LocalNotify::Wait(
+                algResResp_->slaveStreams[planeIndex], dispatcher_, algResResp_->notifiesS2M[planeIndex], profStage);
+            CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("stream[%u] wait failed", planeIndex), ret);
+
+            CHK_RET(innerExecutor->Prepare(outputMem, outputMem, inputMem, count,
+                dataType, algResResp_->slaveStreams[planeIndex], HCCL_REDUCE_RESERVED,
+                INVALID_VALUE_RANKID, singleSlice, 0));
+
+            CHK_RET(innerExecutor->RegisterProfiler(
+                (level1CommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level2CommInfo.localRank,
+                profStage, HCCL_EXEC_STEP_NOT_SET, algResResp_->slaveStreams[planeIndex]));
+
+            CHK_RET(RunTemplate(innerExecutor, level1CommInfo));
+            ret = LocalNotify::Post(
+                algResResp_->slaveStreams[planeIndex], dispatcher_, algResResp_->notifiesM2S[planeIndex], profStage);
+            CHK_PRT_RET(
+                ret != HCCL_SUCCESS, HCCL_ERROR("[collAllGather]level1 stream[%u] record failed", planeIndex), ret);
+            // 主环record启动从环
+            ret = LocalNotify::Post(stream, dispatcher_, algResResp_->notifiesS2M[planeIndex], profStage);
+            CHK_PRT_RET(
+                ret != HCCL_SUCCESS, HCCL_ERROR("[collAllGather]level1 stream[%u] record failed", planeIndex), ret);
+        } else {
+            CHK_RET(innerExecutor->Prepare(outputMem, outputMem, inputMem, count, dataType, stream,
+                HCCL_REDUCE_RESERVED, INVALID_VALUE_RANKID, singleSlice, 0));
+            CHK_RET(innerExecutor->RegisterProfiler(
+                (level1CommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level2CommInfo.localRank,
+                profStage, HCCL_EXEC_STEP_NOT_SET, stream));
+
+            CHK_RET(RunTemplate(innerExecutor, level1CommInfo));
+            for (u32 ring = 0; ring < (commPlaneNum - 1); ring++) {
+                ret = LocalNotify::Wait(stream, dispatcher_, algResResp_->notifiesM2S[ring], profStage);
+                CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("stream[%u] wait failed", ring), ret);
+            }
+        }
+    }
+    HCCL_INFO("Level1AllGatherConcurrent run success");
     CHK_RET(ExecutorBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     return HCCL_SUCCESS;
 }
@@ -565,13 +636,6 @@ HcclResult CollCommExecutor::MultiRingReduceScatter(const std::string &tag, Devi
             CHK_RET(GetSubStreamInfoOnOneRing(ringIndex, subStreamsInOneRing, mainSignalsInOneRing,
                                               subSignalsInOneRing));
         }
-        std::vector<std::shared_ptr<ThreadManage>> threadManage;
-        if (!topoMatcher_->GetExternalInputHcclEnableFfts() &&
-            workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-            u32 slaveNum = algResResp_->slaveStreams.size();
-            threadManage.resize(slaveNum);
-            CHK_RET(GetStreamThreadManage(tag, slaveNum + 1, threadManage));
-        }
         if (ringIndex != (ringNum - 1)) {  // 0~ringNum-2的环
             if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB) { // offline
                 ret = StreamActiveManager::GetInstance(topoAttr_.deviceLogicId).StreamActive(
@@ -584,7 +648,7 @@ HcclResult CollCommExecutor::MultiRingReduceScatter(const std::string &tag, Devi
                 workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
                 /* 更新线程参数 */
                 if (opInfo != nullptr) {
-                    threadManage[ringIndex]->Prepare(
+                    algResResp_->threadManage[ringIndex]->Prepare(
                         inputMem, inputMem, outputMem, count, dataType, algResResp_->slaveStreams[ringIndex], reductionOp,
                         OUTER_BRIDGE_RANK_ID, singleRingSliceZero, baseOffset, ringNics[ringIndex], tag, profStage,
                         outerRingCommInfo, algResResp_->notifiesS2M[ringIndex], algResResp_->notifiesM2S[ringIndex],
@@ -592,14 +656,14 @@ HcclResult CollCommExecutor::MultiRingReduceScatter(const std::string &tag, Devi
                         subStreamsInOneRing, mainSignalsInOneRing, subSignalsInOneRing, rankOrder,
                         userMemInputSlices);
                 } else {
-                    threadManage[ringIndex]->Prepare(inputMem, inputMem, outputMem, count, dataType,
+                    algResResp_->threadManage[ringIndex]->Prepare(inputMem, inputMem, outputMem, count, dataType,
                         algResResp_->slaveStreams[ringIndex], reductionOp, OUTER_BRIDGE_RANK_ID, singleRingSliceZero,
                         baseOffset, ringNics[ringIndex], tag, profStage, outerRingCommInfo,
                         algResResp_->notifiesS2M[ringIndex], algResResp_->notifiesM2S[ringIndex], ringIndex,
                         ExecutorType::REDUCE_SCATTER_RING, reduceAttr);
                 }
 
-                threadManage[ringIndex]->NotifyStart(); // 给线程发通知启动线程执行
+                algResResp_->threadManage[ringIndex]->NotifyStart(); // 给线程发通知启动线程执行
             } else {
                 std::unique_ptr<ExecutorBase> executor;
                 if (opInfo != nullptr) {
@@ -674,7 +738,7 @@ HcclResult CollCommExecutor::MultiRingReduceScatter(const std::string &tag, Devi
             for (u32 ring = 0; ring < (ringNum - 1); ring++) {
                 if (!topoMatcher_->GetExternalInputHcclEnableFfts() &&
                     workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-                    threadManage[ring]->WaitDone();
+                    algResResp_->threadManage[ring]->WaitDone();
                 }
                 /* 等待executor执行完毕 */
                 ret = LocalNotify::Wait(stream, dispatcher_, algResResp_->notifiesM2S[ring], profStage);
@@ -825,7 +889,7 @@ HcclResult CollCommExecutor::MultiRingReduceScatterConcurrent(const std::string 
                 userMemInputSlices));
         } else {
             userMemInputSlices = multRingsUserMemSlice[ringIndex].second;
-        }   
+        }
         std::vector<u32> rankOrder;
         CHK_RET(GetRankOrder(multiRingsOrder, commIndex, rankOrder));
 
@@ -841,13 +905,6 @@ HcclResult CollCommExecutor::MultiRingReduceScatterConcurrent(const std::string 
             CHK_RET(GetSubStreamInfoOnOneRing(ringIndex, subStreamsInOneRing, mainSignalsInOneRing,
                                               subSignalsInOneRing));
         }
-        std::vector<std::shared_ptr<ThreadManage>> threadManage;
-        if (!topoMatcher_->GetExternalInputHcclEnableFfts() &&
-            workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-            u32 slaveNum = algResResp_->slaveStreams.size();
-            threadManage.resize(slaveNum);
-            CHK_RET(GetStreamThreadManage(tag, slaveNum + 1, threadManage));
-        }
         bool isSdma = multRingsSliceZero[ringIndex].first;
         if (ringIndex != (ringNum - 1)) {  // 0~ringNum-2的环
             if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB) { // offline
@@ -862,9 +919,9 @@ HcclResult CollCommExecutor::MultiRingReduceScatterConcurrent(const std::string 
                 workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
                 /* 更新线程参数 */
                 if (opInfo != nullptr) {
-                     ExecutorType type = isSdma ? 
+                    ExecutorType type = isSdma ?
                        ExecutorType::REDUCE_SCATTER_RING_DIRECT : ExecutorType::REDUCE_SCATTER_RING_DIRECT_RDMA;
-                    threadManage[ringIndex]->Prepare(
+                    algResResp_->threadManage[ringIndex]->Prepare(
                         inputMem, inputMem, outputMem, count, dataType, algResResp_->slaveStreams[ringIndex], reductionOp,
                         OUTER_BRIDGE_RANK_ID, singleRingSliceZero, baseOffset, ringNics[ringIndex % halfRingSize], tag,
                         profStage, outerRingCommInfo, algResResp_->notifiesS2M[ringIndex],
@@ -872,14 +929,14 @@ HcclResult CollCommExecutor::MultiRingReduceScatterConcurrent(const std::string 
                         reduceAttr, opInfo, subStreamsInOneRing, mainSignalsInOneRing, subSignalsInOneRing, rankOrder,
                         userMemInputSlices);
                 } else {
-                    threadManage[ringIndex]->Prepare(inputMem, inputMem, outputMem, count, dataType,
+                    algResResp_->threadManage[ringIndex]->Prepare(inputMem, inputMem, outputMem, count, dataType,
                         algResResp_->slaveStreams[ringIndex], reductionOp, OUTER_BRIDGE_RANK_ID, singleRingSliceZero,
                         baseOffset, ringNics[ringIndex % halfRingSize], tag, profStage, outerRingCommInfo,
                         algResResp_->notifiesS2M[ringIndex], algResResp_->notifiesM2S[ringIndex], ringIndex,
                         ExecutorType::REDUCE_SCATTER_RING, reduceAttr);
                 }
 
-                threadManage[ringIndex]->NotifyStart(); // 给线程发通知启动线程执行
+                algResResp_->threadManage[ringIndex]->NotifyStart(); // 给线程发通知启动线程执行
             } else {
                 std::unique_ptr<ExecutorBase> executor;
                 if (opInfo != nullptr) {
@@ -958,7 +1015,7 @@ HcclResult CollCommExecutor::MultiRingReduceScatterConcurrent(const std::string 
             for (u32 ring = 0; ring < (ringNum - 1); ring++) {
                 if (!topoMatcher_->GetExternalInputHcclEnableFfts() &&
                     workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-                    threadManage[ring]->WaitDone();
+                    algResResp_->threadManage[ring]->WaitDone();
                 }
                 /* 等待executor执行完毕 */
                 ret = LocalNotify::Wait(stream, dispatcher_, algResResp_->notifiesM2S[ring], profStage);
@@ -969,6 +1026,184 @@ HcclResult CollCommExecutor::MultiRingReduceScatterConcurrent(const std::string 
         }
     }
 
+    CHK_RET(ExecutorBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollCommExecutor::Level1ReduceScatterConcurrent(DeviceMem inputMem, DeviceMem scratchMem,const u64 count,
+    const HcclDataType dataType, const HcclReduceOp reductionOp, Stream stream, s32 profStage,
+    std::vector<Slice> &level1DataSegsSlice, u32 syncTrans, u64 reduceAttr)
+{
+    (void)profStage;
+    std::vector<std::pair<bool, std::vector<Slice>>> innerMultSlice;
+    innerMultSlice.resize(RDMA_PLANE_NUM_IN_NPRING_DOUBLE);
+    std::vector<Slice> sdmaSlice;
+    std::vector<Slice> rdmaSlice;
+    for (u32 segsIndex = 0; segsIndex < level1DataSegsSlice.size(); segsIndex++) {
+        u64 totalSize = level1DataSegsSlice[segsIndex].size;
+        u64 sdmaSliceOffset = level1DataSegsSlice[segsIndex].offset;
+        u64 sdmaSliceSize = ((totalSize <= HCCL_MIN_SLICE_ALIGN_910_93) || (syncTrans == MAX_SPLIT_VALUE)) ? totalSize
+                                 : ((syncTrans * totalSize / MAX_SPLIT_VALUE) / HCCL_MIN_SLICE_ALIGN_910_93) *
+                                       HCCL_MIN_SLICE_ALIGN_910_93;
+        Slice sdmaSliceTmp;
+        sdmaSliceTmp.offset = sdmaSliceOffset;
+        sdmaSliceTmp.size = sdmaSliceSize;
+        Slice rdmaSliceTmp;
+        rdmaSliceTmp.offset = sdmaSliceOffset + sdmaSliceSize;
+        rdmaSliceTmp.size = totalSize - sdmaSliceSize;
+        sdmaSlice.push_back(sdmaSliceTmp);
+        rdmaSlice.push_back(rdmaSliceTmp);
+        HCCL_DEBUG("Inner data segId:%u, Orignal [offset %llu, size %llu], sdma [offset %llu, size %llu], "
+                   "rdma [offset %llu, size %llu]", segsIndex, sdmaSliceOffset, totalSize, sdmaSliceTmp.offset,
+                   sdmaSliceTmp.size, rdmaSliceTmp.offset, rdmaSliceTmp.size);
+    }
+    innerMultSlice[0] = std::make_pair(true, sdmaSlice);   // true表示使用sdma
+    innerMultSlice[1] = std::make_pair(false, rdmaSlice);  // false表示rdma
+
+    u32 commPlaneNum = innerMultSlice.size();
+    u32 commIndex = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0).localRank;
+    CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
+    SubCommInfo innerCommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
+    CHK_RET(CheckCommSize(COMM_LEVEL1_RDMA, commIndex + 1));
+    SubCommInfo innerRdmaCommInfo = GetSubCommInfo(COMM_LEVEL1_RDMA, commIndex);
+    for (u32 planeIndex = 0; planeIndex < commPlaneNum; planeIndex++) {
+        std::vector<Slice> &singleSlice = innerMultSlice[planeIndex].second;
+        SubCommInfo level1CommInfo = innerMultSlice[planeIndex].first ? innerCommInfo : innerRdmaCommInfo;
+        std::unique_ptr<ExecutorBase> innerExecutor;
+        if (UseInterServerNBAlgo(algType_)) {
+            innerExecutor.reset(new (std::nothrow) ReduceScatterNB(dispatcher_, reduceAttr));
+            HCCL_INFO("reducescatter ring: using nonuniform-bruck algo inter-server.");
+        } else {
+            innerExecutor.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
+            HCCL_INFO("reducescatter ring: using ring algo inter-server.");
+        }
+        CHK_SMART_PTR_NULL(innerExecutor);
+        HcclResult ret = HCCL_SUCCESS;
+
+        if (planeIndex != (commPlaneNum - 1)) {
+            ret = LocalNotify::Wait(
+                algResResp_->slaveStreams[planeIndex], dispatcher_, algResResp_->notifiesS2M[planeIndex], reductionOp);
+            CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("stream[%u] wait failed", planeIndex), ret);
+
+            CHK_RET(innerExecutor->Prepare(inputMem, inputMem, scratchMem, count, dataType,
+                algResResp_->slaveStreams[planeIndex], reductionOp, OUTER_BRIDGE_RANK_ID, singleSlice));
+
+            CHK_RET(innerExecutor->RegisterProfiler(
+                (level1CommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1CommInfo.localRank,
+                reductionOp, HCCL_EXEC_STEP_NOT_SET, algResResp_->slaveStreams[planeIndex]));
+
+            CHK_RET(RunTemplate(innerExecutor, level1CommInfo));
+            ret = LocalNotify::Post(
+                algResResp_->slaveStreams[planeIndex], dispatcher_, algResResp_->notifiesM2S[planeIndex], reductionOp);
+            CHK_PRT_RET(
+                ret != HCCL_SUCCESS, HCCL_ERROR("[collAllGather]level1 stream[%u] record failed", planeIndex), ret);
+            // 主环record启动从环
+            ret = LocalNotify::Post(stream, dispatcher_, algResResp_->notifiesS2M[planeIndex], reductionOp);
+            CHK_PRT_RET(
+                ret != HCCL_SUCCESS, HCCL_ERROR("[collAllGather]level1 stream[%u] record failed", planeIndex), ret);
+        } else {
+            CHK_RET(innerExecutor->Prepare(inputMem, inputMem, scratchMem, count, dataType, stream,
+                reductionOp, OUTER_BRIDGE_RANK_ID, singleSlice));
+            CHK_RET(innerExecutor->RegisterProfiler(
+                (level1CommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1CommInfo.localRank,
+                reductionOp, HCCL_EXEC_STEP_NOT_SET, stream));
+
+            CHK_RET(RunTemplate(innerExecutor, level1CommInfo));
+            for (u32 ring = 0; ring < (commPlaneNum - 1); ring++) {
+                ret = LocalNotify::Wait(stream, dispatcher_, algResResp_->notifiesM2S[ring], reductionOp);
+                CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("param.stream[%u] wait failed", ring), ret);
+            }
+        }
+    }
+    HCCL_INFO("Level1ReduceScatterConcurrent run success");
+    CHK_RET(ExecutorBase::ExecEmptyTask(inputMem, scratchMem, stream, dispatcher_));
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollCommExecutor::Level1AllReduceConcurrent(DeviceMem inputMem, DeviceMem outputMem,const u64 count,
+    const HcclDataType dataType, const HcclReduceOp reductionOp, Stream stream, s32 profStage,
+     std::vector<Slice> &dataSegsSlice, u32 segmentIdx, u32 commIndex, u64 hdSize, u32 syncTrans)
+{
+    (void)count;
+    CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
+    SubCommInfo innerCommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
+    std::vector<std::pair<bool, Slice>> innerMultSlice;
+    innerMultSlice.resize(RDMA_PLANE_NUM_IN_NPRING_DOUBLE);
+    Slice sdmaSlice;
+    Slice rdmaSlice;
+    u64 sdmaSliceSize = ((hdSize <= HCCL_MIN_SLICE_ALIGN_910_93) || (syncTrans == MAX_SPLIT_VALUE)) ? hdSize
+            : ((syncTrans * hdSize / MAX_SPLIT_VALUE) / HCCL_MIN_SLICE_ALIGN_910_93) * HCCL_MIN_SLICE_ALIGN_910_93;
+    sdmaSlice.size = sdmaSliceSize;
+    sdmaSlice.offset = dataSegsSlice[segmentIdx].offset;
+    rdmaSlice.size = hdSize - sdmaSlice.size;
+    rdmaSlice.offset = dataSegsSlice[segmentIdx].offset + sdmaSlice.size;
+    HCCL_DEBUG("Level1 Total [offset:%u, size:%u], sdma [offset %llu, size %llu], rdma [offset %llu, size %llu], ",
+        hdSize, sdmaSlice.offset, sdmaSlice.offset, sdmaSlice.size, rdmaSlice.offset, rdmaSlice.size);
+    innerMultSlice[0] = std::make_pair(true, sdmaSlice);
+    innerMultSlice[1] = std::make_pair(false, rdmaSlice);
+    // SDMA和RDMA通信域
+    u32 commPlaneNum = innerMultSlice.size();
+
+    for (u32 planeIndex = 0; planeIndex < commPlaneNum; planeIndex++) {
+        HcclResult ret = HCCL_SUCCESS;
+        Slice &dmaSlice = innerMultSlice[planeIndex].second;
+        SubCommInfo innerRdmaCommInfo = GetSubCommInfo(COMM_LEVEL1_RDMA, commIndex);
+        SubCommInfo level1CommInfo = innerMultSlice[planeIndex].first ? innerCommInfo : innerRdmaCommInfo;
+        DeviceMem allreduceInput = inputMem.range(dmaSlice.offset, dmaSlice.size);
+        CHK_SMART_PTR_NULL(allreduceInput);
+        DeviceMem allreduceOutput = outputMem.range(dmaSlice.offset, dmaSlice.size);
+        CHK_SMART_PTR_NULL(allreduceOutput);
+        u32 perDataSize = 0;
+        CHK_RET(SalGetDataTypeSize(dataType, perDataSize));
+        u64 SliceCount = dmaSlice.size / perDataSize;
+        u64 reduceAttr = GetReduceAttr(allreduceInput, allreduceOutput, dataType, reductionOp);
+        std::unique_ptr<ExecutorBase> innerExecutor;
+        if (UseInterServerNBAlgo(algType_)) {
+            innerExecutor.reset(new (std::nothrow) AllReduceNB(dispatcher_, reduceAttr));
+            HCCL_INFO("allreduce ring: using nonuniform-bruck algo inter-server.");
+        } else {
+            innerExecutor.reset(new (std::nothrow) AllReduceRing(dispatcher_, reduceAttr));
+            HCCL_INFO("allreduce ring: using ring algo inter-server.");
+        }
+        CHK_SMART_PTR_NULL(innerExecutor);
+
+        if (planeIndex != (commPlaneNum - 1)) {
+            ret = LocalNotify::Wait(
+                algResResp_->slaveStreams[planeIndex], dispatcher_, algResResp_->notifiesS2M[planeIndex], profStage);
+            CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("stream[%u] wait failed", planeIndex), ret);
+
+            CHK_RET(innerExecutor->Prepare(allreduceInput, allreduceOutput, allreduceOutput, SliceCount,
+                dataType, algResResp_->slaveStreams[planeIndex], reductionOp, OUTER_BRIDGE_RANK_ID,
+                std::vector<Slice>(0), dmaSlice.offset));
+
+            CHK_RET(innerExecutor->RegisterProfiler(
+                (level1CommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1CommInfo.localRank,
+                profStage, HCCL_EXEC_STEP_NOT_SET, algResResp_->slaveStreams[planeIndex]));
+
+            CHK_RET(RunTemplate(innerExecutor, level1CommInfo));
+            ret = LocalNotify::Post(
+                algResResp_->slaveStreams[planeIndex], dispatcher_, algResResp_->notifiesM2S[planeIndex], profStage);
+            CHK_PRT_RET(
+                ret != HCCL_SUCCESS, HCCL_ERROR("[collAllReduce]level1 stream[%u] record failed", planeIndex), ret);
+            // 主环record启动从环
+            ret = LocalNotify::Post(stream, dispatcher_, algResResp_->notifiesS2M[planeIndex], profStage);
+            CHK_PRT_RET(
+                ret != HCCL_SUCCESS, HCCL_ERROR("[collAllReduce]level1 stream[%u] record failed", planeIndex), ret);
+        } else {
+            CHK_RET(innerExecutor->Prepare(allreduceInput, allreduceOutput, allreduceOutput, SliceCount, dataType,
+                stream, reductionOp, OUTER_BRIDGE_RANK_ID, std::vector<Slice>(0), dmaSlice.offset));
+            CHK_RET(innerExecutor->RegisterProfiler(
+                (level1CommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1CommInfo.localRank,
+                profStage, HCCL_EXEC_STEP_NOT_SET, stream));
+
+            CHK_RET(RunTemplate(innerExecutor, level1CommInfo));
+            for (u32 ring = 0; ring < (commPlaneNum - 1); ring++) {
+                ret = LocalNotify::Wait(stream, dispatcher_, algResResp_->notifiesM2S[ring], profStage);
+                CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("param.stream[%u] wait failed", ring), ret);
+            }
+        }
+    }
+    HCCL_INFO("Level1AllReduceConcurrent run success");
     CHK_RET(ExecutorBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     return HCCL_SUCCESS;
 }
@@ -1268,7 +1503,8 @@ std::vector<std::vector<u32>>  CollCommExecutor::GetRingsOrderByTopoType(u32 ran
         std::vector<u32> tmpOuter0;   // 环0
         std::vector<u32> tmpOuter1;  // 环1
         std::vector<u32> rohOuter;
-        if (topoMatcher_->GetExternalInputEnableRdmaSdmaConcurrent() && (topoMatcher_->CheckSdmaWithRohTopo(nicList, rohOuter))) {
+        if (topoMatcher_->GetExternalInputEnableRdmaSdmaConcurrent() && (topoMatcher_->CheckSdmaWithRohTopo(nicList, rohOuter)
+            && workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE)) {
             tmpOuter0 = rohOuter;          // 环0, 8卡 { 0, 1, 3, 2, 4, 5, 7, 6 };
             tmpOuter1.reserve(ranksSize);  // 环1, 8卡 { 0, 6, 7, 5, 4, 2, 3, 1 };
             tmpOuter1.push_back(rohOuter[0]);
@@ -1289,15 +1525,17 @@ std::vector<std::vector<u32>>  CollCommExecutor::GetRingsOrderByTopoType(u32 ran
         multiRingOrder.push_back(tmpOuter0);
     }
     // 打印多个环
-    for (size_t i = 0; i < multiRingOrder.size(); i++) {
-        auto ring = multiRingOrder[i];
-        std::ostringstream stringRepresentation;
-        for (std::vector<uint32_t>::iterator it = ring.begin(); it != ring.end(); it++) {
-            stringRepresentation << *it << " ";
+    if (UNLIKELY(CheckDebugLogLevel())) {
+        for (size_t i = 0; i < multiRingOrder.size(); i++) {
+            auto ring = multiRingOrder[i];
+            std::ostringstream stringRepresentation;
+            for (std::vector<uint32_t>::iterator it = ring.begin(); it != ring.end(); it++) {
+                stringRepresentation << *it << " ";
+            }
+            std::string ringString = stringRepresentation.str();
+            const char *charRing = ringString.c_str();
+            HCCL_DEBUG("[GetRingsOrderByTopoType] The No.%zu ring: %s", i, charRing);
         }
-        std::string ringString = stringRepresentation.str();
-        const char *charRing = ringString.c_str();
-        HCCL_DEBUG("[GetRingsOrderByTopoType] The No.%zu ring: %s", i, charRing);
     }
     return multiRingOrder;
 }
@@ -1312,7 +1550,7 @@ HcclResult CollCommExecutor::MutliSegSlicePrepare(const std::vector<Slice> &data
         u64 rankDataSize = dataSegsSlice[rankId].size;
         u32 ringIndex = 0;
         u64 offsetStart = dataSegsSlice[rankId].offset;
-        if (rankDataSize > 0) {
+        if (rankDataSize > 0 && ringCount != 0) {
             u64 sizeTemp = (rankDataSize + ringCount - 1) / ringCount; /* 1是为了向上取整 */
             u64 sizePerRing = ExecutorBase::RoundUpWithDivisor(sizeTemp, HCCL_MIN_SLICE_ALIGN);
             u64 residueSize = rankDataSize;
@@ -1661,34 +1899,6 @@ HcclResult CollCommExecutor::MultiRingScatter(const std::string &tag, DeviceMem 
     }
 
     CHK_RET(ExecutorBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
-    return HCCL_SUCCESS;
-}
-
-HcclResult CollCommExecutor::GetStreamThreadManage(const std::string &tag, u32 streamNum,
-    std::vector<std::shared_ptr<ThreadManage>> &threadManager)
-{   std::unique_lock<std::mutex> mutiStreamLock(threadManageMapLock_);
-    auto iterRank = threadManageMap_.find(tag);
-    if (iterRank == threadManageMap_.end()) {
-        std::vector<std::shared_ptr<ThreadManage>> threadManagerVec;
-        threadManagerVec.resize(streamNum -1);
-        for (u32 ringIndex = 0; ringIndex < streamNum -1; ringIndex ++) {
-            threadManagerVec[ringIndex].reset(new (std::nothrow) ThreadManage(topoAttr_.deviceLogicId,
-                                                                        topoAttr_.userRank,
-                                                                        dispatcher_));
-            CHK_SMART_PTR_NULL(threadManagerVec[ringIndex]);
-            HcclResult ret = threadManagerVec[ringIndex]->Init();
-            CHK_PRT_RET(ret != HCCL_SUCCESS,
-                HCCL_ERROR("[Init][MultiRingResource]ringIndex[%u] ThreadManage failed,return[%d]",
-                    ringIndex, ret), ret);
-            HCCL_INFO("ringThreadsManage Init success[%u]", ringIndex);
-        }
-        threadManageMap_.insert(std::pair<std::string, std::vector<std::shared_ptr<ThreadManage>>>(tag, std::move(threadManagerVec)));
-    } else {
-        threadManager = iterRank->second;
-        return HCCL_SUCCESS;
-    }
-    iterRank = threadManageMap_.find(tag);
-    threadManager = iterRank->second;
     return HCCL_SUCCESS;
 }
 

@@ -28,6 +28,7 @@ namespace hccl {
 extern RankTable_t g_hcclDefaultRankTable;
 
 class HcclCommunicator;
+class IHcclOneSidedService;
 
 class hcclComm {
 public:
@@ -218,6 +219,7 @@ public:
     HcclResult CreateCommCCLbuffer() const;
     HcclResult CreateIndirectCCLbuf();
     void ReleaseIndirectCCLbuf();
+    HcclResult GetOneSidedService(IHcclOneSidedService** service);
     HcclResult GetIndirectInCCLbuf(void* &ptr, u64 &size);
     HcclResult GetIndirectOutCCLbuf(void* &ptr, u64 &size);
     HcclResult GetWorkspaceSubStreamNum(u64 &streamNum, u64 dataSize = 0,
@@ -269,9 +271,12 @@ public:
     HcclResult ResetDeviceEnable();
     HcclResult CommCheckErrorCqe(HcclResult &result);
     HcclResult SaveOpbaseKeyTraceInfo(std::string &logInfo);
+    HcclResult AllocComResourceByTiling(const std::string &algConfig, const std::string &tag, 
+        uint32_t opType, uint32_t reduceType, rtStream_t stream);
     HcclResult CreateCommResource(const std::string &tag, rtStream_t aiCpuStream, bool isOpbaseMode,
         void **commContext);
     bool GetCommResource(const std::string &tag, void **commContext);
+    bool GetCommResource(void *&commContext);
     HcclResult GetAicpuOpStreamNotify(HcclRtStream *opStream, void** aicpuNotify);
     HcclResult Mc2AiCpuStreamAllocAndGet(u32 streamMode, rtStream_t &aiCpuStream);
     HcclResult GetAiCpuNotifyData(HcclRtNotify notifyHandle, HcclSignalInfo &notifyInfo);

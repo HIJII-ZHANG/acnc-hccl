@@ -31,11 +31,15 @@
 #include "mem_host_pub.h"
 #include "hcom_common.h"
 #include "comm_config_pub.h"
+#include "kernel_tiling/kernel_tiling.h"
 
 #define DOUBLE_SIZE 2
 
 using namespace std;
 using namespace hccl;
+
+const int32_t MC2_TILING_VERSION_DEFAULT = 1;
+const int64_t MC2_TILING_OFFSET = 1;
 const std::string HCCL_ALLTOALL = "ALLTOALL";
 const std::string HCCL_ALLTOALLV = "ALLTOALLV";
 const std::string HCCL_ALLTOALLVC = "ALLTOALLVC";
@@ -217,18 +221,11 @@ HcclResult HcclCommInitAll(uint32_t ndev, int32_t *devices, HcclComm *comms)
     return HCCL_SUCCESS;
 }
 
-HcclResult InitCommClusterInfo(const char *clusterInfo, const uint32_t rank, const CommConfig &commConfig,
+HcclResult InitCommClusterInfo(string &rankTableM, const uint32_t rank, const CommConfig &commConfig,
     HcclComm *comm)
 {
-    std::string rankTableM;
-    std::string realFilePath;
-    HcclResult ret = HcomLoadRanktableFile(clusterInfo, rankTableM, realFilePath);
-    CHK_PRT_RET(ret != HCCL_SUCCESS,
-        HCCL_ERROR("[Init][CommClusterInfo]errNo[0x%016llx] clusterInfo[%s] rank[%u] "
-        "load rankTable error.", HCCL_ERROR_CODE(HCCL_E_UNAVAIL), clusterInfo, rank), HCCL_E_INTERNAL);
-
     u32 rankTableSize = 0;
-    ret = HcomCheckRankTable(rankTableM.c_str(), rankTableSize);
+    HcclResult ret = HcomCheckRankTable(rankTableM.c_str(), rankTableSize);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[Init][CommClusterInfo]check rankTable string error, rankTableSize [%u]",
             rankTableSize), HCCL_E_PARA);
@@ -270,8 +267,8 @@ HcclResult InitCommClusterInfo(const char *clusterInfo, const uint32_t rank, con
 
         ret = CfgGetClusterInfo(rankTableM, to_string(rank), opBaseHcom.params, opBaseHcom.rankTable);
         CHK_PRT_BREAK(ret != HCCL_SUCCESS,
-            HCCL_ERROR("[Init][CommClusterInfo]errNo[0x%016llx] cfg get clusterInfo[%s]"\
-                "info error:rank[%u]", HCCL_ERROR_CODE(ret), realFilePath.c_str(), rank), errorFlag = true);
+            HCCL_ERROR("[Init][CommClusterInfo]errNo[0x%016llx]"\
+                "info error:rank[%u]", HCCL_ERROR_CODE(ret), rank), errorFlag = true);
 
         ret = opBaseHcom.pComm->init(opBaseHcom.params, opBaseHcom.rankTable);
         CHK_PRT_BREAK(ret != HCCL_SUCCESS, HCCL_ERROR("[Init][CommClusterInfo]errNo[0x%016llx] hcclComm init error",
@@ -304,8 +301,8 @@ HcclResult InitCommClusterInfo(const char *clusterInfo, const uint32_t rank, con
     }
 
     /* 关键状态记录 */
-    HCCL_INFO("%s success, clusterInfoRealPath[%s], rankNum[%u], rank[%u], server[%s], device[%d]",
-        __func__, realFilePath.c_str(), opBaseHcom.rankTable.rankNum, rank, opBaseHcom.params.serverId.c_str(),
+    HCCL_INFO("%s success, rankNum[%u], rank[%u], server[%s], device[%d]",
+        __func__, opBaseHcom.rankTable.rankNum, rank, opBaseHcom.params.serverId.c_str(),
         opBaseHcom.params.logicDevId);
     return HCCL_SUCCESS;
 }
@@ -327,7 +324,45 @@ HcclResult HcclCommInitClusterInfo(const char *clusterInfo, uint32_t rank, HcclC
 
     std::string identifier = HCCL_WORLD_GROUP;
     CommConfig commConfig(identifier);
-    CHK_RET(InitCommClusterInfo(clusterInfo, rank, commConfig, comm));
+    std::string rankTableM;
+    std::string realFilePath;
+    ret = HcomLoadRanktableFile(clusterInfo, rankTableM, realFilePath);
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[Init][HcclCommInitClusterInfo]errNo[0x%016llx] clusterInfo[%s] rank[%u] "
+        "load rankTable error.", HCCL_ERROR_CODE(HCCL_E_UNAVAIL), clusterInfo, rank), HCCL_E_INTERNAL);
+
+    HCCL_INFO("%s success, clusterInfoRealPath[%s]", __func__, realFilePath.c_str());
+
+    CHK_RET(InitCommClusterInfo(rankTableM, rank, commConfig, comm));
+
+    /* 关键状态记录 */
+    HCCL_RUN_INFO("[HCCL_TRACE]%s success, take time [%lld]us, clusterInfo[%s], rank[%u], deviceLogicId[%d]",
+        __func__, DURATION_US(TIME_NOW() - startut), clusterInfo, rank, deviceLogicId);
+    return HCCL_SUCCESS;
+}
+
+HcclResult HcclCommInitClusterInfoMem(const char *clusterInfo, uint32_t rank, HcclComm *comm)
+{
+    HcclUs startut = TIME_NOW();
+    s32 deviceLogicId = 0;
+    CHK_RET(hrtGetDeviceRefresh(&deviceLogicId));
+
+    // 入参合法性校验
+    CHK_PTR_NULL(clusterInfo);
+    CHK_PTR_NULL(comm);
+
+    HCCL_RUN_INFO("Entry-%s: clusterInfo[%s], rank[%u], deviceLogicId[%d]",
+        __func__, clusterInfo, rank, deviceLogicId);
+
+    HcclResult ret = InitExternalInput();
+    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[%s]errNo[0x%016llx] init external input error",
+        __func__, HCCL_ERROR_CODE(ret)), HCCL_E_PARA);
+
+    std::string rankTableM(clusterInfo);
+    std::string identifier = HCCL_WORLD_GROUP;
+    CommConfig commConfig(identifier);
+    
+    CHK_RET(InitCommClusterInfo(rankTableM, rank, commConfig, comm));
 
     /* 关键状态记录 */
     HCCL_RUN_INFO("[HCCL_TRACE]%s success, take time [%lld]us, clusterInfo[%s], rank[%u], deviceLogicId[%d]",
@@ -363,7 +398,16 @@ HcclResult HcclCommInitClusterInfoConfig(const char *clusterInfo, uint32_t rank,
         HCCL_ERROR("[%s]errNo[0x%016llx] load comm config failed.",
         __func__, HCCL_ERROR_CODE(ret)), HCCL_E_PARA);
 
-    CHK_RET(InitCommClusterInfo(clusterInfo, rank, commConfig, comm));
+    std::string rankTableM;
+    std::string realFilePath;
+    ret = HcomLoadRanktableFile(clusterInfo, rankTableM, realFilePath);
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[Init][HcclCommInitClusterInfoConfig]errNo[0x%016llx] clusterInfo[%s] rank[%u] "
+        "load rankTable error.", HCCL_ERROR_CODE(HCCL_E_UNAVAIL), clusterInfo, rank), HCCL_E_INTERNAL);
+
+    HCCL_INFO("%s success, clusterInfoRealPath[%s]", __func__, realFilePath.c_str());
+
+    CHK_RET(InitCommClusterInfo(rankTableM, rank, commConfig, comm));
 
     /* 关键状态记录 */
     HCCL_RUN_INFO("[HCCL_TRACE]%s success, take time [%lld]us, clusterInfo[%s], rank[%u], deviceLogicId[%d]",
@@ -891,6 +935,11 @@ HcclResult HcclSetConfig(HcclConfig config, HcclConfigValue configValue)
         } else {
             HCCL_WARNING("[HcclSetConfig] HCCL_DETERMINISTIC has been setted by Env, so will not be reseted again");
             return HCCL_SUCCESS;
+        }
+        HcclOpInfoCtx& opBaseInfo = GetHcclOpInfoCtx();
+        // 遍历所有的通信域设置其确定性计算配置参数
+        for (auto it = opBaseInfo.opGroup2CommMap.begin(); it != opBaseInfo.opGroup2CommMap.end(); it++) {
+           CHK_RET(it->second->SetDeterministicConfig(configValue.value));
         }
     }
     return HCCL_SUCCESS;
@@ -1496,14 +1545,15 @@ HcclResult HcclCommDestroy(HcclComm comm)
 
     hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
     CHK_RET(SetWorkflowMode(HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE));
+
+    s32 logicDeviceId = 0;
+    hcclComm->GetDeviceId(logicDeviceId);
+    g_hcclDeviceId = logicDeviceId;
     if (hcclComm->IsNeedResetDevice()) {
         HCCL_RUN_INFO("op_base com destroy, com is not global com");
-        s32 logicDeviceId = 0;
-        hcclComm->GetDeviceId(logicDeviceId);
         HCCL_RUN_INFO("[HcclCommDestroy] reset logicDeviceId[%d]", logicDeviceId);
         CHK_PRT_RET(hrtResetDevice(logicDeviceId) != HCCL_SUCCESS,
             HCCL_ERROR("[HcclCommDestroy] reset fail logicDeviceId[%d]", logicDeviceId), HCCL_E_INTERNAL);
-        g_hcclDeviceId = logicDeviceId;
     }
 
     HcclOpInfoCtx& opBaseHcom = GetHcclOpInfoCtx();
@@ -2415,6 +2465,60 @@ HcclResult HcclAllocComResource(HcclComm comm, u32 streamMode, void** commContex
     // 切换线程后获取不到hcom上下文，需重新刷新一次线程操作的deviceid
 
     CHK_RET(HcclCreateComResourceByComm(comm, streamMode, true, commContext));
+    return HCCL_SUCCESS;
+}
+
+HcclResult HcclAllocComResourceByTiling(HcclComm comm, void* stream, void* Mc2Tiling, void** commContext)
+{
+    // 校验
+    CHK_PTR_NULL(comm);
+    CHK_PTR_NULL(stream);
+    CHK_PTR_NULL(Mc2Tiling);
+    CHK_PTR_NULL(commContext);
+
+    // 获取streamMode
+    uint64_t streamMode = 0;
+    CHK_RET(hrtStreamGetMode(stream, &streamMode));
+    HCCL_INFO("[%s] streamMode=[%u]", __func__, streamMode);
+
+    // 兼容老版本
+    uint32_t *pVersion = reinterpret_cast<uint32_t *>(Mc2Tiling);
+    HCCL_INFO("[%s] version ptr=[%p], val=[%u]", __func__, pVersion, *pVersion);
+    if (*pVersion <= MC2_TILING_VERSION_DEFAULT) {
+        return HcclAllocComResource(comm, streamMode, commContext);
+    }
+
+    hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
+    string commIdentifier = hcclComm->GetIdentifier();
+    HCCL_INFO("[%s] commIdentifier=[%s]", __func__, commIdentifier.c_str());
+
+    // 根据streamMode创建aicpuStream
+    rtStream_t aicpuStream{};
+    CHK_RET(hcclComm->Mc2AiCpuStreamAllocAndGet(streamMode, aicpuStream));
+
+    // 遍历MC2Tiling中的Mc2HcommCfg, 将其中hcomId于commHandle->indetifier_进行对比, 如一致则根据该 Mc2HcommCfg 创建通信资源
+    uint32_t *pMc2HcommCnt = pVersion + MC2_TILING_OFFSET;
+    HCCL_INFO("[%s] mc2HcommCnt ptr=[%p], val=[%u]", __func__, pMc2HcommCnt, *pMc2HcommCnt);
+
+    Mc2ServerCfg *pServerCfg = reinterpret_cast<Mc2ServerCfg *>(pMc2HcommCnt + MC2_TILING_OFFSET);
+    HCCL_INFO("[%s] serverCfg ptr=[%p], size=[%u]", __func__, pServerCfg, sizeof(Mc2ServerCfg));
+
+    Mc2HcommCfg *pCfg = reinterpret_cast<Mc2HcommCfg *>(pServerCfg + MC2_TILING_OFFSET);
+    for (uint64_t i = 0; i < *pMc2HcommCnt; i++) {
+        Mc2HcommCfg &cfg = pCfg[i];//cfgi
+        HCCL_INFO("[%s] cfg[%u] ptr=[%p], size=[%u] groupName=[%s]",
+            __func__, i, &cfg, sizeof(Mc2HcommCfg), cfg.groupName);
+        if (string(cfg.groupName) == commIdentifier) {//创建通信资源
+            HCCL_INFO("[%s] cfg[%u] match commIdentifier", __func__, i);
+            string algConfig(cfg.algConfig);
+            string tag = string(cfg.groupName) + to_string(cfg.opType);
+            CHK_RET(hcclComm->AllocComResourceByTiling(algConfig, tag, cfg.opType, cfg.reduceType, aicpuStream));
+        }
+    }
+
+    // 获取 commContext
+    hcclComm->GetCommResource(*commContext);
+
     return HCCL_SUCCESS;
 }
 #ifdef __cplusplus

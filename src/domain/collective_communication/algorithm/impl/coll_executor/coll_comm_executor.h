@@ -47,6 +47,14 @@ public:
         const std::vector<std::pair<bool, std::vector<Slice>>> multRingsUserMemSlice =
         std::vector<std::pair<bool, std::vector<Slice>>> (0));
 
+    HcclResult Level1ReduceScatterConcurrent(DeviceMem inputMem, DeviceMem scratchMem,const u64 count,
+        const HcclDataType dataType, const HcclReduceOp reductionOp, Stream stream, s32 profStage,
+        std::vector<Slice> &level1DataSegsSlice, u32 syncTrans, u64 reduceAttr);
+
+    HcclResult Level1AllReduceConcurrent(DeviceMem inputMem, DeviceMem outputMem,const u64 count,
+        const HcclDataType dataType, const HcclReduceOp reductionOp, Stream stream, s32 profStage,
+        std::vector<Slice> &dataSegsSlice,u32 segmentIdx, u32 commIndex, u64 hdSize, u32 syncTrans);
+
     HcclResult MultiRingAllGather(const std::string &tag, DeviceMem inputMem, DeviceMem outputMem, const u64 count,
         const HcclDataType dataType,
         const std::vector<std::vector<Slice> > multRingsSliceZero, Stream stream,
@@ -60,8 +68,12 @@ public:
         const std::vector<std::pair<bool, std::vector<Slice>>> multRingsUserMemSlice =
         std::vector<std::pair<bool, std::vector<Slice>>> (0));
 
+    HcclResult Level1AllGatherConcurrent(DeviceMem inputMem, DeviceMem outputMem, const u64 count,
+        const HcclDataType dataType, Stream stream, s32 profStage,
+        std::vector<Slice> &level1DataSegsSlice, u32 syncTrans);
+
     HcclResult MultiRingMultiRootScatter(const std::string &tag, DeviceMem &inputMem, DeviceMem &outputMem,
-        const u64 count, const HcclDataType dataType, const std::vector<std::vector<Slice>> &multRingsSliceZero,
+        const u64 count, const HcclDataType dataType, const std::vector<std::vector<Slice>> &multRingsSliceZero, 
         u32 root, Stream stream, const u64 baseOffset);
 
     HcclResult MultiStreamReduceScatterMesh(const std::string &tag, DeviceMem inputMem, DeviceMem outputMem,
@@ -73,7 +85,7 @@ public:
                                                   const u64 baseOffset = 0);
 
     HcclResult MultiRingGather(const std::string &tag, DeviceMem inputMem, DeviceMem outputMem, const u64 count,
-                                const HcclDataType dataType, const std::vector<std::vector<Slice>> multRingsSliceZero, 
+                                const HcclDataType dataType, const std::vector<std::vector<Slice>> multRingsSliceZero,
                                 HcclReduceOp op, u32 root, Stream stream, s32 profStage);
 
     HcclResult MultiStreamReduceScatterMeshAtomic(const std::string &tag, DeviceMem &inputMem, DeviceMem &outputMem,
@@ -124,14 +136,10 @@ protected:
     HcclResult SetRingNics(const std::string &tag, const std::vector<std::vector<u32>> &ringNics);
     HcclResult GetRingNics(const std::string &tag, std::vector<std::vector<u32>> &ringNics);
     HcclResult SetNicSendSize(const std::string &tag, std::vector<u64> &sizeList);
-    HcclResult GetStreamThreadManage(const std::string &tag, u32 streamNum,
-                                     std::vector<std::shared_ptr<ThreadManage>> &threadManager);
     std::mutex ringNicListLock_;
     std::map<std::string, std::vector<std::vector<u32>>> ringNicList_;
     std::mutex nicSendSizeListLock_;
     std::map<std::string, std::vector<u64>> nicSendSizeList_;
-    std::mutex threadManageMapLock_;
-    std::map<std::string, std::vector<std::shared_ptr<ThreadManage>>> threadManageMap_;
 };
 } // namespace hccl
 

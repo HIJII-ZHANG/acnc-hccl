@@ -61,13 +61,13 @@ private:
 
     HcomCollOpInfo *opInfo_;
 
-    void* usrInMem_;
-    void* usrOutMem_;
-    u64 count_;
-    u32 unitSize_;
-    u64 curSize_;
-    u64 memSliceSize_;
-    u64 blockSize_;
+    void* usrInMem_ = nullptr;
+    void* usrOutMem_ = nullptr;
+    u64 count_ = 0;
+    u32 unitSize_ = 0;
+    u64 curSize_ = 0;
+    u64 memSliceSize_ = 0;
+    u64 blockSize_ = 0;
     u64 bufferSize_;
     HcclReduceOp reductionOp_;
     HcclDataType dataType_;
@@ -84,12 +84,12 @@ private:
     std::unique_ptr<Sender> senderInfo_;
     std::unique_ptr<Reducer> reducerInfo_;
     const u64 reduceAttr_; /* 0x1:表示data_type + reduce_type支持inlinereduce  */
-    u32 intraRankSize_;
-    u32 interRankSize_;
-    u32 intraRankId_;
-    u32 interRankId_;
-    u32 rankId_;
-    u64 offset_;
+    u32 intraRankSize_ = 0;
+    u32 interRankSize_ = 0;
+    u32 intraRankId_ = 0;
+    u32 interRankId_ = 0;
+    u32 rankId_ = 0;
+    u64 offset_ = 0;
 
     std::vector<LINK> intraLinks_;
     std::vector<LINK> interLinks_;

@@ -36,7 +36,7 @@ namespace hccl {
 using HcclCommConnections = struct HcclCommConnectionsDef {
     bool isRoot{false};
     std::shared_ptr<HcclSocket> agentConnection{nullptr};
-    std::map<std::string, std::shared_ptr<HcclSocket>> serverConnections;
+    std::map<u32, std::shared_ptr<HcclSocket>> serverConnections;
 };
 
 using HcclCommParams = struct TagHCCLCollectiveParams {

@@ -30,7 +30,12 @@ HcclResult CollScatterCommExecutor::CalcCombinedCommInfo(TransportMemType inputT
     TransportMemType outputType,
     std::vector<LevelNSubCommTransport>& opTransport)
 {
-    CommParaInfo commParaInfo(COMM_COMBINE, CommType::COMM_TAG_MAX);
+    CommPlane commPlane = COMM_COMBINE;
+    if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
+        commPlane = COMM_COMBINE_ORDER;
+    }
+
+    CommParaInfo commParaInfo(commPlane, CommType::COMM_TAG_MAX);
     if (UseInterServerNHRAlgo(algType_)) {
         commParaInfo.commType = CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING;
     } else if (UseInterServerNBAlgo(algType_)) {
@@ -38,7 +43,7 @@ HcclResult CollScatterCommExecutor::CalcCombinedCommInfo(TransportMemType inputT
     } else {
         commParaInfo.commType = CommType::COMM_TAG_RING_INNER;
     }
-    CHK_RET(CalcCommPlaneInfo(tag_, commParaInfo, opTransport[COMM_COMBINE], inputType, outputType));
+    CHK_RET(CalcCommPlaneInfo(tag_, commParaInfo, opTransport[commPlane], inputType, outputType));
     return HCCL_SUCCESS;
 }
 
@@ -54,10 +59,15 @@ HcclResult CollScatterCommExecutor::KernelRun(const OpParam &param, ExecMem &exe
 
     u32 commIndex = COMM_INDEX_0;
     // 统一走server间
-    CHK_RET(CheckCommSize(COMM_COMBINE, commIndex + 1));
-    SubCommInfo combinedCommInfo = GetSubCommInfo(COMM_COMBINE, 0);
+    CommPlane commPlane = COMM_COMBINE;
+    if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
+        commPlane = COMM_COMBINE_ORDER;
+    }
 
-    CHK_RET(KernelRunInner(inputMem, count, dataType, commIndex, root, userRank, COMM_COMBINE, stream));
+    CHK_RET(CheckCommSize(commPlane, COMM_INDEX_0 + 1));
+    SubCommInfo combinedCommInfo = GetSubCommInfo(commPlane, COMM_INDEX_0);
+
+    CHK_RET(KernelRunInner(inputMem, count, dataType, commIndex, root, userRank, commPlane, stream));
 
     // 将scratchMem赋值给outputMem
     u8 *inputMemPtr = static_cast<u8 *>(inputMem.ptr());

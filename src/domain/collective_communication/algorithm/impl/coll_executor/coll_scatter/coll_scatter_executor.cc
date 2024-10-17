@@ -104,8 +104,8 @@ HcclResult CollScatterExecutor::RunLoop(OpParam &param, AlgResourceResponse &alg
         execMem.outputPtr = curUserOutputPtr;
 
         HCCL_DEBUG("[RunLoop][Scatter] ScatterLoop: inputOffset[%llu], outputOffset[%llu], "
-            "curUserInputPtr[%llx], curUserOutputPtr[%llx], curRecvCount[%llu], curRecvSize[%llu], "
-            "curSendSize[%llu], inCCLbuffer.ptr[%llx], outCCLbuffer.ptr[%llx]",
+            "curUserInputPtr[%p], curUserOutputPtr[%p], curRecvCount[%llu], curRecvSize[%llu], "
+            "curSendSize[%llu], inCCLbuffer.ptr[%p], outCCLbuffer.ptr[%p]",
             inputOffset, outputOffset, curUserInputPtr, curUserOutputPtr, curRecvCount, curRecvSize,
             curSendSize, inCCLbuffer.ptr(), outCCLbuffer.ptr());
 

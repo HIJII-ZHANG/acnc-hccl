@@ -84,7 +84,7 @@ u64 CollReduceScatterMeshOpbasePipelineExecutor::CalcLoopMaxCount(const u32 unit
     return maxCountPerLoop;
 }
 
-bool CollReduceScatterMeshOpbasePipelineExecutor::IsHugeData(const u64 curSize)
+bool CollReduceScatterMeshOpbasePipelineExecutor::IsHugeData(const u64 curSize, OpParam *param)
 {
     if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT) {
         return true;
@@ -140,8 +140,9 @@ HcclResult CollReduceScatterMeshOpbasePipelineExecutor::RunLoop(OpParam &param, 
             param.tag.c_str(), curOffset, curInputPtr, curOutputPtr, curCount, param.DataDes.dataType);
 
         bool hugeData = IsHugeData(curSize);
+        bool isDeterministic = topoMatcher_->GetExternalInputHcclDeterministic();
         auto meta = HcclOpMetaInfo::GetOneForReduceScatter(originalAlgTypeLevel1, param.DataDes.dataType, reduceType,
-            hugeData);
+            hugeData, false, CopyPattern::BCOPY, false, isDeterministic);
         CHK_RET(InitTask(dispatcher_, const_cast<Stream&>(param.stream), meta.isEnableCache, meta.GetCacheKey()));
 
         ExecMem execMem;

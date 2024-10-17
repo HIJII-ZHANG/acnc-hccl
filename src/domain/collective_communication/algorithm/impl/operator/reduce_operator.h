@@ -15,6 +15,7 @@
 #include "coll_alg_op_registry.h"
 
 namespace hccl {
+constexpr u32 FACTOR_TWO = 2;
 class ReduceOperator : public CollAlgOperator {
 public:
     ReduceOperator(AlgConfigurator* algConfigurator, CCLBufferManager &cclBufferManager,

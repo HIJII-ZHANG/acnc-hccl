@@ -51,7 +51,7 @@ private:
     // 单算子CCLbuf
     DeviceMem scratchInputMem_;
     DeviceMem scratchOutputMem_;
-    u64 scratchMemSize_; // 单算子CCLbuf大小
+    u64 scratchMemSize_ = 0; // 单算子CCLbuf大小
 };
 } // namespace hccl
 #endif /* ALLTOALL_V_STAGED_PAIRWISE_PUB_H */

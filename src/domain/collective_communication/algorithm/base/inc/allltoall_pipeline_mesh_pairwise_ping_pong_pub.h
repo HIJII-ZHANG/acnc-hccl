@@ -80,7 +80,7 @@ private:
     // 采用内存 ping-pong 的方法，单算子模式将 ccl 拆成 4 块，以达成，server 内收发，server 间收发，本地内存搬移三流并行的效果
     // interRecv 和 intraSend 使用同一块内存，在图模式时不需要 interSend 这块内存，也没有从 userIn 到 interSend 的拷贝，可以直接从 userIn 发到对端 interRecv
     u64 pingPongMemSize_;
-    u64 intraDataBlockSize_;
+    u64 intraDataBlockSize_ = 0;
     DeviceMem interSendPing_;
     DeviceMem interSendPong_;
     DeviceMem interRecvPing_;

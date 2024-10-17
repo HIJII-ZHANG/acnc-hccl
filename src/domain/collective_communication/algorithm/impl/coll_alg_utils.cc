@@ -71,6 +71,12 @@ bool UseInterServerNBAlgo(AlgType algType)
     return GetLevel1AlgType(algType) == AlgTypeLevel1::ALG_LEVEL1_NB;
 }
 
+bool UseWholeRingAlgo(AlgType algType)
+{
+    return GetLevel0AlgType(algType) == AlgTypeLevel0::ALG_LEVEL0_WHOLE_RING &&
+           GetLevel1AlgType(algType) == AlgTypeLevel1::ALG_LEVEL1_WHOLE_RING;
+}
+
 bool UseInterServerPipelineAlgo(AlgType algType)
 {
     return GetLevel1AlgType(algType) == AlgTypeLevel1::ALG_LEVEL1_PIPELINE;
@@ -241,25 +247,27 @@ bool IsAlgTypeLevel0Mesh(AlgTypeLevel0 &originalAlgTypeLevel0)
            originalAlgTypeLevel0 == AlgTypeLevel0::ALG_LEVEL0_1P_MESH;
 }
 
-bool IsSupportDirectFullmeshFor91093(const HcclCMDType &opType, DevType deviceType, u32 devNumInLevel2,
+bool IsSupportDirectFullmeshFor91093(const HcclCMDType &opType, DevType deviceType, u32 superPodNum,
     bool useSuperPodMode, u32 serverNum)
 {
+    (void)superPodNum;
+    (void)opType;
     bool isDevice91093 = (deviceType == DevType::DEV_TYPE_910_93);
-    bool isSingleSuperPod = (devNumInLevel2 <= 1);
     bool isOpbase = (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
     bool isHCCS = (serverNum > 1) ?
         (!GetExternalInputInterHccsDisable() && useSuperPodMode) : (!GetExternalInputInterHccsDisable());
-    HCCL_DEBUG("[IsSupportDirectFullmeshFor91093]isDevice91093[%u] isSingleSuperPod[%u], isOpbase[%u], isHCCS[%u]",
-        isDevice91093, isSingleSuperPod, isOpbase, isHCCS);
-    return isDevice91093 && isSingleSuperPod && isOpbase && isHCCS;
+    HCCL_DEBUG("[IsSupportDirectFullmeshFor91093]isDevice91093[%u], isOpbase[%u], isHCCS[%u]",
+        isDevice91093, isOpbase, isHCCS);
+    return isDevice91093 && isOpbase && isHCCS;
 }
 
-bool SatisfyIntraSuperPod(DevType deviceType, u32 rankSize, bool useSuperPodMode)
+bool SatisfyIntraSuperPod(DevType deviceType, u32 rankSize, bool useSuperPodMode, u32 superPodNum)
 {
     bool rankSizeSupport = (rankSize <= MAX_ALLTOALL_MESH_ALGO_RANK_INTRA_MESH);
     bool isDevice91093 = (deviceType == DevType::DEV_TYPE_910_93);
     bool isHCCS = !GetExternalInputInterHccsDisable() && useSuperPodMode;
-    return (isDevice91093 && rankSizeSupport && isHCCS);
+    bool isSingleSuperPod = superPodNum == 1;
+    return (isDevice91093 && rankSizeSupport && isHCCS && isSingleSuperPod);
 }
 
 bool FullmeshPairwiseSatisfyHighPerfAlltoallMeshCondition(DevType deviceType, u32 rankSize, bool useSuperPodMode)

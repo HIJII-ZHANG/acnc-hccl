@@ -186,7 +186,6 @@ HcclResult AllGatherRingConcurrentDirect::RunInitStep(const u32 rank, const u32 
 HcclResult AllGatherRingConcurrentDirect::RunAllGather(const u32 rank, const u32 rankSize)
 {
     HCCL_INFO("AllGatherRingConcurrentDirect starts, the input param rank[%u]", rank);
-
     CHK_RET(ExecutorBase::ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
 
     CHK_RET(RunInitStep(rank, rankSize));
@@ -227,7 +226,7 @@ HcclResult AllGatherRingConcurrentDirect::RunAllGather(const u32 rank, const u32
             DeviceMem dst = DeviceMem::create(static_cast<u8 *>(opInfo_->outputAddr) + subSliceVector[sliceIdx].offset,
                 subSliceVector[sliceIdx].size);
             HCCL_DEBUG("Memcpy operation: step[%u] stream[sub], src rank[%u] starts to send offset[%llu] size[%llu], "
-                "dst rank[%u] starts to rcv offset[%llu] size[%llu] at userMemOutput_",
+                "dst rank starts to rcv offset[%llu] size[%llu] at userMemOutput_",
                 step, userRank_, subSliceVector[sliceIdx].offset, subSliceVector[sliceIdx].size,
                 txSliceVector[sliceIdx].offset, txSliceVector[sliceIdx].size);
             CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dst, src, subStreams_[0]));

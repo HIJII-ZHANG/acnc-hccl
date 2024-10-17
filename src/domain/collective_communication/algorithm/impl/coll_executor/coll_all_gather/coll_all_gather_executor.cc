@@ -95,10 +95,19 @@ bool CollAllGatherExecutor::IsHugeData(const u64 curSize)
     return hugeData;
 }
 
-u32 CollAllGatherExecutor::IsDataSplit(const u64 curSize)
+bool CollAllGatherExecutor::IsAllGatherSmallData(const u64 curSize)
 {
-    HCCL_INFO("[CollAllGatherExecutor][IsDataSplit]opMeta is using the default option: not data split.");
-    return 0;
+    if ((topoAttr_.serverNum == 1) && (topoAttr_.deviceType == DevType::DEV_TYPE_910_93)) {
+        return curSize <= HCCL_SMALL_COUNT_2_MB;
+    } else {
+        return false;
+    }
+}
+
+bool CollAllGatherExecutor::IsDataSplitForRdmaSdmaConcurrent(const u64 curSize)
+{
+    HCCL_INFO("[CollAllGatherExecutor]opMeta is using the default option: not data split.");
+    return false;
 }
 
 // 基于性能考量，合并RunLoop和RunLoopInner
@@ -121,6 +130,7 @@ HcclResult CollAllGatherExecutor::RunLoop(OpParam &param, AlgResourceResponse &a
             param.tag.c_str(), topoAttr_.userRankSize, maxCountPerLoop),
         HCCL_E_PARA);
 
+    bool smallData = IsAllGatherSmallData(param.DataDes.count * unitSize);
     for (u64 countLeft = param.DataDes.count, curCount = 0, inputOffset = 0, outputOffset = 0;
             countLeft > 0; countLeft -= curCount) {
         curInputPtr += inputOffset;
@@ -136,10 +146,10 @@ HcclResult CollAllGatherExecutor::RunLoop(OpParam &param, AlgResourceResponse &a
         if (!is310P3Common_) {
             /* 设置子图复用标志 */
             auto autoSelectedAlgTypeLevel1 = static_cast<u32>(algType_) >> HCCL_LEVEL_ALGO_WIDTH;
-            bool hugeData = IsHugeData(curSize);    // override
-            u32 dataSplit = IsDataSplit(curSize);
-            auto opMeta = HcclOpMetaInfo::GetOneForAllGather(autoSelectedAlgTypeLevel1, hugeData);
-            opMeta.dataSplit = dataSplit;
+            bool hugeData = IsHugeData(curSize);    // override    
+            bool dataSplit = IsDataSplitForRdmaSdmaConcurrent(curSize);
+            auto opMeta = HcclOpMetaInfo::GetOneForAllGather(autoSelectedAlgTypeLevel1, hugeData, smallData,
+                CopyPattern::BCOPY, dataSplit);
             CHK_RET(InitTask(dispatcher_, param.stream, opMeta.isEnableCache, opMeta.GetCacheKey()));
         }
 

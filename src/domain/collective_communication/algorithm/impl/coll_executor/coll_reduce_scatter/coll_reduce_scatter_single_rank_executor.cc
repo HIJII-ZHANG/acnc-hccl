@@ -28,13 +28,14 @@ HcclResult CollReduceScatterSingleRankExecutor::KernelRun(const OpParam &param, 
     auto originalAlgTypeLevel1 = static_cast<u32>(algType_) >> HCCL_LEVEL_ALGO_WIDTH;
     bool hugeData = totalSize > SDMA_SEND_MAX_SIZE;
     bool smallData = totalSize <= HCCL_SMALL_COUNT_32_KB;
+    bool isDeterministic = topoMatcher_->GetExternalInputHcclDeterministic();
     if (execMem.inputPtr == execMem.outputPtr) {
         auto opMeta = HcclOpMetaInfo::GetOneForReduceScatter(originalAlgTypeLevel1, param.DataDes.dataType, reduceType,
-            hugeData, smallData, CopyPattern::ZCOPY); // 通过CopyPattern字段区分不同的子图
+            hugeData, smallData, CopyPattern::ZCOPY, false, isDeterministic); // 通过CopyPattern字段区分不同的子图
     CHK_RET(InitTask(dispatcher_, const_cast<Stream&>(param.stream), opMeta.isEnableCache, opMeta.GetCacheKey()));
     } else { // ranksize = 1; intput、output地址不同，input->output
         auto opMeta = HcclOpMetaInfo::GetOneForReduceScatter(originalAlgTypeLevel1, param.DataDes.dataType, reduceType,
-            hugeData, smallData, CopyPattern::BCOPY);
+            hugeData, smallData, CopyPattern::BCOPY, false, isDeterministic);
         CHK_RET(InitTask(dispatcher_, const_cast<Stream&>(param.stream), opMeta.isEnableCache, opMeta.GetCacheKey()));
         DeviceMem srcMem(execMem.inputPtr, totalSize);
         DeviceMem dstMem(execMem.outputPtr, totalSize);

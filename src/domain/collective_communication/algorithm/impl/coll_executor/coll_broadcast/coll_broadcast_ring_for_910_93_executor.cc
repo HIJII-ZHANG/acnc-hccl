@@ -33,9 +33,6 @@ HcclResult CollBroadCastRingFor91093::CalcStreamNum(u32& streamNum)
     } else {
         totalStreamNum = ringFactor;
     }
-    if (topoMatcher_->GetExternalInputEnableRdmaSdmaConcurrent() && topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
-        totalStreamNum += RDMA_PLANE_NUM_IN_NPRING_DOUBLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
-    }
     streamNum = totalStreamNum - 1;
     HCCL_INFO("[CollBroadCastRingFor91093][CalcStreamNum] tag[%s] streamNum_[%u]",
                 tag_.c_str(), streamNum);
@@ -92,7 +89,7 @@ HcclResult CollBroadCastRingFor91093::KernelRun(const OpParam &param, ExecMem &e
     u32 sliceNum = outerCommInfo.localRankSize;
     // 将根节点数据切分成sliceNum份
     CHK_RET(ExecutorBase::PrepareSliceData(execMem.count, perDataSize, sliceNum, 0, dataSegsSlice));
-    HCCL_DEBUG("[CollBroadCastRingFor91093]: ringNum[%u] sliceNum[%u]", ringNum, sliceNum);
+    HCCL_DEBUG("[CollBroadCastRingFor91093][KernelRun]ringNum[%u] sliceNum[%u]", ringNum, sliceNum);
 
     /* 节点内 scatter */
     if (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) {
@@ -121,21 +118,22 @@ HcclResult CollBroadCastRingFor91093::KernelRun(const OpParam &param, ExecMem &e
         CHK_RET(MultiRingScatter(param.tag, execMem.inputMem, execMem.outputMem, execMem.count, param.DataDes.dataType,
                              mulRingSlice, param.root, param.stream, scatterOpInfoPtr));
     }
-    HCCL_INFO("Broadcast double ring stage0 run success");
+    HCCL_INFO("[CollBroadCastRingFor91093][KernelRun] level0-scatter run success");
 
     u64 level1DataSize = 0;
     u32 commIndex = 0;
     u32 segmentIdx = 0;
     CHK_RET(PrepareInnerCommInfo(segmentIdx, commIndex, level1DataSize, outerCommInfo, mulRingSlice, param.tag));
     u64 level1DataCount = level1DataSize / perDataSize;
-    HCCL_DEBUG("usrRank[%u] level1 use level1DataCount[%llu]", topoAttr_.userRank, level1DataCount);
+    HCCL_DEBUG("[CollBroadCastRingFor91093][KernelRun]usrRank[%u] level1 use level1DataCount[%llu]",
+        topoAttr_.userRank, level1DataCount);
 
     // level 1 通信域获取
     CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
     SubCommInfo innerCommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
-    HCCL_DEBUG("commIdx:%u TagCommInfo[%s].commInner.size():%llu", commIndex, param.tag.c_str(),
-        innerCommInfo.localRankSize);
-    if (topoAttr_.devNumInLevel2 <= 1) {
+    HCCL_DEBUG("[CollBroadCastRingFor91093][KernelRun]commIdx:%u TagCommInfo[%s].commInner.size():%llu",
+        commIndex, param.tag.c_str(), innerCommInfo.localRankSize);
+    if (topoAttr_.superPodNum <= 1) {
         HCCL_INFO("Broadcast double ring No level2.");
         /* step2: server间 broadcast */
         std::unique_ptr<ExecutorBase> innerExecutor;
@@ -186,7 +184,7 @@ HcclResult CollBroadCastRingFor91093::KernelRun(const OpParam &param, ExecMem &e
 
         HCCL_INFO("Broadcast double ring stage1 run success");
     } else {
-        HCCL_INFO("Broadcast double ring WITH level2.");
+        HCCL_INFO("Broadcast double ring with Level2.");
         /* step2: 节点间 scatter */
         // 按level1RankSize得到内存切分slice数
         u32 level1RankSize = innerCommInfo.localRankSize;
@@ -211,11 +209,20 @@ HcclResult CollBroadCastRingFor91093::KernelRun(const OpParam &param, ExecMem &e
                 return HCCL_E_NOT_SUPPORT;
             }
             CHK_SMART_PTR_NULL(level1Executor);
-            u32 level1RootRank = 0;
-            CHK_RET(GetRankByUserRank(COMM_LEVEL1, commIndex, param.root, level1RootRank));
+
+            /* 获取每个超节点内的subroot */
+            u32 subPodRoot = topoMatcher_->GetSubRootWithSuperPod(topoAttr_.userRank, param.root);
+            /* 获取超节点内的节点在每个level1通信域的对应卡subServerRootUsrRank */
+            u32 subServerRootUsrRank = topoMatcher_->GetSubRootUserRank(topoAttr_.userRank, subPodRoot);
+            u32 level1RootRank = INVALID_VALUE_RANKID;
+            /* 用此卡subServerRootUsrRank 获取每个level1通信域的相对root idx */
+            CHK_RET(GetRankByUserRank(COMM_LEVEL1, commIndex, subServerRootUsrRank, level1RootRank));
+            CHK_PRT_RET(level1RootRank == INVALID_VALUE_RANKID,
+                HCCL_ERROR("[CollBroadCastRingFor91093][KernelRun] get rootRank IDX in level1 failed."), HCCL_E_PARA);
 
             CHK_RET(level1Executor->Prepare(level1InputMem, level1InputMem, level1InputMem, level1DataCount,
-                param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, level1RootRank, dataSegsSlice));
+                param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, level1RootRank, dataSegsSlice,
+                level1Offset));
             CHK_RET(level1Executor->RegisterProfiler(
                 (level1RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + innerCommInfo.localRank,
                 PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
@@ -235,12 +242,12 @@ HcclResult CollBroadCastRingFor91093::KernelRun(const OpParam &param, ExecMem &e
             "root[%u]", subUserrankRootSupperPod, topoAttr_.userRank, param.root), HCCL_E_INTERNAL);
         u32 planeRootSupperPod = 0;
         CHK_RET(GetRankByUserRank(COMM_LEVEL2, COMM_INDEX_0, subUserrankRootSupperPod, planeRootSupperPod));
-        HCCL_DEBUG("subUserrankRootSupperPod[%u], planeRootSupperPod[%u]", subUserrankRootSupperPod,
-            planeRootSupperPod);
+        HCCL_DEBUG("level2 get root info as: subUserrankRootSupperPod[%u], planeRootSupperPod[%u]",
+            subUserrankRootSupperPod, planeRootSupperPod);
 
         std::unique_ptr<ExecutorBase> level2Executor;
         level2Executor.reset(new (std::nothrow) BcastRecursiveHalvingDoubling(dispatcher_));
-        HCCL_INFO("broadcast ring: using Recursive halving-doubling algo inter-superPod.");
+        HCCL_INFO("[superpod]Broadcast level2-broadcast: using Recursive halving-doubling algo inter-superPod.");
 
         CHK_SMART_PTR_NULL(level2Executor);
         u64 bcastCount = dataSegsSlice[localRank].size / perDataSize;
@@ -248,14 +255,15 @@ HcclResult CollBroadCastRingFor91093::KernelRun(const OpParam &param, ExecMem &e
         CHK_RET(level2Executor->Prepare(execMem.inputMem, execMem.inputMem, execMem.outputMem, bcastCount,
             param.DataDes.dataType, param.stream, HcclReduceOp::HCCL_REDUCE_RESERVED, planeRootSupperPod,
             std::vector<Slice>(0), dataSegsSlice[localRank].offset + level1Offset));
-        HCCL_DEBUG("dataSegsSlice[localRank].offset[%llu], dataSegsSlice[localRank].size[%llu] level1Offset[%llu]",
+        HCCL_DEBUG("[superpod]Broadcast level2-broadcast : dataSegsSlice[localRank].offset[%llu]" \
+            "dataSegsSlice[localRank].size[%llu] level1Offset[%llu]",
             dataSegsSlice[localRank].offset, dataSegsSlice[localRank].size, level1Offset);
 
         CHK_RET(level2Executor->RegisterProfiler(
             (level2RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level2CommInfo.localRank,
             PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
         CHK_RET(RunTemplate(level2Executor, level2CommInfo));
-        HCCL_INFO("[CollBroadCastRingFor91093]broadcast [superpod] level2 broadcast run success");
+        HCCL_INFO("[CollBroadCastRingFor91093][superpod]Broadcast level2-broadcast run success");
 
         /* step4: 节点间 allgather */
         if (level1RankSize > 1) {

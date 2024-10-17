@@ -73,13 +73,14 @@ HcclResult CollAllReduceRingFor91093Executor::CalcLevel0CommInfo(TransportMemTyp
 
 bool CollAllReduceRingFor91093Executor::IsSmallData(const u64 totalSize, const u64 curSize)
 {
+    (void)totalSize;
     bool smallData = IsAllReduceSmallData(curSize);
     return smallData;
 }
 
 bool CollAllReduceRingFor91093Executor::IsHugeData(const u64 curSize)
 {
-    if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT && topoAttr_.devNumInLevel2 > 1) {
+    if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT && topoAttr_.superPodNum > 1) {
         return true;
     }
     bool hugeData = curSize / topoAttr_.deviceNumPerAggregation / HCCL_INTERNODE_MAX_DATA_RATE > RDMA_SEND_MAX_SIZE ||
@@ -99,6 +100,12 @@ HcclResult CollAllReduceRingFor91093Executor::CalcLevel2CommInfo(TransportMemTyp
     }
     CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel2, opTransport[COMM_LEVEL2], inputType, outputType));
     return HCCL_SUCCESS;
+}
+
+bool CollAllReduceRingFor91093Executor::IsDataSplitForRdmaSdmaConcurrent(const u64 curSize)
+{
+    bool isLargeSize = (curSize / topoAttr_.deviceNumPerAggregation >= HCCL_SPLIT_SIZE_INTER_SERVER);
+    return GetExternalInputEnableRdmaSdmaConcurrent() && (topoAttr_.serverNum > 1) && isLargeSize;
 }
 
 HcclResult CollAllReduceRingFor91093Executor::RunIntraSeverReduceScatter(
@@ -159,7 +166,7 @@ HcclResult CollAllReduceRingFor91093Executor::KernelRun(const OpParam &param, Ex
     if (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) {
         reduceScatterOpInfoPtr = &reduceScatterGraphModeOpInfo;
     }
-    if (DMAReduceFlag_) {
+    if (DMAReduceFlag_ && (!GetExternalInputEnableInplace())) {
         reduceScatterOpInfoPtr = &reduceScatterOpInfo;
     }
     CHK_RET(RunIntraSeverReduceScatter(param.tag, execMem.inputMem, execMem.outputMem, execMem.count,
@@ -176,65 +183,75 @@ HcclResult CollAllReduceRingFor91093Executor::KernelRun(const OpParam &param, Ex
     CHK_RET(PrepareInnerCommInfo(segmentIdx, commIndex, hdSize, outerCommInfo, multRingsSliceZero, param.tag));
 
     u64 hdCount = hdSize / perDataSize;
-    if (topoAttr_.devNumInLevel2 <= 1 || isSelectAHC) {
-        DeviceMem allreduceInput = execMem.inputMem.range(dataSegsSlice[segmentIdx].offset, hdSize);
-        CHK_SMART_PTR_NULL(allreduceInput);
-        DeviceMem allreduceOutput = execMem.outputMem.range(dataSegsSlice[segmentIdx].offset, hdSize);
-        CHK_SMART_PTR_NULL(allreduceOutput);
-
-        CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
-        SubCommInfo innerCommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
-
-        u64 reduceAttr = GetReduceAttr(allreduceInput, allreduceOutput, param.DataDes.dataType, param.reduceType);
-        std::unique_ptr<ExecutorBase> innerExecutor;
-        if (UseInterServerRingAlgo(algType_)) {
-            innerExecutor.reset(new (std::nothrow) AllReduceRing(dispatcher_, reduceAttr));
-            HCCL_INFO("allreduce ring: using ring algo inter-server.");
-        } else if (UseInterServerNHRV1Algo(algType_)) {
-            innerExecutor.reset(new (std::nothrow) AllReduceNHRV1(dispatcher_, reduceAttr));
-            HCCL_INFO("allreduce ring: using nhr_v1 algo inter-server.");
-        } else if (UseInterServerAHCAlgo(algType_)) {
-            // 获取通信域分组信息
-            std::vector<std::vector<u32>> subGroups;
-            CHK_RET(topoMatcher_->GetLevelSubGroups(COMM_LEVEL1, subGroups));
-            innerExecutor.reset(new (std::nothrow) AllReduceAHC(dispatcher_, reduceAttr, execMem.count, subGroups));
-            HCCL_INFO("allreduce ring: using ahc algo inter-server.");
-        } else if (UseInterServerAHCBrokeAlgo(algType_)) {
-            // 获取通信域分组信息
-            std::vector<std::vector<u32>> subGroups;
-            CHK_RET(topoMatcher_->GetLevelSubGroups(COMM_LEVEL1, subGroups));
-            innerExecutor.reset(new (std::nothrow) AllReduceAHCBroke(dispatcher_, reduceAttr, execMem.count, subGroups));
-            HCCL_INFO("allreduce ring: using ahc-broke algo inter-server.");
-        } else if (UseInterServerNBAlgo(algType_)) {
-            innerExecutor.reset(new (std::nothrow) AllReduceNB(dispatcher_, reduceAttr));
-            HCCL_INFO("allreduce ring: using nonuniform-bruck algo inter-server.");
-        } else if (UseInterServerNHRAlgo(algType_)) {
-            u64 curSize = execMem.count * SIZE_TABLE[param.DataDes.dataType]; // 单位 byte
-            HCCL_DEBUG("allreduce ring: curSize[%llu] deviceNumPerAggregation[%u] commOuterSize[%u]",
-                curSize, topoAttr_.deviceNumPerAggregation, outerCommInfo.localRankSize);
-            if (curSize / topoAttr_.deviceNumPerAggregation <= NHR_ALLREDUCE_SMALL_SIZE) {
-                innerExecutor.reset(new (std::nothrow) AllReduceNHROneshot(dispatcher_, reduceAttr));
-            } else {
-                innerExecutor.reset(new (std::nothrow) AllReduceNHR(dispatcher_, reduceAttr));
-            }
-            HCCL_INFO("allreduce ring: using nhr algo inter-server.");
+    if (topoAttr_.superPodNum <= 1 || isSelectAHC) {
+        bool isConcurrent = (topoAttr_.moduleNum > 1) && !isSelectAHC && !aicpuUnfoldMode_;
+        if (GetExternalInputEnableRdmaSdmaConcurrent() && (hdSize >= HCCL_SPLIT_SIZE_INTER_SERVER) && isConcurrent) {
+            u32 syncTrans = (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) ? BEST_SPLIT_VALUE_DR :
+            BEST_SPLIT_VALUE_SR;
+            CHK_RET(Level1AllReduceConcurrent(execMem.inputMem, execMem.outputMem, execMem.count,
+                param.DataDes.dataType, param.reduceType, param.stream, PROF_STAGE_1,
+                dataSegsSlice, segmentIdx, commIndex, hdSize, syncTrans));
         } else {
-            HCCL_ERROR("allreduce ring: algType[%u] is not supported.", algType_);
-            return HCCL_E_NOT_SUPPORT;
-        }
-        CHK_SMART_PTR_NULL(innerExecutor);
-        u32 rankSize = innerCommInfo.localRankSize;
-        // 节点间的hd 使用环0来记录
-        CHK_RET(innerExecutor->Prepare(
-            allreduceInput, allreduceOutput, allreduceOutput, hdCount,
-            param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID,
-            std::vector<Slice>(0), dataSegsSlice[segmentIdx].offset));
-        CHK_RET(innerExecutor->RegisterProfiler(
-            (rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + innerCommInfo.localRank,
-            PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
-        CHK_RET(RunTemplate(innerExecutor, innerCommInfo));
+            DeviceMem allreduceInput = execMem.inputMem.range(dataSegsSlice[segmentIdx].offset, hdSize);
+            CHK_SMART_PTR_NULL(allreduceInput);
+            DeviceMem allreduceOutput = execMem.outputMem.range(dataSegsSlice[segmentIdx].offset, hdSize);
+            CHK_SMART_PTR_NULL(allreduceOutput);
 
-        HCCL_INFO("allreduce double ring stage1 run success");
+            CommPlane commPlaneLevel1 = isSelectAHC ? COMM_LEVEL1_AHC : COMM_LEVEL1;
+            CHK_RET(CheckCommSize(commPlaneLevel1, commIndex + 1));
+            SubCommInfo innerCommInfo = GetSubCommInfo(commPlaneLevel1, commIndex);
+
+            u64 reduceAttr = GetReduceAttr(allreduceInput, allreduceOutput, param.DataDes.dataType, param.reduceType);
+            std::unique_ptr<ExecutorBase> innerExecutor;
+            if (UseInterServerRingAlgo(algType_)) {
+                innerExecutor.reset(new (std::nothrow) AllReduceRing(dispatcher_, reduceAttr));
+                HCCL_INFO("allreduce ring: using ring algo inter-server.");
+            } else if (UseInterServerNHRV1Algo(algType_)) {
+                innerExecutor.reset(new (std::nothrow) AllReduceNHRV1(dispatcher_, reduceAttr));
+                HCCL_INFO("allreduce ring: using nhr_v1 algo inter-server.");
+            } else if (UseInterServerAHCAlgo(algType_)) {
+                // 获取通信域分组信息
+                std::vector<std::vector<u32>> subGroups;
+                CHK_RET(topoMatcher_->GetLevelSubGroups(commPlaneLevel1, subGroups));
+                innerExecutor.reset(new (std::nothrow) AllReduceAHC(dispatcher_, reduceAttr, execMem.count, subGroups));
+                HCCL_INFO("allreduce ring: using ahc algo inter-server.");
+            } else if (UseInterServerAHCBrokeAlgo(algType_)) {
+                // 获取通信域分组信息
+                std::vector<std::vector<u32>> subGroups;
+                CHK_RET(topoMatcher_->GetLevelSubGroups(commPlaneLevel1, subGroups));
+                innerExecutor.reset(new (std::nothrow) AllReduceAHCBroke(dispatcher_, reduceAttr, execMem.count, subGroups));
+                HCCL_INFO("allreduce ring: using ahc-broke algo inter-server.");
+            } else if (UseInterServerNBAlgo(algType_)) {
+                innerExecutor.reset(new (std::nothrow) AllReduceNB(dispatcher_, reduceAttr));
+                HCCL_INFO("allreduce ring: using nonuniform-bruck algo inter-server.");
+            } else if (UseInterServerNHRAlgo(algType_)) {
+                u64 curSize = execMem.count * SIZE_TABLE[param.DataDes.dataType]; // 单位 byte
+                HCCL_DEBUG("allreduce ring: curSize[%llu] deviceNumPerAggregation[%u] commOuterSize[%u]",
+                    curSize, topoAttr_.deviceNumPerAggregation, outerCommInfo.localRankSize);
+                if (curSize / topoAttr_.deviceNumPerAggregation <= NHR_ALLREDUCE_SMALL_SIZE) {
+                    innerExecutor.reset(new (std::nothrow) AllReduceNHROneshot(dispatcher_, reduceAttr));
+                } else {
+                    innerExecutor.reset(new (std::nothrow) AllReduceNHR(dispatcher_, reduceAttr));
+                }
+                HCCL_INFO("allreduce ring: using nhr algo inter-server.");
+            } else {
+                HCCL_ERROR("allreduce ring: algType[%u] is not supported.", algType_);
+                return HCCL_E_NOT_SUPPORT;
+            }
+            CHK_SMART_PTR_NULL(innerExecutor);
+            u32 rankSize = innerCommInfo.localRankSize;
+            // 节点间的hd 使用环0来记录
+            CHK_RET(innerExecutor->Prepare(
+                allreduceInput, allreduceOutput, allreduceOutput, hdCount,
+                param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID,
+                std::vector<Slice>(0), dataSegsSlice[segmentIdx].offset));
+            CHK_RET(innerExecutor->RegisterProfiler(
+                (rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + innerCommInfo.localRank,
+                PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
+            CHK_RET(RunTemplate(innerExecutor, innerCommInfo));
+
+            HCCL_INFO("allreduce double ring stage1 run success");
+        }
     } else {
         // 超节点内做reducescatter
         CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
@@ -353,7 +370,7 @@ HcclResult CollAllReduceRingFor91093Executor::KernelRun(const OpParam &param, Ex
     if (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) {
         allgatherOpInfoPtr = &allgatherOpInfoGraphModeOpInfo;
     }
-    if (DMAReduceFlag_) {
+    if (DMAReduceFlag_ && (!GetExternalInputEnableInplace())) {
         allgatherOpInfoPtr = &allgatherOpInfo;
     }
     CHK_RET(RunIntraSeverAllGather(param.tag, execMem.inputMem, execMem.outputMem, hdCount,

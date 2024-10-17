@@ -71,6 +71,7 @@ HcclResult BroadCastOperator::SelectAlg(const std::string& tag, const OpParam& p
             algType1), HCCL_E_INTERNAL);
         newTag = tag + level1Iter->second + algName;
     }
+    newTag += (param.aicpuUnfoldMode ? "_device" : "_host");
     HCCL_INFO("[SelectAlg] broadcast newTag is [%s]", newTag.c_str());
     return ret;
 }
@@ -133,7 +134,15 @@ HcclResult BroadCastOperator::SelectAlgfor91093(const OpParam& param, std::strin
         CHK_RET(SetInterServerNHRAlgo(algType_));
         HCCL_WARNING("[BroadCastOperator][BroadCastOperator] do not support ring in AlgoLevel1 yet, reset algType=NHR.");
     }
-    if (topoType_ == TopoType::TOPO_TYPE_NP_SINGLE_RING || topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) {
+    bool smallCountOptim91093 =
+        (serverNum_ == 1) &&
+        ((workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) ||
+        (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && !param.aicpuUnfoldMode)) &&
+        (deviceNumPerAggregation_ > HCCL_DEVICE_NUM_TWO) &&
+        (param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] <= HCCL_SMALL_COUNT_2_MB * userRankSize_);
+    if (smallCountOptim91093) {
+        algName = "BroadCastSmallCountExecutor";
+    } else if (topoType_ == TopoType::TOPO_TYPE_NP_SINGLE_RING || topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) {
         algName = "BroadCastRingFor91093Executor";
     } else {
         algName = "BroadCastComm";

@@ -16,7 +16,7 @@
 #include "dispatcher.h"
 #include "comm_base_pub.h"
 #include "externalinput_pub.h"
-#include "coll_alg_param.h"
+#include "common.h"
 
 namespace hccl {
 enum class ExecutorType {

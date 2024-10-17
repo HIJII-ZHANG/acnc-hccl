@@ -13,8 +13,8 @@
 constexpr s32 NORMAL_QP_MODE = 0;
 constexpr s32 OFFLINE_QP_MODE = 1;
 constexpr s32 OPBASE_QP_MODE = 2;
-constexpr s32 OFFLINE_QP_MODE_EXT = 3;  // 下沉模式(910B/C)QP
-constexpr s32 OPBASE_QP_MODE_EXT = 4;  // 单算子模式(910B/C)的QP
+constexpr s32 OFFLINE_QP_MODE_EXT = 3;  // 下沉模式(910B/91093)QP
+constexpr s32 OPBASE_QP_MODE_EXT = 4;  // 单算子模式(910B/91093)的QP
 
 namespace hccl {
 constexpr s32 MODULE_TYPE_SYSTEM = 0;
@@ -249,7 +249,7 @@ HcclResult CommStar::SetMachinePara(MachineType machineType, const std::string &
             machinePara.remoteIpAddr));
     }
 
-    HCCL_INFO("selfIp[%s] selfPort[%u] peerIp[%s] peerPort[%u] deviceLogicId[%u].",
+    HCCL_INFO("selfIp[%s] selfPort[%u] peerIp[%s] peerPort[%u] deviceLogicId[%d].",
         machinePara.localIpAddr.GetReadableAddress(), machinePara.localSocketPort,
         machinePara.remoteIpAddr.GetReadableAddress(), machinePara.localSocketPort, machinePara.deviceLogicId);
     return HCCL_SUCCESS;
@@ -263,7 +263,7 @@ void CommStar::SetTransportParam(TransportPara &para, MachinePara &machinePara)
     para.peerIp = &machinePara.remoteIpAddr;
     para.peerPort = machinePara.remoteSocketPort;
     para.proxyDevLogicId = machinePara.deviceLogicId;
-    HCCL_INFO("SetTransportParam proxyDevLogicId[%u] deviceType is %d",
+    HCCL_INFO("SetTransportParam proxyDevLogicId[%u] deviceType is %u",
         para.proxyDevLogicId, paraVector_[rank_].deviceType);
 
     if (paraVector_[rank_].deviceType == DevType::DEV_TYPE_NOSOC) {

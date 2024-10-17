@@ -100,10 +100,11 @@ void CollAlgOperator::SetTopoAttr(AlgConfigurator* algConfigurator)
     const HcclTopoAttr& topoAttr = algConfigurator->GetTopoAttr();
     serverNum_= topoAttr.serverNum;
     moduleNum_ = topoAttr.moduleNum;
-    devNumInLevel2_ = topoAttr.devNumInLevel2;
+    superPodNum_ = topoAttr.superPodNum;
     deviceNumPerServer_ = topoAttr.deviceNumPerServer;
     deviceNumPerAggregation_ = topoAttr.deviceNumPerAggregation;
     multiModuleDiffDeviceNumMode_ = topoAttr.multiModuleDiffDeviceNumMode;
+    multiSuperPodDiffServerNumMode_ = topoAttr.multiSuperPodDiffServerNumMode;
 
     meshAggregationRankSize_ = topoAttr.meshAggregationRankSize;
     isDiffDeviceModule_ = topoAttr.isDiffDeviceModule;
@@ -510,19 +511,6 @@ AlgType CollAlgOperator::GetAlgType()
     return algType_;
 }
 
-HcclResult CollAlgOperator::RunExecutor(std::unique_ptr<CommBase> &commCombine, std::unique_ptr<ExecutorBase> &executor,
-    DeviceMem &inputMem, DeviceMem &outputMem, u64 count, HcclDataType dataType,
-    HcclReduceOp op, u32 root, Stream &stream) const
-{
-    CHK_SMART_PTR_NULL(executor);
-    CHK_SMART_PTR_NULL(commCombine);
-
-    CHK_RET(executor->Prepare(inputMem, outputMem, outputMem, count, dataType, stream, op, root));
-
-    CHK_RET(commCombine->RunExecutor(executor));
-    return HCCL_SUCCESS;
-}
-
 bool CollAlgOperator::Is2U2PInfer()
 {
     return ((deviceNumPerAggregation_ == HCCL_DEVICE_NUM_TWO) && (serverNum_ == 1) &&
@@ -574,4 +562,226 @@ void CollAlgOperator::SetLegacyHcclImpl(std::unique_ptr<hcclImpl> &impl)
     return;
 }
 
+bool CollAlgOperator::CheckUserInMemNotLargerThanCCLInMem(const HcclCMDType &opType, OpParam &param)
+{
+    u32 unitSize = SIZE_TABLE[param.DataDes.dataType];
+    u64 dataSize = 0;
+    if (opType == HcclCMDType::HCCL_CMD_REDUCE_SCATTER) {
+        dataSize = param.DataDes.count * unitSize * userRankSize_;
+    } else if (opType == HcclCMDType::HCCL_CMD_ALLREDUCE) {
+        dataSize = param.DataDes.count * unitSize;
+    }
+
+    void *commInputPtr = nullptr;
+    u64 commInputSize = 0;
+    CHK_RET(cclBufferManager_.GetInCCLbuffer(commInputPtr, commInputSize));
+    if (dataSize <= commInputSize) {
+        HCCL_INFO("[CollAlgOperator][OpRetry][AICPU] UserInMem[%llu] <= CCLInMem[%llu]", dataSize, commInputSize);
+    } else {
+        HCCL_INFO("[CollAlgOperator][OpRetry][AICPU] UserInMem[%llu] > CCLInMem[%llu]", dataSize, commInputSize);
+    }
+    return dataSize <= commInputSize;
+}
+
+bool CollAlgOperator::ExecutorOnlySupportDMAReduce(const std::string& algName)
+{
+    return (algName == "AllReduceMeshSmallCountExecutor") || (algName == "ReduceScatterDeterExecutor");
+}
+
+bool CollAlgOperator::ExecutorCanSupportDMAReduce(const std::string& algName)
+{
+    const std::set<std::string> executorCanSupportDMAReduceSet = {
+        "AllReduceRingFor91093Executor", "AllReduceDoubleRingConcurrentExecutor",
+        "AllReduceFastDoubleRingFor91093Executor", "AlignedAllReduceDoubleRingFor91093Executor",
+        "ReduceScatterRingFor91093Executor", "ReduceScatterDoubleRingConcurrentExecutor",
+        "ReduceScatterFastDoubleRingFor91093Executor", "AlignedReduceScatterDoubleRingFor91093Executor"
+        };
+    if (executorCanSupportDMAReduceSet.find(algName) != executorCanSupportDMAReduceSet.end()) {
+        return true;
+    }
+    return false;
+}
+
+bool CollAlgOperator::ExecutorNoSupportDMAReduce(const std::string& algName)
+{
+    return (algName == "AllReduceComm") || (algName == "ReduceScatterComm");
+}
+
+
+bool CollAlgOperator::FitRetryConditionforInPlaceOp(
+    const HcclCMDType &opType, OpParam &param, std::string& algName, u8 &inPlaceSupportRetryStatus)
+{
+    // case 1 allgather or broadcast
+    if (opType == HcclCMDType::HCCL_CMD_ALLGATHER ||
+        opType == HcclCMDType::HCCL_CMD_BROADCAST) {
+        inPlaceSupportRetryStatus = 0;
+        return true;
+    }
+    // case 2 reducescatter or allreduce
+    if (opType == HcclCMDType::HCCL_CMD_REDUCE_SCATTER ||
+        opType == HcclCMDType::HCCL_CMD_ALLREDUCE) {
+        // case 2.1
+        if (CheckUserInMemNotLargerThanCCLInMem(opType, param)) {
+            // case 2.4: 在hccl_communicator.cc的ExecOp之前已经该让图模式走单算子模式了，理论上不会进入此条件
+            HCCL_INFO("[CollAlgOperator][OpRetry][AICPU]The retry with inplace case is expected to be supported, "
+                "therefore HcclWorkflowMode is set to [%d]",
+                static_cast<u8>(GetWorkflowMode()));
+            // case 2.2
+            if (ExecutorOnlySupportDMAReduce(algName)) {
+                if (GetExternalInputEnableInplace()) {
+                    HCCL_INFO("[CollAlgOperator][OpRetry][AICPU]ExecutorOnlySupportDMAReduce[%s] is not allowed"
+                        " for inplace case, the executor without DMAReduce will be applied.", algName.c_str());
+                    inPlaceSupportRetryStatus = 1;
+                    return true;
+                }
+                HCCL_INFO("[CollAlgOperator][OpRetry][AICPU]ExecutorOnlySupportDMAReduce[%s] is not allowed"
+                    " for inplace case.", algName.c_str());
+                inPlaceSupportRetryStatus = 2;
+                return false;
+            } else if (ExecutorNoSupportDMAReduce(algName)) {
+                HCCL_INFO("[CollAlgOperator][OpRetry][AICPU]ExecutorNoSupportDMAReduce[%s] is allowed"
+                    " for inplace case.", algName.c_str());
+                inPlaceSupportRetryStatus = 3;
+                return true;
+            } else if (ExecutorCanSupportDMAReduce(algName)) {
+                if (GetExternalInputEnableInplace()) {
+                    // 对应的executor会感应InplaceEnable环境变量，走非DMA削减逻辑
+                    HCCL_INFO("[CollAlgOperator][OpRetry][AICPU]ExecutorCanSupportDMAReduce[%s] is not allowed"
+                        " for inplace case, the executor without DMAReduce will be applied.", algName.c_str());
+                    inPlaceSupportRetryStatus = 4;
+                    return true;
+                }
+                HCCL_INFO("[CollAlgOperator][OpRetry][AICPU]ExecutorCanSupportDMAReduce[%s] is not allowed"
+                    " for inplace case.", algName.c_str());
+                inPlaceSupportRetryStatus = 5;
+                return false;
+            } else {
+                HCCL_INFO("[CollAlgOperator][OpRetry][AICPU]The unknown executor[%s] does not support "
+                    "for an inplace case yet.", algName.c_str());
+                inPlaceSupportRetryStatus = 6;
+                return false;
+            }
+        } else {
+            // case 2.3 UsrIn > CCLIn
+            inPlaceSupportRetryStatus = 7;
+            return false;
+        }
+    }
+    // 其他算子类型不支持
+    inPlaceSupportRetryStatus = 8;
+    return false;
+}
+
+bool CollAlgOperator::IsHcclOpInplace(const HcclCMDType &opType, OpParam &param, u8 &isInplaceStatus)
+{
+    if (param.inputPtr == nullptr || param.outputPtr == nullptr) {
+        // 不存在overlap情况
+        HCCL_DEBUG("[CollAlgOperator][OpRetry][AICPU]param.tag[%s], the inputPtr[%p], the outputPtr[%p]."
+            "They do not overlap.", param.tag.c_str(), param.inputPtr, param.outputPtr);
+        isInplaceStatus = 0;
+        return false;
+    }
+    //该函数只用于RS和AR
+    u32 unitSize = SIZE_TABLE[param.DataDes.dataType];
+    u64 inputDataSize = 0;
+    u64 outputDataSize = 0;
+    switch (opType) {
+        case HcclCMDType::HCCL_CMD_SEND:
+        case HcclCMDType::HCCL_CMD_RECEIVE:
+            isInplaceStatus = 0;
+            return false;
+            break;
+        case HcclCMDType::HCCL_CMD_ALLREDUCE:
+            inputDataSize = param.DataDes.count * unitSize;
+            outputDataSize = param.DataDes.count * unitSize;
+            break;
+        case HcclCMDType::HCCL_CMD_REDUCE:
+            inputDataSize = param.DataDes.count * unitSize;
+            if (userRank_ == param.root) {
+                outputDataSize = param.DataDes.count * unitSize;
+            }
+            break;
+        case HcclCMDType::HCCL_CMD_ALLGATHER:
+            inputDataSize = param.DataDes.count * unitSize;
+            outputDataSize = param.DataDes.count * unitSize * userRankSize_;
+            break;
+        case HcclCMDType::HCCL_CMD_REDUCE_SCATTER:
+            inputDataSize = param.DataDes.count * unitSize * userRankSize_;
+            outputDataSize = param.DataDes.count * unitSize;
+            break;
+        case HcclCMDType::HCCL_CMD_GATHER:
+            inputDataSize = param.DataDes.count * unitSize;
+            if (userRank_ == param.root) {
+                outputDataSize = param.DataDes.count * unitSize * userRankSize_;
+            }
+            break;
+        case HcclCMDType::HCCL_CMD_SCATTER:
+            if (userRank_ == param.root) {
+                inputDataSize = param.DataDes.count * unitSize * userRankSize_;
+            }
+            outputDataSize = param.DataDes.count * unitSize;
+            break;
+        case HcclCMDType::HCCL_CMD_ALLTOALLV:
+        case HcclCMDType::HCCL_CMD_ALLTOALLVC:
+        case HcclCMDType::HCCL_CMD_ALLTOALL:
+        default:
+            // unknown op
+            if (param.inputPtr != param.outputPtr) {
+                // 可以走重执行
+                HCCL_DEBUG("[CollAlgOperator][IsHcclOpInplace]param.inputPtr[%p] != param.outputPtr[%p]. They do not overlap.",
+                    param.inputPtr, param.outputPtr);
+                isInplaceStatus = 0;
+                return false;
+            } else {
+                HCCL_DEBUG("[CollAlgOperator][IsHcclOpInplace]param.inputPtr[%p] == param.outputPtr[%p]. They overlap.",
+                    param.inputPtr, param.outputPtr);
+                isInplaceStatus = 1;
+                return true;
+            }
+            break;
+    }
+
+    if (inputDataSize == 0 || outputDataSize == 0) {
+        // 不存在overlap情况
+        HCCL_INFO("[CollAlgOperator][OpRetry][AICPU]The inputPtr[%p] dataSize[%llu], the outputPtr[%p] dataSize[%llu]."
+            "They do not overlap.", param.inputPtr, inputDataSize, param.outputPtr, outputDataSize);
+        isInplaceStatus = 0;
+        return false;
+    }
+    u64 inputStart = reinterpret_cast<u64>(param.inputPtr);
+    u64 inputEnd = reinterpret_cast<u64>(param.inputPtr) + inputDataSize;
+    u64 outputStart = reinterpret_cast<u64>(param.outputPtr);
+    u64 outputEnd = reinterpret_cast<u64>(param.outputPtr) + outputDataSize;
+
+    if (inputStart <= outputEnd && outputStart <= inputEnd) {
+        HCCL_DEBUG("[CollAlgOperator][OpRetry][AICPU]The inputPtr[%p] dataSize[%llu], the outputPtr[%p] dataSize[%llu]."
+            "They overlap.", param.inputPtr, inputDataSize, param.outputPtr, outputDataSize);
+        isInplaceStatus = 2;
+        return true;
+    } else {
+        HCCL_DEBUG("[CollAlgOperator][OpRetry][AICPU]The inputPtr[%p] dataSize[%llu], the outputPtr[%p] dataSize[%llu]."
+            "They do not overlap.", param.inputPtr, inputDataSize, param.outputPtr, outputDataSize);
+        isInplaceStatus = 0;
+        return false;
+    }
+}
+
+bool CollAlgOperator::SupportRetryWithInplaceCheck(
+    const HcclCMDType &opType, OpParam &param, std::string& algName, u8 &isInplaceStatus,
+    u8 &inPlaceSupportRetryStatus)
+{
+    // 不支持inplace的通信算子重执行
+    if (IsHcclOpInplace(opType, param, isInplaceStatus)) {
+        if(!FitRetryConditionforInPlaceOp(opType, param, algName, inPlaceSupportRetryStatus)) {
+            HCCL_DEBUG("[CollAlgOperator][OpRetry][AICPU]hccl aicpu can not retry, opType[%s], inputPtr[0x%016lx], "
+                "outputPtr[0x%016lx].",
+                GetCMDTypeEnumStr(opType).c_str(), param.inputPtr, param.outputPtr);
+            return false;
+        }
+    }
+    // true 存在两种情况：
+    // 1. 非inplace场景
+    // 2. 是inplace但同时符合retry条件的场景
+    return true;
+}
 }   // namesapce hccl

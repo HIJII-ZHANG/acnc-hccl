@@ -150,13 +150,15 @@ HcclResult AlgConfigurator::SelectCurrOpAlgType(
 
     if (Is310P3Common(algoAttr_.isHaveCpuRank, topoAttr_.deviceType)) {
         algType[opType] = AlgType::ALG_DEFAULT;
-    } else if (topoAttr_.multiModuleDiffDeviceNumMode  && !(isConfigAHC || isConfigNULL)) { // 多server不同卡模式，设置为单层拓扑类型
+    } else if ((topoAttr_.multiModuleDiffDeviceNumMode ||
+               (topoAttr_.multiSuperPodDiffServerNumMode && !(opType == HcclCMDType::HCCL_CMD_ALLREDUCE && isConfigAHC))) &&
+               !isConfigNULL) { // 多server不同卡模式，设置为单层拓扑类型
         algType[opType] = AlgType::ALG_DEFAULT;
         isAlgoLevel1Default_[opType] = false;
         if (GetExternalInputHcclAlgoConfig(opType)[HCCL_ALGO_LEVEL_0] != HcclAlgoType::HCCL_ALGO_TYPE_DEFAULT ||
             GetExternalInputHcclAlgoConfig(opType)[HCCL_ALGO_LEVEL_1] != HcclAlgoType::HCCL_ALGO_TYPE_DEFAULT) {
-            HCCL_WARNING("multiModuleDiffDeviceNumMode_ is [%d], algorithm type [%d] is selected by force.", \
-                         topoAttr_.multiModuleDiffDeviceNumMode, algType[opType]);
+            HCCL_WARNING("multiModuleDiffDeviceNumMode[%d], multiSuperPodDiffServerNumMode_[%d], algorithm type [%d] is selected by force.", \
+                         topoAttr_.multiModuleDiffDeviceNumMode, topoAttr_.multiSuperPodDiffServerNumMode, algType[opType]);
         }
     } else if (algoAttr_.isHaveCpuRank) {
         algType[opType] = AlgType::ALG_NP_STAR;
@@ -185,8 +187,8 @@ HcclResult AlgConfigurator::SelectCurrOpAlgType(
     auto level2Iter = HCCL_ALGO_LEVEL2_NAME_MAP.find(algType2);
     CHK_PRT_RET(level2Iter == HCCL_ALGO_LEVEL2_NAME_MAP.end(),
         HCCL_ERROR("level2: algType2[%u] is invalid.", algType2), HCCL_E_INTERNAL);
-    HCCL_RUN_INFO("Device Type[%d], average device count[%u], HccsNum[%d], SIONum[%d], HCCS_SW_NUM[%d], " \
-        "optype[%u] algorithm type[%d] is selected:level0: using[%s], level1: using[%s], level2: using[%s]",
+    HCCL_RUN_INFO("Device Type[%u], average device count[%u], HccsNum[%u], SIONum[%u], HCCS_SW_NUM[%u], " \
+        "optype[%u] algorithm type[%u] is selected:level0: using[%s], level1: using[%s], level2: using[%s]",
         deviceType, topoAttr_.deviceNumPerAggregation,
         topoAttr_.pairLinkInfo[static_cast<u32>(LinkTypeInServer::HCCS_TYPE)].size(),
         topoAttr_.pairLinkInfo[static_cast<u32>(LinkTypeInServer::SIO_TYPE)].size(),
@@ -225,13 +227,41 @@ HcclResult AlgConfigurator::SetAlgoLevel1(HcclAlgoType algoConfig, u32 moduleNum
             HCCL_INFO("server num[%u]: level1:nhr_v1 algo is set.", moduleNum);
             break;
         case HcclAlgoType::HCCL_ALGO_TYPE_AHC:
-            algType = AlgTypeLevel1::ALG_LEVEL1_AHC;
-            HCCL_INFO("server num[%u]: level1:ahc algo is set.", moduleNum);
-            break;
+            if (GetExternalInputHcclAicpuUnfold() == true) {
+                algoConfigShadow = HcclAlgoType::HCCL_ALGO_TYPE_DEFAULT;
+                HCCL_INFO("server num[%u]: ahc is not support AI_CPU, set default.", moduleNum);
+                break;
+            }
+            if (opType == HcclCMDType::HCCL_CMD_ALLREDUCE) {
+                algType = AlgTypeLevel1::ALG_LEVEL1_AHC;
+                HCCL_INFO("server num[%u]: level1:ahc algo is set.", moduleNum);
+                break;
+            } else if (opType < HcclCMDType::HCCL_CMD_ALL) {
+                algoConfigShadow = HcclAlgoType::HCCL_ALGO_TYPE_DEFAULT;
+                HCCL_INFO("server num[%u]: level1:ahc algo is not support, set default.", moduleNum);
+                break;
+            } else {
+                algType = AlgTypeLevel1::ALG_LEVEL1_AHC;
+                return HCCL_SUCCESS;
+            }
         case HcclAlgoType::HCCL_ALGO_TYPE_AHC_BROKE:
-            algType = AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE;
-            HCCL_INFO("server num[%u]: level1:ahc broke algo is set.", moduleNum);
-            break;
+            if (GetExternalInputHcclAicpuUnfold() == true) {
+                algoConfigShadow = HcclAlgoType::HCCL_ALGO_TYPE_DEFAULT;
+                HCCL_INFO("server num[%u]: ahc broke is not support AI_CPU, set default.", moduleNum);
+                break;
+            }
+            if (opType == HcclCMDType::HCCL_CMD_ALLREDUCE) {
+                algType = AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE;
+                HCCL_INFO("server num[%u]: level1:ahc broke algo is set.", moduleNum);
+                break;
+            } else if (opType < HcclCMDType::HCCL_CMD_ALL) {
+                algoConfigShadow = HcclAlgoType::HCCL_ALGO_TYPE_DEFAULT;
+                HCCL_INFO("server num[%u]: level1:ahc broke algo is not support, set default.", moduleNum);
+                break;
+            } else {
+                algType = AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE;
+                return HCCL_SUCCESS;
+            }
         case HcclAlgoType::HCCL_ALGO_TYPE_NB:
             algType = AlgTypeLevel1::ALG_LEVEL1_NB;
             HCCL_INFO("server num[%u]: level1:nb algo is set.", moduleNum);
@@ -283,7 +313,7 @@ HcclResult AlgConfigurator::GetDefaultAlgoLevel1V1(u32 moduleNum, AlgTypeLevel1 
 
 HcclResult AlgConfigurator::SetAlgoLevel2(HcclAlgoType algoConfig, AlgTypeLevel2 &algType)
 {
-    u32 devNumInLevel2 = topoAttr_.devNumInLevel2;
+    u32 superPodNum = topoAttr_.superPodNum;
     switch (algoConfig) {
         case HcclAlgoType::HCCL_ALGO_TYPE_HDR:
             algType = AlgTypeLevel2::ALG_LEVEL2_HD;
@@ -292,21 +322,21 @@ HcclResult AlgConfigurator::SetAlgoLevel2(HcclAlgoType algoConfig, AlgTypeLevel2
             algType = AlgTypeLevel2::ALG_LEVEL2_RING;
             break;
         default: {
-            if (devNumInLevel2 >=  HCCL_INTER_SERVER_RING_ALGO_MAX_SUPPORT_SERVER_NUM) {
+            if (superPodNum >=  HCCL_INTER_SERVER_RING_ALGO_MAX_SUPPORT_SERVER_NUM) {
                 // server 数为 8 以上：使用 HD 算法
                 algType = AlgTypeLevel2::ALG_LEVEL2_HD;
             } else {
                 // server 数为 2 的非整数次幂：使用 RING 算法
                 // server 数为 2 的整数次幂：使用 HD 算法
-                algType = (((devNumInLevel2 & (devNumInLevel2 - 1)) != 0) || (devNumInLevel2 == 1)) ?
+                algType = (((superPodNum & (superPodNum - 1)) != 0) || (superPodNum == 1)) ?
                     AlgTypeLevel2::ALG_LEVEL2_RING :
                     AlgTypeLevel2::ALG_LEVEL2_HD;
             }
             break;
         }
     }
-    HCCL_DEBUG("[AlgConfigurator][SetAlgoLevel2]algType[%u], deviceType_[%u], devNumInLevel2[%u]",
-        algType, topoAttr_.deviceType, devNumInLevel2);
+    HCCL_DEBUG("[AlgConfigurator][SetAlgoLevel2]algType[%u], deviceType_[%u], superPodNum_[%u]",
+        algType, topoAttr_.deviceType, superPodNum);
     return HCCL_SUCCESS;
 }
 

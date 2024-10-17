@@ -102,7 +102,7 @@ HcclResult CollAllReduceMeshOpbaseBigCountAivExecutor::KernelRun(const OpParam &
 
     u32 localRank = outerCommInfo.localRank;
     u32 localRankSize = outerCommInfo.localRankSize;
-    HCCL_DEBUG("[CollAllReduceMeshOpbaseBigCountAivExecutor][KernelRun] userRank [%d] localRank [%d]",
+    HCCL_DEBUG("[CollAllReduceMeshOpbaseBigCountAivExecutor][KernelRun] userRank [%u] localRank [%u]",
         topoAttr_.userRank, localRank);
 
     for (u32 i = 0; i < localRankSize; i++) {
@@ -118,7 +118,7 @@ HcclResult CollAllReduceMeshOpbaseBigCountAivExecutor::KernelRun(const OpParam &
     bool isOpbase = (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
     HcclResult ret = ExecuteKernelLaunch(HcclCMDType::HCCL_CMD_ALLREDUCE, execMem.inputPtr, execMem.outputPtr,
         execMem.count, param.DataDes.dataType, param.reduceType, localRank, localRankSize, 0,
-        buffersIn, buffersOut, param.stream.ptr(), isOpbase, execMem.inputMem.size());
+        buffersIn, buffersOut, param.tag, param.stream.ptr(), isOpbase, execMem.inputMem.size());
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAllReduceMeshOpbaseBigCountAivExecutor][KernelRun]allreduce aiv failed, return[%d]", ret),
         ret);

@@ -57,6 +57,7 @@ public:
 
     u32 GetModuleNum();
     bool GetMultiModuleDiffDeviceNumMode();
+    bool GetMultiSuperPodDiffServerNumMode();
     bool GetUsedInterHccsMode();
     bool GetSingleMeshAggregation();
     bool GetAllRankSamePlane();
@@ -103,6 +104,7 @@ private:
     HcclResult TransformRankInfoByServerId(const std::vector<RankInfo_t> &rankList,
             ServRankInfo &servRankInfo) const;
     HcclResult SetModuleInfo(const std::vector<RankInfo_t> &rankList);
+    HcclResult SetSuperPodInfo(const std::vector<RankInfo_t> &rankList);
     HcclResult GetModuleIdx(const RankInfo_t &rankInfo, u32 &moduleIdx);
     bool IsDiffDeviceModule(const std::vector<RankInfo_t> &rankList) const;
     HcclResult SetNiclistInfo();
@@ -142,6 +144,7 @@ private:
     bool isSingleMeshAggregation_{false};
     u32 meshAggregationRankSize_{0};
     bool multiModuleDiffDeviceNumMode_{false};
+    bool multiSuperPodDiffServerNumMode_{false};    //判断每个超节点中的server数是否一致
     bool isStandardCard_{false};
     bool is310PDuoCard_{false};
     bool useSuperPodMode_{false};

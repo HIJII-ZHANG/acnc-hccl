@@ -302,7 +302,8 @@ void CollAlltoAllExecutor::CalcIntraMeshAggregationAlltoAllMemInfo(const AlltoAl
 
 HcclOpMetaInfo CollAlltoAllExecutor::GetOpMeta(HcclCMDType opType, const u64 size)
 {
-    if (SatisfyIntraSuperPod(topoAttr_.deviceType, topoAttr_.userRankSize, topoAttr_.useSuperPodMode)) {
+    if (SatisfyIntraSuperPod(topoAttr_.deviceType, topoAttr_.userRankSize, topoAttr_.useSuperPodMode,
+                             topoAttr_.superPodNum)) {
         u64 maxUserIn = GetGlobalMaxUserInSize(allMeshAggregationSendRecvInfo_);
         HcclOpMetaInfoDef opMeta = HcclOpMetaInfo::GetOneForAllToAllVC(CopyPattern::ZCOPY, maxUserIn,
             maxUserIn > SMALL_SIZE_FULLMESH);

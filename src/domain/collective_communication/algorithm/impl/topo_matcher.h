@@ -43,13 +43,14 @@ using HcclTopoInfo = struct HcclTopoInfoDef {
     std::vector<u32> nicList;
     bool isSingleMeshAggregation;
     u32 deviceNumPerAggregation;     // 每个module中的Device数量
-    u32 devNumInLevel2;                 // 集群中总的超节点数
+    u32 superPodNum;                 // 集群中总的超节点数
     DevType deviceType;
     TopoType topoType;
     bool is310P3Common;
     u32 serverNum;
     u32 meshAggregationRankSize;
     u32 multiModuleDiffDeviceNumMode;
+    u32 multiSuperPodDiffServerNumMode;
     u32 realUserRank;
     bool isDiffDeviceModule;
     u32 moduleNum;
@@ -68,13 +69,14 @@ using HcclTopoInfo = struct HcclTopoInfoDef {
         nicList(0),
         isSingleMeshAggregation(false),
         deviceNumPerAggregation(0),
-        devNumInLevel2(0),
+        superPodNum(0),
         deviceType(DevType::DEV_TYPE_COUNT),
         topoType(TopoType::TOPO_TYPE_COMMON),
         is310P3Common(false),
         serverNum(0),
         meshAggregationRankSize(0),
         multiModuleDiffDeviceNumMode(0),
+        multiSuperPodDiffServerNumMode(0),
         realUserRank(0),
         isDiffDeviceModule(false),
         moduleNum(0),
@@ -127,6 +129,7 @@ public:
     u32 GetSubRootUserRank(const u32 userRank, const u32 rootUserRank);
     u32 GetSubRootUserRankWithSuperPod(const u32 userRank, const u32 rootUserRank);
     u32 GetSubRootWithSuperPod(const u32 userRank, const u32 rootUserRank);
+    HcclResult GetLocalSuperPodRankSize(const u32 userRank, u32& devNumInlocalPod, u32& rankIdxInPod);
     HcclResult SetDeterministicConfig(const u8 deterministic);
     u8 GetDeterministicConfig() const;
     bool GetLevelAsymType(const CommPlane level) const;
@@ -164,7 +167,7 @@ private:
     // serverAndsuperPodToRank_[1]: 通信域所有rank的信息, 按照superPodId -> RankInfo 的结构划分
     std::vector<std::vector<std::vector<u32>>> serverAndsuperPodToRank_;
 
-    u32 userRankIdx_;
+    u32 userRankIdx_ = 0;
 };
 }  // namespace hccl
 

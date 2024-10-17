@@ -83,9 +83,9 @@ HcclResult TopoInfoExchangeServer::Teardown()
     return HCCL_SUCCESS;
 }
 
-HcclResult TopoInfoExchangeServer::GetConnections(std::map<std::string, std::shared_ptr<HcclSocket>> &connectSockets)
+HcclResult TopoInfoExchangeServer::GetConnections(std::map<u32, std::shared_ptr<HcclSocket>> &connectSockets)
 {
-    connectSockets = connectSockets_;
+    connectSockets = connectSocketsWithRankID_;
     return HCCL_SUCCESS;
 }
 
@@ -142,6 +142,7 @@ HcclResult TopoInfoExchangeServer::GetRemoteFdAndRankSize(std::shared_ptr<HcclSo
     u32 rankID = 0;
     if (!isByMasterInfo_) {
         CHK_RET(SalStrToULong(agentID, HCCL_BASE_DECIMAL, rankID));
+        connectSocketsWithRankID_.insert({rankID, socket});
     }
 
     bool isRankIdUnAvailable = isByMasterInfo_ ? (false) : (rankID >= rankSize);
@@ -187,6 +188,7 @@ HcclResult TopoInfoExchangeServer::Disconnect(std::map<std::string, std::shared_
         CHK_RET(DisconnectSocket(socket.second));
     }
     connectSockets.clear();
+    connectSocketsWithRankID_.clear();
     return HCCL_SUCCESS;
 }
 
@@ -282,6 +284,7 @@ HcclResult TopoInfoExchangeServer::GetRanksBasicInfo(
             handle.first.c_str(), ret), ret);
         if (isByMasterInfo_ && rankTable.rankList.size() > 0) { // masterInfo场景下无法获取rankid
             rankTable.rankList.back().rankId = socketIndex;
+            connectSocketsWithRankID_.insert({socketIndex, handle.second});
         }
         
         HCCL_INFO("GetRankBasicInfo from agentId[%s] rankId[%u] success.",

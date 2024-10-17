@@ -38,7 +38,7 @@ protected:
     StageAlltoAllVAddrInfo sendAddrInfo_;
     StageAlltoAllVAddrInfo recvAddrInfo_;
     Stream &mainStream_;
-    bool isAlltoAllZCopyMode_;
+    bool isAlltoAllZCopyMode_ = false;
 };
 } // namespace hccl
 #endif /* ALLTOALL_V_STAGED_BASE_PUB_H */

@@ -39,6 +39,17 @@ HcclResult ReduceOperator::SelectAlg(const std::string &tag, const OpParam &para
         return HCCL_SUCCESS;
     }
 
+    newTag = param.tag;
+    if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && UseInterServerHDAlgo(algType_)) {
+        u32 part1Size = FACTOR_TWO * (moduleNum_ - (1 << static_cast<u32>(log2(moduleNum_))));
+        u32 rootId = param.root / deviceNumPerAggregation_;
+        std::string appendTag = std::to_string((rootId >= part1Size) || ((rootId % 2) == 0));
+        newTag = newTag + '_' + appendTag;
+        if (param.opBaseAtraceInfo != nullptr) {
+            CHK_RET(param.opBaseAtraceInfo->SavealgtypeTraceInfo(appendTag, param.tag));
+        }
+    }
+
     if (deviceType_ == DevType::DEV_TYPE_910) {
         ret = SelectAlgfor910A(param, algName);
     } else if (deviceType_ == DevType::DEV_TYPE_910B) {
@@ -57,11 +68,9 @@ HcclResult ReduceOperator::SelectAlg(const std::string &tag, const OpParam &para
         auto level1Iter = HCCL_ALGO_LEVEL1_NAME_MAP.find(algType1);
         CHK_PRT_RET(level1Iter == HCCL_ALGO_LEVEL1_NAME_MAP.end(), HCCL_ERROR("level1: algType1[%u] is invalid.",
             algType1), HCCL_E_INTERNAL);
-        newTag = tag + level1Iter->second + algName;
-    } else {
-        newTag = tag;
+        newTag = newTag + level1Iter->second + algName;
     }
-
+    newTag += (param.aicpuUnfoldMode ? "_device" : "_host");
     HCCL_INFO("[SelectAlg] reduce newTag is [%s].", newTag.c_str());
     return ret;
 }
@@ -111,7 +120,8 @@ HcclResult ReduceOperator::SelectAlgfor91093(const OpParam& param, std::string& 
     } else {
         algName = "ReduceComm";
     }
-    if (!(UseInterServerRingAlgo(algType_) && topoMatcher_->GetTopoInfo().devNumInLevel2 > 1)) {
+    if ((!UseInterServerRingAlgo(algType_) && topoMatcher_->GetTopoInfo().superPodNum > 1) ||
+        !UseWholeRingAlgo(algType_)) {
         SetInterServerRingAlgo(algType_);
         HCCL_WARNING("[ReduceOperator][SelectAlgfor91093][Superpod] inter-server only support ring yet, "\
             "default is algType=RING.");

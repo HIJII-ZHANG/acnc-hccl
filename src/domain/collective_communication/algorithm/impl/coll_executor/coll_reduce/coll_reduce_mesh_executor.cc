@@ -105,7 +105,7 @@ HcclResult CollReduceMeshExecutor::KernelRun(const OpParam &param, ExecMem &exec
             param.DataDes.dataType, param.reduceType, multiStreamSlice, const_cast<Stream&>(param.stream),
             COMM_LEVEL0));
     }
-    HCCL_INFO("reduce mesh stage0 run success");
+    HCCL_INFO("[CollReduceMeshExecutor]reduce mesh stage0 run success");
 
     // step2: 节点间的reduce
     u32 commIndex = outerCommInfo.localRank;
@@ -158,7 +158,7 @@ HcclResult CollReduceMeshExecutor::KernelRun(const OpParam &param, ExecMem &exec
         CHK_RET(HcclD2DMemcpyAsync(dispatcher_, reduceOutput, reduceInput, const_cast<Stream&>(param.stream)));
     }
 
-    HCCL_INFO("reduce mesh stage1 run success");
+    HCCL_INFO("[CollReduceMeshExecutor]reduce mesh stage1 run success");
 
     SingleSubCommTransport &outerTransportInfo =
         const_cast<SingleSubCommTransport&>(algResResp_->opTransportResponse[COMM_LEVEL0][COMM_INDEX_0]);
@@ -180,7 +180,7 @@ HcclResult CollReduceMeshExecutor::KernelRun(const OpParam &param, ExecMem &exec
             PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, param.stream));
         CHK_RET(RunTemplate(outerExecutor, outerCommInfo));
     }
-    HCCL_INFO("reduce mesh stage2 run success");
+    HCCL_INFO("[CollReduceMeshExecutor]reduce mesh stage2 run success");
 
     return HCCL_SUCCESS;
 }

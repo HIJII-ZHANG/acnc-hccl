@@ -85,6 +85,7 @@ HcclResult AllgatherMeshDirect::RunAsync(const u32 rank, const u32 rankSize, con
         }
         return HCCL_SUCCESS;
     }
+    DeviceMem emptyMem = outputMem_.range(0, 0);
 
     src = DeviceMem::create(curUerMemInPtr, sdmaSize);
     u64 localOffsetByte = (sliceSize * rank) % HCCL_MIN_SLICE_ALIGN_910B;
@@ -103,6 +104,8 @@ HcclResult AllgatherMeshDirect::RunAsync(const u32 rank, const u32 rankSize, con
 
     CHK_RET(SubRecordMain());
     CHK_RET(MainWaitSub());
+
+    CHK_RET(HcclD2DMemcpyAsync(dispatcher_, emptyMem, emptyMem, stream_));
 
     CHK_RET(SubWaitMain());
     CHK_RET(MainRecordSub());
@@ -128,7 +131,8 @@ HcclResult AllgatherMeshDirect::RunAsync(const u32 rank, const u32 rankSize, con
     }
     CHK_RET(SubRecordMain());
     CHK_RET(MainWaitSub());
-
+    CHK_RET(HcclD2DMemcpyAsync(dispatcher_, emptyMem, emptyMem, stream_));
+    
     HCCL_INFO("AllGatherMesh finished: rank[%u]", rank);
     return HCCL_SUCCESS;
 }

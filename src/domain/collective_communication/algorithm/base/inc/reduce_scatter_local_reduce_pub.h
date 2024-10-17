@@ -37,8 +37,8 @@ HcclResult RunReduceScatter(u32 rank, u32 rankSize, const std::vector<LINK> &lin
 HcclResult RunLocalReduce(u32 rank, u32 rankSize);
 const u64 reduceAttr_;
 const u32 base = 2;
-u32 localRank_;
-u32 localRankSize_;
+u32 localRank_ = 0;
+u32 localRankSize_ = 0;
 u32 userRank_;
 std::vector<Stream> meshStreams_;               /* * 多stream* */
 const std::vector<std::shared_ptr<LocalNotify>> &meshSignal_;    /* 每个ring创建一个signal */

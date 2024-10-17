@@ -27,8 +27,10 @@ set(hccl_include_list
     ${HCCL_BASE_DIR}/framework/common/src/
     ${HCCL_BASE_DIR}/framework/common/src/topo
     ${HCCL_BASE_DIR}/framework/common/src/task
+    ${HCCL_BASE_DIR}/framework/common/src/exception
     ${HCCL_BASE_DIR}/framework/communicator/impl/
     ${HCCL_BASE_DIR}/framework/communicator/impl/resource_manager
+    ${HCCL_BASE_DIR}/framework/communicator/impl/one_sided_service
     ${HCCL_BASE_DIR}/framework/hcom/
     ${HCCL_BASE_DIR}/framework/inc/
     ${HCCL_BASE_DIR}/framework/op_base/src
@@ -44,6 +46,7 @@ if(BUILD_OPEN_PROJECT)
         ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/metadef/common/util/error_manager/
         ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/msprof/
         ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/runtime/
+        ${ASCEND_CANN_PACKAGE_PATH}/include/ascendc/highlevel_api/
         ${THIRD_PARTY_NLOHMANN_PATH}
     )
 
@@ -89,16 +92,30 @@ target_include_directories(hccl PRIVATE
     ${hccl_include_list}
 )
 
-target_link_libraries(hccl
-        -Wl,--no-as-needed
-        c_sec
-        hccl_alg
-        hccl_plf
-        -Wl,--as-needed
-        -lrt
-        -ldl
-        -lpthread
-)
+if(BUILD_OPEN_PROJECT)
+    target_link_libraries(hccl
+            -Wl,--no-as-needed
+            c_sec
+            hccl_alg
+            hccl_plf
+            -Wl,--as-needed
+            -lrt
+            -ldl
+            -lpthread
+    )
+else()
+    target_link_libraries(hccl
+            $<BUILD_INTERFACE:kernel_tiling_headers>
+            -Wl,--no-as-needed
+            c_sec
+            hccl_alg
+            hccl_plf
+            -Wl,--as-needed
+            -lrt
+            -ldl
+            -lpthread
+    )
+endif()
 
 add_subdirectory(common)
 add_subdirectory(communicator)

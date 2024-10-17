@@ -55,7 +55,9 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::CalcCommInfo(std::vector<Leve
     if (topoMatcher_->GetExternalInputIntraRoceSwitch() == 0) {
         std::vector<SingleSubCommTransport> &commTransportLevel1 = opTransport[COMM_LEVEL1];
         for (u32 ringIndex = 0; ringIndex < commTransportLevel1.size(); ringIndex++) {
-            commTransportLevel1[ringIndex].isUsedRdma = false;
+            for (auto &transportRequest : commTransportLevel1[ringIndex].transportRequests) {
+                transportRequest.isUsedRdma = false;
+            }
         }
     }
     return HCCL_SUCCESS;
@@ -129,7 +131,7 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::InterServerHDOneshot(const Op
     CHK_SMART_PTR_NULL(senderInfo);
     reducerInfo.reset(new (std::nothrow) Reducer(param.DataDes.dataType, param.reduceType, reduceAttr));
     CHK_SMART_PTR_NULL(reducerInfo);
-    u32 hdStepNum = log2(interRankSize);
+    u32 hdStepNum = static_cast<u32>(log2(interRankSize));
     HCCL_INFO("[CollAllReduceSmallCountAivRdmaExecutor] Find interlink type for cross-aggregation link[%d].",
         interLinks[(interRankId + 1) % A_X_AGGR_SIZE]->GetLinkType());
     u32 sliceSize = sliceCount * SIZE_TABLE[param.DataDes.dataType];
@@ -150,7 +152,7 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::InterServerHDOneshot(const Op
                 flagBuffers, UserMemType::INPUT_MEM, UserMemType::OUTPUT_MEM, HCCL_SMALL_COUNT_2_MB + dbOffset, 0));
             CHK_RET(ExecuteKernelLaunch(HcclCMDType::HCCL_CMD_ALLREDUCE, nullptr, arOutput, sliceCount,
                 param.DataDes.dataType, param.reduceType, interRankId, interRankSize, 0, dataBuffers, flagBuffers,
-                param.stream.ptr(), isOpbase, execMem.inputMem.size(), INTER_AR_STEP, true));
+                param.tag, param.stream.ptr(), isOpbase, execMem.inputMem.size(), INTER_AR_STEP, true));
         } else {
             // 其他情况走RDMA
             auto opMeta = HcclOpMetaInfo::GetOneForAllReduce(0, param.DataDes.dataType, ReduceType::INLINE_REDUCE,
@@ -179,7 +181,7 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::InterServerHDOneshot(const Op
             }
         }
     }
-     CHK_RET(LaunchTask(dispatcher_, const_cast<Stream&>(param.stream)));
+    CHK_RET(LaunchTask(dispatcher_, const_cast<Stream&>(param.stream)));
     outputOffset = HCCL_SMALL_COUNT_2_MB + hdStepNum * sliceSize;
     return HCCL_SUCCESS;
 }
@@ -221,7 +223,7 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::KernelRun(const OpParam &para
     // RS总数据量最大1m，rs的结果存储到2m处
     void* rsOutput = static_cast<u8 *>(execMem.inputMem.ptr()) + HCCL_SMALL_COUNT_2_MB;
     CHK_RET(ExecuteKernelLaunch(HcclCMDType::HCCL_CMD_ALLREDUCE, execMem.inputPtr, rsOutput, execMem.count,
-        param.DataDes.dataType, param.reduceType, intraRankId, intraRankSize, 0, dataBuffers, flagBuffers,
+        param.DataDes.dataType, param.reduceType, intraRankId, intraRankSize, 0, dataBuffers, flagBuffers, param.tag,
         param.stream.ptr(), isOpbase, execMem.inputMem.size(), INTRA_RS_STEP, true));
 
     // use hd algo
@@ -235,7 +237,7 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::KernelRun(const OpParam &para
         dataBuffers, flagBuffers, UserMemType::INPUT_MEM, UserMemType::OUTPUT_MEM, HCCL_SMALL_COUNT_8_MB,
         0));
     CHK_RET(ExecuteKernelLaunch(HcclCMDType::HCCL_CMD_ALLREDUCE, arOutput, execMem.outputPtr, execMem.count,
-        param.DataDes.dataType, param.reduceType, intraRankId, intraRankSize, 0, dataBuffers, flagBuffers,
+        param.DataDes.dataType, param.reduceType, intraRankId, intraRankSize, 0, dataBuffers, flagBuffers, param.tag,
         param.stream.ptr(), isOpbase, execMem.inputMem.size(), INTRA_AG_STEP, true));
 
     HCCL_INFO("[CollAllReduceSmallCountAivRdmaExecutor][KernelRun]allreduce aiv run success");

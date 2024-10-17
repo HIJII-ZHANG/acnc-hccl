@@ -20,12 +20,12 @@ constexpr u64 NHR_ALLREDUCE_SMALL_SIZE = 256 * 1024; // server间allreduce数据
 constexpr u64 NHR_BCAST_SMALL_SIZE = 2 * 1024 * 1024; // server间broadcast数据大小2M及以下不切片
 
 using InterServerAlgoStep = struct InterServerAlgoStepDef {
-    u32 step;
-    u32 myRank;
+    u32 step = 0;
+    u32 myRank = 0;
 
     u32 nSlices;
-    u32 toRank;
-    u32 fromRank;
+    u32 toRank = 0;
+    u32 fromRank = 0;
     std::vector<u32> txSliceIdxs;
     std::vector<u32> rxSliceIdxs;
 

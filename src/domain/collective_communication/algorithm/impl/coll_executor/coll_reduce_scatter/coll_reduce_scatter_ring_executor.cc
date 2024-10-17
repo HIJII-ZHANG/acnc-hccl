@@ -135,7 +135,7 @@ u64 CollReduceScatterRingExecutor::CalcLoopMaxCount(const u32 unitSize)
     return maxCountPerLoop;
 }
 
-bool CollReduceScatterRingExecutor::IsHugeData(const u64 curSize)
+bool CollReduceScatterRingExecutor::IsHugeData(const u64 curSize, OpParam *param)
 {
     if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT) {
         return true;

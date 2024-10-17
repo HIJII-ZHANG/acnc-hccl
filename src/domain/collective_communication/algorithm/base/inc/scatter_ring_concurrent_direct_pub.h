@@ -55,7 +55,7 @@ private:
     std::vector<std::shared_ptr<LocalNotify>> subSignals_;
     const std::vector<u32>                    ringsOrder_;
     const std::vector<Slice>                  userMemInputSlices_;
-    u64                                       lastStepOffset_;
+    u64                                       lastStepOffset_ = 0;
 };
 } // namespace hccl
 

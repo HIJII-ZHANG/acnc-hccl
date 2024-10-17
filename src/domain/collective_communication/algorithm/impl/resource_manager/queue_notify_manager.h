@@ -34,6 +34,8 @@ public:
 
     HcclResult Destroy();
 
+    HcclResult ResetNotify();
+
     QueueNotifyManager(QueueNotifyManager const&) = delete;                 // Copy construct
     QueueNotifyManager(QueueNotifyManager&&) = delete;                      // Move construct
     QueueNotifyManager& operator=(QueueNotifyManager const&) = delete;      // Copy assign

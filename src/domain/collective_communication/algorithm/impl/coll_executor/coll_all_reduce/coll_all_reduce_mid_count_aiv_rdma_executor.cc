@@ -111,8 +111,10 @@ HcclResult CollAllReduceMidCountAivRdmaExecutor::KernelRun(const OpParam &param,
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
     SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
     u32 commIndex = outerCommInfo.localRank;
-    CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
-    SubCommInfo innerCommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
+    bool isSelectAHC = (UseInterServerAHCAlgo(algType_) || UseInterServerAHCBrokeAlgo(algType_));
+    CommPlane commPlaneLevel1 = isSelectAHC ? COMM_LEVEL1_AHC : COMM_LEVEL1;
+    CHK_RET(CheckCommSize(commPlaneLevel1, commIndex + 1));
+    SubCommInfo innerCommInfo = GetSubCommInfo(commPlaneLevel1, commIndex);
 
     // 数据准备，按照server内rankSize切片
     u32 perDataSize = SIZE_TABLE[param.DataDes.dataType];
@@ -135,7 +137,7 @@ HcclResult CollAllReduceMidCountAivRdmaExecutor::KernelRun(const OpParam &param,
         dataBuffers, flagBuffers, UserMemType::INPUT_MEM, UserMemType::INPUT_MEM, 0, HCCL_MID_COUNT_32_MB));
     // 先做本地拷贝到AIVIN再跨片拷贝；output统一为allreduceInput的位置，即buffer中原位
     CHK_RET(ExecuteKernelLaunch(HcclCMDType::HCCL_CMD_ALLREDUCE, execMem.inputPtr, nullptr, execMem.count,
-        param.DataDes.dataType, param.reduceType, intraRankId, intraRankSize, 0, dataBuffers, flagBuffers,
+        param.DataDes.dataType, param.reduceType, intraRankId, intraRankSize, 0, dataBuffers, flagBuffers, param.tag,
         param.stream.ptr(), isOpbase, execMem.inputMem.size(), INTRA_RS_STEP, false));
 
     // allreduce 阶段
@@ -170,13 +172,13 @@ HcclResult CollAllReduceMidCountAivRdmaExecutor::KernelRun(const OpParam &param,
     } else if (UseInterServerAHCAlgo(algType_)) {
         // 获取通信域分组信息
         std::vector<std::vector<u32>> subGroups;
-        CHK_RET(topoMatcher_->GetLevelSubGroups(COMM_LEVEL1, subGroups));
+        CHK_RET(topoMatcher_->GetLevelSubGroups(commPlaneLevel1, subGroups));
         innerExecutor.reset(new (std::nothrow) AllReduceAHC(dispatcher_, reduceAttr, execMem.count, subGroups));
         HCCL_INFO("allreduce mesh: using ahc algo inter-server.");
     } else if (UseInterServerAHCBrokeAlgo(algType_)) {
         // 获取通信域分组信息
         std::vector<std::vector<u32>> subGroups;
-        CHK_RET(topoMatcher_->GetLevelSubGroups(COMM_LEVEL1, subGroups));
+        CHK_RET(topoMatcher_->GetLevelSubGroups(commPlaneLevel1, subGroups));
         innerExecutor.reset(new (std::nothrow) AllReduceAHCBroke(dispatcher_, reduceAttr, execMem.count, subGroups));
         HCCL_INFO("allreduce mesh: using ahc-broke algo inter-server.");
     } else if (UseInterServerNBAlgo(algType_)) {
@@ -205,7 +207,7 @@ HcclResult CollAllReduceMidCountAivRdmaExecutor::KernelRun(const OpParam &param,
         dataBuffers, flagBuffers, UserMemType::OUTPUT_MEM, UserMemType::INPUT_MEM, 0, HCCL_MID_COUNT_32_MB));
     // 输入统一为allreduceOutput的位置，各卡不同；单算子模式需要outputAddr，先做本地拷贝再跨片拷贝；图模式结果直接放在CCL Out中
     CHK_RET(ExecuteKernelLaunch(HcclCMDType::HCCL_CMD_ALLREDUCE, nullptr, execMem.outputPtr, execMem.count,
-        param.DataDes.dataType, param.reduceType, intraRankId, intraRankSize, 0, dataBuffers, flagBuffers,
+        param.DataDes.dataType, param.reduceType, intraRankId, intraRankSize, 0, dataBuffers, flagBuffers, param.tag,
         param.stream.ptr(), isOpbase, execMem.inputMem.size(), INTRA_AG_STEP, false));
 
     HCCL_INFO("[CollAllReduceMidCountAivRdmaExecutor][KernelRun]allreduce aiv run success");

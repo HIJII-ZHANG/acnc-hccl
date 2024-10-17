@@ -62,7 +62,7 @@ HcclResult ReduceScatterOperator::SelectAlg(const std::string& tag, const OpPara
         const std::string REDUCE_SCATTER_NO_INLINE = "_no_inline";
         newTag = (isInlineReduce && isRdmaReduce) ? newTag : newTag + REDUCE_SCATTER_NO_INLINE;
     }
-
+    newTag += (param.aicpuUnfoldMode ? "_device" : "_host");
     HCCL_INFO("[SelectAlg] reduce_scatter newTag is [%s]", newTag.c_str());
     return ret;
 }
@@ -162,10 +162,21 @@ HcclResult ReduceScatterOperator::SelectAlgfor910B(const OpParam& param, std::st
 
 HcclResult ReduceScatterOperator::SelectAlgfor91093(const OpParam& param, std::string& algName)
 {
-    if (topoType_ == TopoType::TOPO_TYPE_NP_SINGLE_RING) {
+    bool smallCountOptim91093 =
+        (!GetExternalInputEnableInplace()) &&
+        (serverNum_ == 1) &&
+        ((workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) ||
+        (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && !param.aicpuUnfoldMode)) &&
+        IsSupportSDMAReduce(param.inputPtr, param.outputPtr, param.DataDes.dataType, param.reduceType) &&
+        (deviceNumPerAggregation_ > HCCL_DEVICE_NUM_TWO) &&
+        (param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] <= HCCL_SMALL_COUNT_2_MB);
+    if (smallCountOptim91093) {
+        algName = "ReduceScatterDeterExecutor";
+    } else if (topoType_ == TopoType::TOPO_TYPE_NP_SINGLE_RING) {
         algName = "ReduceScatterRingFor91093Executor";
     } else if (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) {
-        if (GetExternalInputEnableRdmaSdmaConcurrent() && !param.aicpuUnfoldMode) {
+        if (GetExternalInputEnableRdmaSdmaConcurrent() && !param.aicpuUnfoldMode &&
+            (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE)) {
             if (!(UseInterServerRingAlgo(algType_) || UseInterServerNBAlgo(algType_))) {
                 HcclResult ret = SetInterServerRingAlgo(algType_);
                 HCCL_WARNING("[ReduceScatterOperator][SelectAlgfor91093] env HCCL_CONCURRENT_ENABLE is set, "
@@ -188,7 +199,7 @@ HcclResult ReduceScatterOperator::SelectAlgfor91093(const OpParam& param, std::s
     }
 
     // 910_93超节点只支持server间ring,NB和NHR，默认需继续使用NHR
-    if (!(UseInterServerRingAlgo(algType_) || UseInterServerNBAlgo(algType_))) {
+    if (!(UseInterServerRingAlgo(algType_) || UseInterServerNBAlgo(algType_) || UseWholeRingAlgo(algType_))) {
         HcclResult ret = SetInterServerNHRAlgo(algType_);
         HCCL_WARNING("[ReduceScatterOperator][SelectAlgfor91093] only support ring, NB and NHR in AlgoLevel1 yet, "\
             "default is algType=NHR.");

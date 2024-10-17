@@ -40,7 +40,7 @@ private:
 
 private:
     std::set<u32> commTargetUserRankSet_;
-    u32 remoteUserRank_;
+    u32 remoteUserRank_ = 0;
     HcclSendRecvType sendRecvType_;
 };
 } // namespace hccl

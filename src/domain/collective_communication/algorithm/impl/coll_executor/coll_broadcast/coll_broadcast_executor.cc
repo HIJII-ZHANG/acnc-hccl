@@ -56,6 +56,9 @@ HcclResult CollBroadcastExecutor::Orchestrate(OpParam& param, AlgResourceRespons
         HCCL_DEBUG("[CollBroadcastExecutor][Orchestrate]ops kernel broadcast");
         execMem.inputMem = algRes.paramInputMem;
         execMem.outputMem = algRes.paramOutputMem;
+        if (scratchMemFlag_) {
+            execMem.scratchMem = algRes.scratchMem;
+        }
         ret = KernelRun(param, execMem);
     } else if (topoAttr_.userRankSize == 1) { // 单卡
         HCCL_DEBUG("[CollBroadcastExecutor][Orchestrate]1 rank broadcast");
@@ -121,14 +124,16 @@ HcclResult CollBroadcastExecutor::RunLoop(OpParam &param, AlgResourceResponse &a
 HcclResult CollBroadcastExecutor::RunLoopInner(OpParam &param, ExecMem &execMem)
 {
     u32 unitSize = SIZE_TABLE[param.DataDes.dataType];
+    u64 totalSize = unitSize * param.DataDes.count;
     bool isRootRank = param.root == topoAttr_.realUserRank ? true : false;
     u64 curSize = execMem.count * unitSize; // 单位：字节
     auto inCCLbufferSize = execMem.inputMem.size();
     u8 *curPtr = static_cast<u8 *>(execMem.inputPtr);
     auto originalAlgTypeLevel0 = GetLevel0AlgType(algType_);
-    bool isMeshTopo = IsAlgTypeLevel0Mesh(originalAlgTypeLevel0);
+    bool isDMATopoOn91093 = originalAlgTypeLevel0 == AlgTypeLevel0::ALG_LEVEL0_NP_SINGLE_RING ||
+                            originalAlgTypeLevel0 == AlgTypeLevel0::ALG_LEVEL0_NP_DOUBLE_RING;
     bool isDMAreduceOn91093 = (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE
-                              && (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) && !isMeshTopo);
+                              && (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) && isDMATopoOn91093);
     HCCL_DEBUG("[CollBroadcastExecutor][RunLoopInner]inputMem[%p], outputMem[%p]" \
         "intputPtr[%p], curCount[%llu], curSize[%llu]",
         execMem.inputMem.ptr(), execMem.outputMem.ptr(), execMem.inputPtr, execMem.count, curSize);
@@ -137,8 +142,10 @@ HcclResult CollBroadcastExecutor::RunLoopInner(OpParam &param, ExecMem &execMem)
 
     bool hugeData = (inCCLbufferSize / topoAttr_.deviceNumPerAggregation > RDMA_SEND_MAX_SIZE) ||
             (curSize > SDMA_SEND_MAX_SIZE);
-    bool isSmallData = IsBroadcastSmallData(curSize);
-    auto meta = HcclOpMetaInfo::GetOneForBroadcast(isRootRank, param.root, hugeData, isSmallData);
+    bool isSmallData = IsBroadcastSmallData(curSize, totalSize);
+    u64 sliceNum = 0;
+    CHK_RET(GetSliceNum(curSize, isSmallData, sliceNum));
+    auto meta = HcclOpMetaInfo::GetOneForBroadcast(isRootRank, param.root, hugeData, isSmallData, sliceNum);
     CHK_RET(InitTask(dispatcher_, param.stream, meta.isEnableCache, meta.GetCacheKey()));
     HCCL_INFO("RunLoopInner:curPtr[%p], curCount[%llu], curSize[%llu], isSmallData[%u]," \
               "deviceNumPerAggregation[%u]", curPtr, execMem.count, curSize, isSmallData,
@@ -188,12 +195,51 @@ u64 CollBroadcastExecutor::CalcLoopMaxCount(const u64 cclBuffSize, const u32 uni
     return maxCountPerLoop;
 }
 
-bool CollBroadcastExecutor::IsBroadcastSmallData(u64 size)
+HcclResult CollBroadcastExecutor::GetSliceNum(const u64 totalSize, const bool isSmallData, u64& sliceNum)
+{
+    const AlgTypeLevel0 algLevel0 = GetLevel0AlgType(algType_);
+    u64 actualSize = 0;
+    u32 actualRankSize = 0;
+
+    if (algLevel0 == AlgTypeLevel0::ALG_LEVEL0_RESERVED) {
+        // level0算法配null走单层拓扑场景
+        actualSize = totalSize;
+        actualRankSize = topoAttr_.userRankSize;
+    } else {
+        // 非单层拓扑场景
+        const u32 localRankSize = topoAttr_.deviceNumPerAggregation;
+        const u32 localRank = topoAttr_.userRank % localRankSize;
+        const u64 tempPerSlice = (totalSize + localRankSize - 1) / localRankSize;
+        const u64 sizePerSlice =
+            ((tempPerSlice + (HCCL_MIN_SLICE_ALIGN - 1)) / HCCL_MIN_SLICE_ALIGN) * HCCL_MIN_SLICE_ALIGN;
+
+        if ((localRank + 1) * sizePerSlice < totalSize) {
+            actualSize = sizePerSlice;
+        } else if (localRank * sizePerSlice < totalSize) {
+            actualSize = totalSize - localRank * sizePerSlice;
+        }
+
+        actualRankSize = topoAttr_.userRankSize / localRankSize;
+    }
+
+    if (UseInterServerNHRAlgo(algType_)) {
+        u64 sliceSize = (actualSize + (actualRankSize - 1)) / actualRankSize;
+        u64 sliceSizeAligned = ExecutorBase::RoundUpWithDivisor(sliceSize, HCCL_MIN_SLICE_ALIGN);
+        sliceNum = isSmallData ? 1 : static_cast<u64>(std::ceil(actualSize * 1.0f / sliceSizeAligned));
+    }
+    return HCCL_SUCCESS;
+}
+
+bool CollBroadcastExecutor::IsBroadcastSmallData(u64 size, u64 totalSize)
 {
     const AlgTypeLevel0 algLevel0 = GetLevel0AlgType(algType_);
 
     u64 actualSize;
     u64 actualRankSize;
+
+    if ((topoAttr_.serverNum == 1) && (topoAttr_.deviceType == DevType::DEV_TYPE_910_93)) {
+        return totalSize <= topoAttr_.userRankSize * HCCL_SMALL_COUNT_2_MB;
+    }
 
     if (algLevel0 == AlgTypeLevel0::ALG_LEVEL0_RESERVED) {
         // level0算法配null走单层拓扑场景

@@ -164,8 +164,10 @@ HcclResult CollAllReduceRingExecutor::KernelRun(const OpParam &param, ExecMem &e
     std::vector<u32>::iterator iterNic = std::find(nicList.begin(), nicList.end(), topoAttr_.devicePhyId);
     bool innRunRet = isMultiNic && (iterNic == nicList.end());
     if (!innRunRet) { // 满足以下条件, 不做server间通信: 1. 8P ring的拓扑 2. 网口不满配 3. 当前device不出网口
-        CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
-        SubCommInfo innerCommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
+        bool isSelectAHC = (UseInterServerAHCAlgo(algType_) || UseInterServerAHCBrokeAlgo(algType_));
+        CommPlane commPlaneLevel1 = isSelectAHC ? COMM_LEVEL1_AHC : COMM_LEVEL1;
+        CHK_RET(CheckCommSize(commPlaneLevel1, commIndex + 1));
+        SubCommInfo innerCommInfo = GetSubCommInfo(commPlaneLevel1, commIndex);
 
         DeviceMem allreduceInput = execMem.inputMem.range(dataSegsSlice[segmentIdx].offset, hdSize);
         CHK_SMART_PTR_NULL(allreduceInput);
@@ -194,13 +196,13 @@ HcclResult CollAllReduceRingExecutor::KernelRun(const OpParam &param, ExecMem &e
         } else if (UseInterServerAHCAlgo(algType_)) {
             // 获取通信域分组信息
             std::vector<std::vector<u32>> subGroups;
-            CHK_RET(topoMatcher_->GetLevelSubGroups(COMM_LEVEL1, subGroups));
+            CHK_RET(topoMatcher_->GetLevelSubGroups(commPlaneLevel1, subGroups));
             innerExecutor.reset(new (std::nothrow) AllReduceAHC(dispatcher_, reduceAttr, execMem.count, subGroups));
             HCCL_INFO("allreduce ring: using ahc algo inter-server.");
         } else if (UseInterServerAHCBrokeAlgo(algType_)) {
             // 获取通信域分组信息
             std::vector<std::vector<u32>> subGroups;
-            CHK_RET(topoMatcher_->GetLevelSubGroups(COMM_LEVEL1, subGroups));
+            CHK_RET(topoMatcher_->GetLevelSubGroups(commPlaneLevel1, subGroups));
             innerExecutor.reset(new (std::nothrow) AllReduceAHCBroke(dispatcher_, reduceAttr, execMem.count, subGroups));
             HCCL_INFO("allreduce ring: using ahc-broke algo inter-server.");
         } else if (UseInterServerNBAlgo(algType_)) {

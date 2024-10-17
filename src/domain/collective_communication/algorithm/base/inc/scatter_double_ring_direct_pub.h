@@ -44,7 +44,6 @@ private:
         DeviceMem &localSrcMem, DeviceMem &localDstMem);
 
     HcclResult RunScatter(const u32 rank, const u32 rankSize);
-    HcclResult MainRingWakeUpSubRing();
     HcclResult MainRecordSub();
     HcclResult MainWaitSub();
 

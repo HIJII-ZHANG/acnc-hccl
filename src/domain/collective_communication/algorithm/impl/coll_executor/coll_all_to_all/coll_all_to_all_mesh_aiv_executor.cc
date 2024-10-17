@@ -109,7 +109,7 @@ HcclResult CollAlltoAllMeshAivExecutor::KernelRun(const OpParam &param, ExecMem 
 
     u32 localRank = outerCommInfo.localRank;
     u32 localRankSize = outerCommInfo.localRankSize;
-    HCCL_DEBUG("[CollAlltoAllMeshAivExecutor][KernelRun] userRank [%d] localRank [%d]", topoAttr_.userRank, localRank);
+    HCCL_DEBUG("[CollAlltoAllMeshAivExecutor][KernelRun] userRank [%u] localRank [%u]", topoAttr_.userRank, localRank);
 
     for (u32 i = 0; i < localRankSize; i++) {
         if (i != localRank) {
@@ -140,7 +140,7 @@ HcclResult CollAlltoAllMeshAivExecutor::KernelRun(const OpParam &param, ExecMem 
 
         ret = ExecuteKernelLaunch(HcclCMDType::HCCL_CMD_ALLTOALLVC, execMem.inputPtr, execMem.outputPtr, 0,
             param.All2AllDataDes.sendType, HCCL_REDUCE_RESERVED, localRank, localRankSize, 0, buffersIn, buffersOut,
-            param.stream.ptr(), isOpbase, execMem.inputMem.size(), -1, false, &extraArgs);
+            param.tag, param.stream.ptr(), isOpbase, execMem.inputMem.size(), -1, false, &extraArgs);
     } else {
         for (u32 i = 0; i < localRankSize; i++) {
             extraArgs.sendCounts[i] = *(static_cast<const u64 *>(param.All2AllDataDes.sendCounts) + i);
@@ -151,7 +151,7 @@ HcclResult CollAlltoAllMeshAivExecutor::KernelRun(const OpParam &param, ExecMem 
 
         ret = ExecuteKernelLaunch(HcclCMDType::HCCL_CMD_ALLTOALLV, execMem.inputPtr, execMem.outputPtr, 0,
             param.All2AllDataDes.sendType, HCCL_REDUCE_RESERVED, localRank, localRankSize, 0, buffersIn, buffersOut,
-            param.stream.ptr(), isOpbase, execMem.inputMem.size(), -1, false, &extraArgs);
+            param.tag, param.stream.ptr(), isOpbase, execMem.inputMem.size(), -1, false, &extraArgs);
     }
 
     CHK_PRT_RET(ret != HCCL_SUCCESS,

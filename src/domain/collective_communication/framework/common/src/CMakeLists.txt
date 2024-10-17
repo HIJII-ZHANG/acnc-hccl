@@ -12,3 +12,4 @@ target_sources(hccl PRIVATE
 add_subdirectory(opexecounter)
 add_subdirectory(topo)
 add_subdirectory(task)
+add_subdirectory(exception)

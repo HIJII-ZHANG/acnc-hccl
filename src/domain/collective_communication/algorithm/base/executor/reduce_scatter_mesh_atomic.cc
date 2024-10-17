@@ -125,7 +125,7 @@ HcclResult ReduceScatterMeshAtomic::RunReduceScatter(const std::vector<LINK> &li
         CHK_RET(dstLink->TxDataSignal(stream));
         CHK_RET(dstLink->RxDataSignal(stream));
     }
-    // 添加空task,保证执行时不乱序
+
     CHK_RET(ExecutorBase::ExecEmptyTask(inputMem_, outputMem_, streamVct[0], dispatcher_));
     return HCCL_SUCCESS;
 }
@@ -178,7 +178,6 @@ HcclResult ReduceScatterMeshAtomic::RunAsync(const u32 rank, const u32 rankSize,
             profilerInput_.stage));
     }
 
-    // 添加空task,保证执行时不乱序
     CHK_RET(ExecutorBase::ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
 
     if ((GetExternalInputHcclHighPerfEnable() != 0) &&

@@ -26,7 +26,7 @@ HcclResult OffloadStreamManager::RegisterMaster(const std::string &tag, Stream &
 
 HcclResult OffloadStreamManager::RegisterSlaves(const std::string &tag, std::vector<Stream> &stream)
 {
-    HCCL_DEBUG("[OffloadStreamManager][RegisterSlaves]start register slaves stream, tag[%s], size[%d].",
+    HCCL_DEBUG("[OffloadStreamManager][RegisterSlaves]start register slaves stream, tag[%s], size[%u].",
         tag.c_str(), stream.size());
 
     std::unique_lock<std::mutex> lock(slavesMapMutex_);
@@ -37,7 +37,7 @@ HcclResult OffloadStreamManager::RegisterSlaves(const std::string &tag, std::vec
         return HCCL_E_PARA;
     }
     slavesMap_.insert(std::make_pair(tag, stream));
-    HCCL_INFO("[OffloadStreamManager][RegisterSlaves]register slaves stream success, tag[%s], size[%d].",
+    HCCL_INFO("[OffloadStreamManager][RegisterSlaves]register slaves stream success, tag[%s], size[%u].",
         tag.c_str(), stream.size());
     return HCCL_SUCCESS;
 }
@@ -55,7 +55,7 @@ Stream OffloadStreamManager::GetMaster(const std::string &tag)
 
 std::vector<Stream> OffloadStreamManager::GetSlaves(const std::string &tag, u32 num)
 {
-    HCCL_DEBUG("[OffloadStreamManager][GetSlaves]requesting for [%d] slaves, tag[%s].", num, tag.c_str());
+    HCCL_DEBUG("[OffloadStreamManager][GetSlaves]requesting for [%u] slaves, tag[%s].", num, tag.c_str());
     if (num == 0) {
         HCCL_WARNING("[OffloadStreamManager][GetSlaves]requesting for 0 slaves, return empty vector.");
         return std::vector<Stream>(0);
@@ -70,14 +70,14 @@ std::vector<Stream> OffloadStreamManager::GetSlaves(const std::string &tag, u32 
 
     if (iter->second.size() < num) {
         HCCL_ERROR("[OffloadStreamManager][GetSlaves]" \
-            "trying to get [%d] slaves fail, only [%d] slaves available, tag[%s].",
+            "trying to get [%u] slaves fail, only [%u] slaves available, tag[%s].",
             num, iter->second.size(), tag.c_str());
         return std::vector<Stream>();
     }
 
     std::vector<Stream> res(iter->second.begin(), iter->second.begin() + num);
     iter->second.erase(iter->second.begin(), iter->second.begin() + num);
-    HCCL_INFO("[OffloadStreamManager][GetSlaves]get [%d] slaves success, returning.", res.size());
+    HCCL_INFO("[OffloadStreamManager][GetSlaves]get [%u] slaves success, returning.", res.size());
     return res;
 }
 

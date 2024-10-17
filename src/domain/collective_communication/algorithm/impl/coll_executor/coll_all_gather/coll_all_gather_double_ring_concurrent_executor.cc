@@ -29,7 +29,7 @@ HcclResult CollAllGatherDoubleRingConcurrentExecutor::CalcStreamNum(u32& streamN
         totalStreamNum = OUTER_PLANE_NUM_IN_NPRING_DOUBLE;
     }
     if (GetExternalInputEnableRdmaSdmaConcurrent()) {
-        totalStreamNum += RDMA_PLANE_NUM_IN_NPRING_DOUBLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
+        totalStreamNum += RDMA_PLANE_NUM_IN_NPRING_DOUBLE; // 当前只有图模式进入该executor
     }
     streamNum = totalStreamNum - 1;
     HCCL_INFO("[CollAllGatherDoubleRingConcurrentExecutor][CalcStreamNum] tag[%s] streamNum_[%u]",
@@ -98,15 +98,9 @@ u64 CollAllGatherDoubleRingConcurrentExecutor::CalcLoopMaxCount(const u64 cclBuf
     return maxCountPerLoop;
 }
 
-u32 CollAllGatherDoubleRingConcurrentExecutor::IsDataSplit(const u64 curSize)
+bool CollAllGatherDoubleRingConcurrentExecutor::IsDataSplitForRdmaSdmaConcurrent(const u64 curSize)
 {
-    u32 dataSplit = 0;
-    u64 dataValue = curSize * topoAttr_.userRankSize;
-    if ((topoAttr_.serverNum > 1) && ((dataValue / topoAttr_.serverNum) <= HCCL_SDMA_RDMA_SPLIT_SIZE)) {
-        dataSplit = 1;
-    } else if (dataValue <= HCCL_SDMA_RDMA_SPLIT_SIZE) {
-        dataSplit = HCCL_SPLIT_FLAG;
-    }
+    bool dataSplit = (curSize >= HCCL_SPLIT_SIZE_INTER_SERVER);
     return dataSplit;
 }
 
@@ -139,9 +133,8 @@ HcclResult CollAllGatherDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
     DeviceMem dstMem = execMem.outputMem.range(baseOffset + outerOffset, inputMemSize);
     CHK_SMART_PTR_NULL(dstMem);
 
-    u32 syncTrans = BEST_SPLIT_VALUE;
-    u64 totalDataSize = inputMemSize * level0RankSize;
-    if (totalDataSize <= HCCL_SDMA_RDMA_SPLIT_SIZE) {
+    u32 syncTrans = BEST_SPLIT_VALUE_SR;
+    if (inputMemSize < HCCL_SPLIT_SIZE_INTER_SERVER) {
         syncTrans = MAX_SPLIT_VALUE;
     }
     HcomCollOpInfo opInfo = {
@@ -169,7 +162,7 @@ HcclResult CollAllGatherDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
                     baseOffset + outerOffset, inputMemSize), ret);
         }
     }
-    if (topoAttr_.devNumInLevel2 > 1) {
+    if (topoAttr_.superPodNum > 1) {
         // 超节点间做allgather
         ret = AllGatherLevel2(param.tag, execMem.inputMem, execMem.outputMem, execMem.count, param.DataDes.dataType,
             const_cast<Stream&>(param.stream), opInfoPtr);
@@ -187,6 +180,10 @@ HcclResult CollAllGatherDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
                 sliceTemp.offset = (i * level0RankSize +  level0ServerIndex) * inputMemSize;
                 level1DataSegsSlice.push_back(sliceTemp);
             }
+            u32 syncTrans1 = BEST_SPLIT_VALUE_DR;
+            if (inputMemSize < HCCL_SPLIT_SIZE_INTER_SERVER) {
+                syncTrans1 = MAX_SPLIT_VALUE;
+            }
             std::vector<std::pair<bool,  std::vector<Slice>>> innerMultSlice;
             std::vector<Slice> level1DataSegsSliceSdma;
             std::vector<Slice> level1DataSegsSliceRdma;
@@ -195,8 +192,8 @@ HcclResult CollAllGatherDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
                 Slice sdmaSlice;
                 Slice rdmaSlice;
                 u64 sdmaSliceSize = ((level1DataSegsSlice[i].size <= HCCL_MIN_SLICE_ALIGN_910_93) ||
-                    (syncTrans == MAX_SPLIT_VALUE)) ? level1DataSegsSlice[i].size :
-                    ((syncTrans * level1DataSegsSlice[i].size / MAX_SPLIT_VALUE) 
+                    (syncTrans1 == MAX_SPLIT_VALUE)) ? level1DataSegsSlice[i].size :
+                    ((syncTrans1 * level1DataSegsSlice[i].size / MAX_SPLIT_VALUE) 
                     / HCCL_MIN_SLICE_ALIGN_910_93) * HCCL_MIN_SLICE_ALIGN_910_93;
                 sdmaSlice.size = sdmaSliceSize;
                 sdmaSlice.offset = level1DataSegsSlice[i].offset;
@@ -210,7 +207,7 @@ HcclResult CollAllGatherDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
             }
             innerMultSlice[0] = std::make_pair(true, level1DataSegsSliceSdma);
             innerMultSlice[1] = std::make_pair(false, level1DataSegsSliceRdma);
-            if (syncTrans == MAX_SPLIT_VALUE) {
+            if (syncTrans1 == MAX_SPLIT_VALUE) {
                 innerMultSlice.erase(innerMultSlice.end() - 1, innerMultSlice.end());
             }
             u32 commPlaneNum = innerMultSlice.size();
@@ -284,7 +281,7 @@ HcclResult CollAllGatherDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
         std::vector<std::vector<Slice>> multRingsSlice;
         CHK_RET(CalculateLevel1AllgatherSlice(inputMemSize, level0RankSize, level1RankSize,
             multRingsSliceZero, multRingsSlice));
-        
+
         std::vector<std::pair<bool, std::vector<Slice>>> mult4RingsSlice;
         std::vector<std::vector<Slice>> mult4RingsSlicetemp;
 

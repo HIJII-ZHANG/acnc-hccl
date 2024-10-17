@@ -539,10 +539,11 @@ HcclResult TopoInfoExchangeAgent::VerifyClusterSuperPodInfo(const std::vector<Ra
             serverNumPerPod = superPodSrvIdMap.begin()->second.size();
         }
         u32 serverNumCurPod = iter->second.size();
-        CHK_PRT_RET(serverNumPerPod != serverNumCurPod,
-            HCCL_ERROR("[Verify][SuperPodInfo]serverNum[%u] in superPod[%s] and serverNum[%u] in superPod[%s] "\
+        if (serverNumPerPod != serverNumCurPod) {
+            HCCL_DEBUG("[Verify][SuperPodInfo]serverNum[%u] in superPod[%s] and serverNum[%u] in superPod[%s] "\
             "are different.", serverNumPerPod, superPodSrvIdMap.begin()->first.c_str(),
-            serverNumCurPod, iter->first.c_str()), HCCL_E_PARA);
+            serverNumCurPod, iter->first.c_str());
+        }
     }
 
     return HCCL_SUCCESS;

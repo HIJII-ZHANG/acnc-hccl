@@ -82,6 +82,8 @@ HcclResult ScatterOperator::SelectAlg(const std::string& tag, const OpParam& par
         newTag = newTag + algName;
         HCCL_INFO("[SelectAlg] Scatter newTag is [%s] algName is [%s]", newTag.c_str(), algName.c_str());
     }
+    newTag += (param.aicpuUnfoldMode ? "_device" : "_host");
+    HCCL_INFO("[SelectAlg] Scatter newTag is [%s]", newTag.c_str());
     return HCCL_SUCCESS;
 }
 

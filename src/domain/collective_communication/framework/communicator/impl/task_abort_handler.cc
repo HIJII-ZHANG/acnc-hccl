@@ -7,7 +7,6 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
-
 #include "task_abort_handler.h"
 #include "sal_pub.h"
 #include "pthread.h"
@@ -46,7 +45,7 @@ int32_t ProcessTaskAbortHandleCallback(uint32_t deviceLogicId, rtTaskAbortStage_
                     HCCL_ERROR("[NsRecovery] finish suspend failed");
                     return static_cast<int>(TaskAbortResult::TaskAbort_Fail);
                 }
-                HCCL_DEBUG("[NsRecovery]finish suspend sucess");
+                HCCL_DEBUG("[NsRecovery]finish suspend success");
                 const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(curTime - startTime);
                 CHK_PRT_RET(elapsed > localtimeout,
                     HCCL_ERROR("[NsRecovery][suspend] NsRecovery suspend timeOut"),
@@ -64,7 +63,7 @@ int32_t ProcessTaskAbortHandleCallback(uint32_t deviceLogicId, rtTaskAbortStage_
                 HCCL_DEBUG("[NsRecovery]finish stopExec success");
                 const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(curTime - startTime);
                 CHK_PRT_RET(elapsed > localtimeout,
-                    HCCL_ERROR("[NsRecovery][suspend] NsRecovery StopExec timeOut"),
+                    HCCL_ERROR("[NsRecovery][StopExec] NsRecovery StopExec timeOut"),
                     static_cast<int>(TaskAbortResult::TaskAbort_TimeOut));
             }
         } else {
@@ -79,7 +78,7 @@ int32_t ProcessTaskAbortHandleCallback(uint32_t deviceLogicId, rtTaskAbortStage_
                 HCCL_DEBUG("[NsRecovery]finish clean success");
                 const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(curTime - startTime);
                 CHK_PRT_RET(elapsed > localtimeout,
-                    HCCL_ERROR("[NsRecovery][suspend] NsRecovery Clean timeOut"),
+                    HCCL_ERROR("[NsRecovery][clean] NsRecovery Clean timeOut"),
                     static_cast<int>(TaskAbortResult::TaskAbort_TimeOut));
                 CHK_RET(commVector[i]->Stop());
             }

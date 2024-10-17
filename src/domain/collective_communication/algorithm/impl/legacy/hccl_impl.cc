@@ -127,11 +127,12 @@ void hcclImpl::SetAlgoAttr(HcclAlgoAttr &algoAttr)
 void hcclImpl::SetTopoAttr(HcclTopoAttr &topoAttr)
 {
     serverNum_= topoAttr.serverNum;
-    devNumInLevel2_ = topoAttr.devNumInLevel2;
+    superPodNum_ = topoAttr.superPodNum;
     moduleNum_ = topoAttr.moduleNum;
     deviceNumPerServer_ = topoAttr.deviceNumPerServer;
     deviceNumPerAggregation_ = topoAttr.deviceNumPerAggregation;
     multiModuleDiffDeviceNumMode_ = topoAttr.multiModuleDiffDeviceNumMode;
+    multiSuperPodDiffServerNumMode_ = topoAttr.multiSuperPodDiffServerNumMode;
 
     meshAggregationRankSize_ = topoAttr.meshAggregationRankSize;
     isDiffDeviceModule_ = topoAttr.isDiffDeviceModule;
@@ -469,10 +470,6 @@ HcclResult hcclImpl::InitMultiStreamResource(const std::string &tag, innerStream
     } else {
         // 批量send/recv需要2条流
         streamInfo.ringNum = 2;
-    }
-
-    if (GetExternalInputEnableRdmaSdmaConcurrent() && deviceType_ == DevType::DEV_TYPE_910_93) {
-        streamInfo.ringNum += RDMA_PLANE_NUM_IN_NPRING_DOUBLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
     }
 
     if (piplineSliceNum_ > 0) {
@@ -1067,15 +1064,15 @@ HcclResult hcclImpl::CreateMutiStreamRes(const std::string &tag, Stream &stream,
         if (isAicpuModeEn == true) {
             if (auxRingStreamsDev_.empty()) {
                 auxRingStreamsDev_.reserve(MAX_SUBSTREAM_NUM + 1);
-                HCCL_DEBUG("CreateMutiStreamRes: reserve auxRingStreamsDev_[%d]", MAX_SUBSTREAM_NUM);
+                HCCL_DEBUG("CreateMutiStreamRes: reserve auxRingStreamsDev_[%u]", MAX_SUBSTREAM_NUM);
             }
             if (auxRingStreamsDev_.size() < streamInfo.ringNum) {
                 HCCL_DEBUG(
-                    "CreateMutiStreamRes:tag[%s], auxRingStreamsDev_.size[%d], less than [%d], need create new streams",
+                    "CreateMutiStreamRes:tag[%s], auxRingStreamsDev_.size[%u], less than [%u], need create new streams",
                     tag.c_str(), auxRingStreamsDev_.size(), streamInfo.ringNum);
                 CHK_PRT_RET(streamInfo.ringNum > MAX_SUBSTREAM_NUM + 1,
                     HCCL_ERROR(
-                        "[Create][MutiStreamRes]tag[%s] streamInfo.ringNum[%d] is larger than MAX_SUBSTREAM_NUM+1[%d].",
+                        "[Create][MutiStreamRes]tag[%s] streamInfo.ringNum[%u] is larger than MAX_SUBSTREAM_NUM+1[%u].",
                         tag.c_str(), streamInfo.ringNum, MAX_SUBSTREAM_NUM + 1),
                     HCCL_E_INTERNAL);
                 u32 ringNum = auxRingStreamsDev_.size();
@@ -1095,7 +1092,7 @@ HcclResult hcclImpl::CreateMutiStreamRes(const std::string &tag, Stream &stream,
     }
     CHK_PRT_RET((streamInfo.ringStreams.size() != streamInfo.ringNum - 1),
         HCCL_ERROR("[Create][MutiStreamRes]tag[%s] get slave stream failed, " \
-        "expect to get size [%d], but only alloc [%d].",
+        "expect to get size [%u], but only alloc [%u].",
         tag.c_str(), streamInfo.ringNum - 1, streamInfo.ringStreams.size()), HCCL_E_INTERNAL);
 
     return HCCL_SUCCESS;
@@ -1400,10 +1397,10 @@ HcclResult hcclImpl::GetStreamThreadManage(const std::string &tag, u32 streamNum
             }
         }
         tagStreamInfo_.insert(std::pair<std::string, InnerStreamInfo>(tag, std::move(streamInfo)));
-        HCCL_INFO("[GetStreamThreadManage]tag[%s]create ThreadManage success. streamNum[%d]", tag.c_str(), streamNum);
+        HCCL_INFO("[GetStreamThreadManage]tag[%s]create ThreadManage success. streamNum[%u]", tag.c_str(), streamNum);
     } else {
         threadManager = iterRank->second.ringThreadsManage;
-        HCCL_INFO("[GetStreamThreadManage]tag[%s]get ThreadManage success. streamNum[%d]", tag.c_str(), streamNum);
+        HCCL_INFO("[GetStreamThreadManage]tag[%s]get ThreadManage success. streamNum[%u]", tag.c_str(), streamNum);
         return HCCL_SUCCESS;
     }
     iterRank = tagStreamInfo_.find(tag);

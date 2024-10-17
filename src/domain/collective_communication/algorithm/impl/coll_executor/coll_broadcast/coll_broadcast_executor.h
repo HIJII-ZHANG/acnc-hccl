@@ -26,12 +26,14 @@ protected:
     /* *************** 算法编排 *************** */
     // Broadcast Loop Executor公共接口
     HcclResult RunLoop(OpParam &param, AlgResourceResponse &algRes);
-    bool IsBroadcastSmallData(u64 size);
+    HcclResult GetSliceNum(const u64 totalSize, const bool isSmallData, u64& sliceNum);
+    bool IsBroadcastSmallData(u64 size, u64 totalSize);
     HcclResult CalcTransportMemType(TransportMemType &inputType, TransportMemType &outputType);
     virtual u64 CalcLoopMaxCount(const u64 cclBuffSize, const u32 unitSize);
     HcclResult GetRankSliceSize(HcclDataType dataType, const u64 count, const u32 rankSize,
                 std::vector<Slice> &sliceList);
     bool DMAReduceFlag_{false}; // 是否DMA消减
+    bool scratchMemFlag_{false};  // 是否需要申请scratch memory，不需要申请则传入outputmem为scratchmem
 
 private:
     HcclResult RunLoopInner(OpParam &param, ExecMem &execMem);

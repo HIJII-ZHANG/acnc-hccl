@@ -55,6 +55,7 @@ HcclResult AllGatherOperator::SelectAlg(const std::string& tag, const OpParam& p
             algType1), HCCL_E_INTERNAL);
         newTag = tag + level1Iter->second + algName;
     }
+    newTag += (param.aicpuUnfoldMode ? "_device" : "_host");
     HCCL_INFO("[SelectAlg] all_gather newTag is [%s]", newTag.c_str());
     return ret;
 }
@@ -131,8 +132,19 @@ HcclResult AllGatherOperator::SelectAlgfor910B(const OpParam& param, std::string
 
 HcclResult AllGatherOperator::SelectAlgfor91093(const OpParam& param, std::string& algName)
 {
-    if (GetExternalInputEnableRdmaSdmaConcurrent() && topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING &&
-        !param.aicpuUnfoldMode) {
+    bool smallCountOptim91093 = (serverNum_ == 1) &&
+        ((workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) ||
+        (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && !param.aicpuUnfoldMode)) &&
+        (param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] <= HCCL_SMALL_COUNT_2_MB) &&
+        (deviceNumPerAggregation_ > HCCL_DEVICE_NUM_TWO);
+    if (smallCountOptim91093) {
+        if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
+            algName = "AllGatherMeshOpbaseExecutor";
+        } else {
+            algName = "AllGatherMeshExecutor";
+        }
+    } else if (GetExternalInputEnableRdmaSdmaConcurrent() && topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING &&
+        !param.aicpuUnfoldMode && (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE)) {
         if (!(UseInterServerRingAlgo(algType_) || UseInterServerNBAlgo(algType_))) {
             HcclResult ret = SetInterServerRingAlgo(algType_);
             HCCL_WARNING("[AllGatherOperator][SelectAlgfor91093] concurrent only support ring or NB in AlgoLevel1 "\
@@ -143,7 +155,7 @@ HcclResult AllGatherOperator::SelectAlgfor91093(const OpParam& param, std::strin
         }
         algName = "AllGatherDoubleRingConcurrentExecutor";
     } else {
-        if (!(UseInterServerRingAlgo(algType_) || UseInterServerNBAlgo(algType_))) {
+        if (!(UseInterServerRingAlgo(algType_) || UseInterServerNBAlgo(algType_) || UseWholeRingAlgo(algType_))) {
             HcclResult ret = SetInterServerNHRAlgo(algType_);
             HCCL_WARNING("[AllGatherOperator][SelectAlgfor91093] only support ring, NB and NHR in AlgoLevel1 yet, "\
                 "default is algType=NHR.");
@@ -153,8 +165,10 @@ HcclResult AllGatherOperator::SelectAlgfor91093(const OpParam& param, std::strin
         }
         if (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) {
             algName = "AlignedAllGatherDoubleRingFor91093Executor";
-        } else {
+        } else if (topoType_ == TopoType::TOPO_TYPE_NP_SINGLE_RING){
             algName = "AllGatherRingFor91093Executor";
+        } else {
+            algName = "AllGatherComm";
         }
     }
     HCCL_INFO("[SelectAlgfor91093] all_gather SelectAlgfor91093 is algName [%s]", algName.c_str());

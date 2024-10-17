@@ -38,6 +38,7 @@ public:
         std::map<HcclIpAddress, HcclNetDevCtx> &netDevCtxMap,
         const std::unique_ptr<QueueNotifyManager> &queueNotifyManager,
         HcclAlgoAttr &algoAttr, HcclTopoAttr &topoAttr, bool isHeterogComm = false);
+    HcclResult Init(HcclAlgoAttr &algoAttr, HcclTopoAttr &topoAttr, bool isHeterogComm = false);
     HcclResult ReleaseCommInfos();
 
     HcclResult GetTinyMem(DeviceMem &tinySendRecvMem);

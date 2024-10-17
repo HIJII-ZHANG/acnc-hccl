@@ -70,6 +70,11 @@ protected:
     std::function<HcclResult()> PostSync_;
 
 private:
+    HcclResult PrepareRxMems(const std::vector<ReducerMemoryInfo> &reducerMems,
+        std::vector<RxMemoryInfo> &rxMems) const;
+    HcclResult PrepareRxWithReduceMems(const std::vector<ReducerMemoryInfo> &reducerMems,
+        std::vector<RxWithReduceMemoryInfo> &rxWithReduceMems) const;
+
     HcclDataType dataType_;
     HcclReduceOp reductionOp_;
     const u64 reduceAttribute_;

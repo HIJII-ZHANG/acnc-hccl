@@ -14,6 +14,7 @@
 #include "adapter_hccp_common.h"
 #include "hccl_ip_address.h"
 #include "hccl_common.h"
+#include "transport_pub.h"
 
 // sub stream 相关
 constexpr s64 HCCL_SUB_STREAM_NUM_ZERO = 0;  // subStream 数量为0
@@ -63,6 +64,8 @@ constexpr u32 HCCL_INTER_SERVER_RING_ALGO_MAX_SUPPORT_SERVER_NUM = 8; // server 
 
 constexpr u32 HCCL_ALLTOALLV_P2P_SIZE = 2; // alltoallv不区分全连接、分级的最大ranksize
 
+constexpr u32 HCCL_MEMSIZE_HD_FACTOR = 4;
+
 // a2a前置allgather和a2a注册的notify资源要隔离, tag不能包含HCCL_ALLTOALL字符串
 const std::string HCCL_ALLTOALL_PARA_ALLGATHER = "AllgatherForCollectA2APara";
 
@@ -99,6 +102,13 @@ const std::map<AlgTypeLevel1, std::string> HCCL_ALGO_LEVEL1_NAME_MAP = {
     {AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE, "AHC_BROKE"},
     {AlgTypeLevel1::ALG_LEVEL1_NB, "NB"},
     {AlgTypeLevel1::ALG_LEVEL1_RESERVED, "null"},
+};
+
+struct SubCommInfo {
+    u32 localRank;
+    u32 localRankSize;
+    std::vector<LINK> links;
+    std::vector<LINK> virtualLinks; // for alltoall 多线程性能提升使用
 };
 }  // namespace hccl
 

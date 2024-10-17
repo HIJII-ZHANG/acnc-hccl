@@ -28,6 +28,7 @@ typedef enum {
     COMM_LEVEL0_RDMA,
     COMM_LEVEL1,        // 二级通信域(server间)
     COMM_LEVEL1_RDMA,
+    COMM_LEVEL1_AHC,    // AHC 二级通信域(server间)
     COMM_LEVEL2,        // 三级通信域(超节点间)
     COMM_MESH_L0,       // mesh内
     COMM_MESH_L1,       // mesh间
@@ -43,7 +44,8 @@ public:
 #ifdef CCL_LLT
     TopoInfoExtractor(std::string identifier, u32 userRank, u32 userRankSize, TopoType topoType,
         DevType deviceType, std::vector<RankInfo>& rankVector, u32 meshAggregationRankSize = 0,
-        bool isUsedRdmaOuter = false, bool isUsedInterHccsMode = false);
+        bool isUsedRdmaOuter = false, bool isUsedInterHccsMode = false, bool multiModuleDiffDeviceNumMode = false,
+        bool multiSuperPodDiffServerNumMode = false);
 #endif
     ~TopoInfoExtractor();
     HcclResult Init();
@@ -52,7 +54,7 @@ public:
     HcclResult SetTopologyInfo();
     HcclResult SetTopoDefaultInfo();
     HcclResult SetTopoInfoForLevel0();
-    HcclResult SetTopoInfoForLevel1();
+    HcclResult SetTopoInfoForLevel1(bool prepareAHC = false);
     HcclResult SetTopoInfoForLevel2();
     HcclResult SetTopoInfoForMeshL0();
     HcclResult SetTopoInfoForMeshL1();
@@ -116,12 +118,14 @@ private:
     const bool isUsedRdmaOuter_;
     bool isUsedInterHccsMode_;
     bool isDiffAggregation_;
-    
+
     // 是否静态配置 AHC 模式
     bool isConfigAHC_;
     bool isConfigNULL_;
 
     // 当前层次是否为非对称
+    bool multiModuleDiffDeviceNumMode_; // 每个module内的设备数是否相等
+    bool multiSuperPodDiffServerNumMode_; // 每个超节点内的server数是否相等
     std::vector<bool> isAsymPlanVector_;
 
     // 保存所有 level 的通信分组关系， CommPlaneSubGroupVector_[CommPlane] : 第 CommPlane 级通信域内分组信息

@@ -46,9 +46,14 @@ HcclResult CollReduceCommExecutor::CalcCombinedCommInfo(TransportMemType inputTy
     TransportMemType outputType,
     std::vector<LevelNSubCommTransport>& opTransport)
 {
-    CommParaInfo commParaInfo(COMM_COMBINE, CommType::COMM_TAG_MAX);
+    CommPlane commPlane = COMM_COMBINE;
+    if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
+        commPlane = COMM_COMBINE_ORDER;
+    }
+
+    CommParaInfo commParaInfo(commPlane, CommType::COMM_TAG_MAX);
     commParaInfo.commType = CommType::COMM_TAG_RING_INNER;
-    CHK_RET(CalcCommPlaneInfo(tag_, commParaInfo, opTransport[COMM_COMBINE], inputType, outputType));
+    CHK_RET(CalcCommPlaneInfo(tag_, commParaInfo, opTransport[commPlane], inputType, outputType));
 
     return HCCL_SUCCESS;
 }
@@ -56,8 +61,13 @@ HcclResult CollReduceCommExecutor::CalcCombinedCommInfo(TransportMemType inputTy
 HcclResult CollReduceCommExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
     HCCL_INFO("[CollReduceCommExecutor][KernelRun]ReduceCommExecutor starts.");
-    CHK_RET(CheckCommSize(COMM_COMBINE, 1));
-    SubCommInfo combinedCommInfo = GetSubCommInfo(COMM_COMBINE, 0);
+    CommPlane commPlane = COMM_COMBINE;
+    if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
+        commPlane = COMM_COMBINE_ORDER;
+    }
+
+    CHK_RET(CheckCommSize(commPlane, COMM_INDEX_0 + 1));
+    SubCommInfo combinedCommInfo = GetSubCommInfo(commPlane, COMM_INDEX_0);
 
     u64 reduceAttr = GetReduceAttr(execMem.inputMem, execMem.outputMem, param.DataDes.dataType, param.reduceType);
 
@@ -68,7 +78,7 @@ HcclResult CollReduceCommExecutor::KernelRun(const OpParam &param, ExecMem &exec
 
     // 获取root
     u32 root = 0;
-    CHK_RET(GetRankByUserRank(COMM_COMBINE, COMM_INDEX_0, param.root, root));
+    CHK_RET(GetRankByUserRank(commPlane, COMM_INDEX_0, param.root, root));
 
     u32 rankSize = combinedCommInfo.localRankSize;
     CHK_RET(executor->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,

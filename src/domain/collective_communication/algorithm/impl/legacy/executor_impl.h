@@ -89,6 +89,8 @@
 #include "allltoall_pipeline_base_pub.h"
 #include "alltoallv_mesh_read_only_pub.h"
 #include "alltoallv_direct_fullmesh_pub.h"
+#include "all_reduce_hd_optim_pub.h"
+#include "broadcast_oneshot_pub.h"
 
 namespace hccl {
 }

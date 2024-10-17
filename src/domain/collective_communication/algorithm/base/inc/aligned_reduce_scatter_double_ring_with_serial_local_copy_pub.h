@@ -42,6 +42,7 @@ private:
         std::vector<DeviceMem> &mainLocalSrcMems, std::vector<DeviceMem> &mainLocalDstMems,
         std::vector<DeviceMem> &subLocalSrcMems, std::vector<DeviceMem> &subLocalDstMems) override;
     virtual HcclResult RunReduceScatter(const u32 rank, const u32 rankSize) override;
+    HcclResult GetActiveSubstreamNum(u32 &activeSubstreamNum);
     HcclResult ExecEmptyTasks();
     HcclResult MainRecordSub();
     HcclResult SubWaitMain();

@@ -38,6 +38,7 @@ bool UseInterServerAHCBrokeAlgo(AlgType algType);
 bool UseInterServerNBAlgo(AlgType algType);
 bool UseInterServerPipelineAlgo(AlgType algType);
 bool UseLevel2RingAlgo(AlgType algType);
+bool UseWholeRingAlgo(AlgType algType);
 
 HcclResult SetInterServerNHRAlgo(AlgType &algType);
 HcclResult SetInterServerHDAlgo(AlgType &algType);
@@ -45,10 +46,10 @@ HcclResult SetInterServerRingAlgo(AlgType &algType);
 
 bool IsAlgTypeLevel0Mesh(AlgTypeLevel0 &originalAlgTypeLevel0);
 
-bool IsSupportDirectFullmeshFor91093(const HcclCMDType &opType, DevType deviceType, u32 devNumInLevel2,
+bool IsSupportDirectFullmeshFor91093(const HcclCMDType &opType, DevType deviceType, u32 superPodNum,
     bool useSuperPodMode, u32 serverNum);
 bool FullmeshPairwiseSatisfyHighPerfAlltoallMeshCondition(DevType deviceType, u32 rankSize, bool useSuperPodMode);
-bool SatisfyIntraSuperPod(DevType deviceType, u32 rankSize, bool useSuperPodMode);
+bool SatisfyIntraSuperPod(DevType deviceType, u32 rankSize, bool useSuperPodMode, u32 superPodNum = 1);
 u64 GetGlobalMaxUserInSize(const std::vector<SendRecvInfo> &allMeshAggregationSendRecvInfo);
 
 std::string AlgTypeToStr(const AlgType algType);

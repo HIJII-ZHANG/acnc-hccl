@@ -121,6 +121,32 @@ HcclResult Reducer::run(const HcclDispatcher dispatcher, const std::shared_ptr<T
     return ret;
 }
 
+HcclResult Reducer::PrepareRxMems(const std::vector<ReducerMemoryInfo> &reducerMems,
+    std::vector<RxMemoryInfo> &rxMems) const
+{
+    rxMems.reserve(reducerMems.size());
+    for (const ReducerMemoryInfo &reduceMem : reducerMems) {
+        rxMems.emplace_back(RxMemoryInfo{ UserMemType::INPUT_MEM, reduceMem.remoteMemOffset,
+            reduceMem.remoteRcvTemp.ptr(), reduceMem.remoteRcvTemp.size() });
+    }
+    return HCCL_SUCCESS;
+}
+
+HcclResult Reducer::PrepareRxWithReduceMems(const std::vector<ReducerMemoryInfo> &reducerMems,
+    std::vector<RxWithReduceMemoryInfo> &rxWithReduceMems) const
+{
+    rxWithReduceMems.reserve(reducerMems.size());
+    for (const ReducerMemoryInfo &reduceMem : reducerMems) {
+        u64 dataCount = reduceMem.localdst.size() / SIZE_TABLE[dataType_];
+        DeviceMem reduceSrc = (reduceMem.localsrc == reduceMem.localdst) ? reduceMem.remoteRcvTemp : reduceMem.localsrc;
+
+        rxWithReduceMems.emplace_back(RxWithReduceMemoryInfo{UserMemType::INPUT_MEM, reduceMem.remoteMemOffset,
+            reduceMem.remoteRcvTemp.ptr(), reduceMem.remoteRcvTemp.size(), reduceSrc.ptr(), reduceMem.localdst.ptr(),
+            dataCount});
+    }
+    return HCCL_SUCCESS;
+}
+
 HcclResult Reducer::run(const HcclDispatcher dispatcher, const std::shared_ptr<Transport> &link,
     const std::vector<ReducerMemoryInfo> &reducerMems, Stream &stream, DstMemType resultMem) const
 {
@@ -132,25 +158,11 @@ HcclResult Reducer::run(const HcclDispatcher dispatcher, const std::shared_ptr<T
     bool isSpTransportWithReduce = link->IsSupportTransportWithReduce();
     HcclResult ret = HCCL_SUCCESS;
 
-    std::vector<RxMemoryInfo> rxMems;
-    for (const ReducerMemoryInfo &reduceMem : reducerMems) {
-        rxMems.emplace_back(RxMemoryInfo{ UserMemType::INPUT_MEM, reduceMem.remoteMemOffset,
-            reduceMem.remoteRcvTemp.ptr(), reduceMem.remoteRcvTemp.size() });
-    }
-
-    std::vector<RxWithReduceMemoryInfo> rxWithReduceMems;
-    for (ReducerMemoryInfo reduceMem : reducerMems) {
-        u64 dataCount = reduceMem.localdst.size() / SIZE_TABLE[dataType_];
-        DeviceMem reduceSrc = (reduceMem.localsrc == reduceMem.localdst) ? reduceMem.remoteRcvTemp : reduceMem.localsrc;
-
-        rxWithReduceMems.emplace_back(RxWithReduceMemoryInfo{ UserMemType::INPUT_MEM, reduceMem.remoteMemOffset,
-            reduceMem.remoteRcvTemp.ptr(), reduceMem.remoteRcvTemp.size(), reduceSrc.ptr(), reduceMem.localdst.ptr(),
-            dataCount });
-    }
-
     if (isSpTransportWithReduce && isSpRdmaReduce) {
         // 数据接收端执行接收动作
         // RDMA的RxAsync不需要接收端内存信息
+        std::vector<RxMemoryInfo> rxMems;
+        CHK_RET(PrepareRxMems(reducerMems, rxMems));
         CHK_RET(link->RxAsync(rxMems, stream));
         if (link->GetSupportDataReceivedAck()) {
             CHK_RET(link->DataReceivedAck(stream));
@@ -167,6 +179,8 @@ HcclResult Reducer::run(const HcclDispatcher dispatcher, const std::shared_ptr<T
         }
         CHK_RET(PostSync_());
     } else if (isSpTransportWithReduce && (linkType == LinkType::LINK_STANDARD_ROCE)) {
+        std::vector<RxWithReduceMemoryInfo> rxWithReduceMems;
+        CHK_RET(PrepareRxWithReduceMems(reducerMems, rxWithReduceMems));
         CHK_RET(PreSync_());
         CHK_RET(link->RxWithReduce(rxWithReduceMems, dataType_, reductionOp_, stream, reduceAttribute_));
         CHK_RET(PostSync_());
@@ -192,6 +206,10 @@ HcclResult Reducer::run(const HcclDispatcher dispatcher, const std::shared_ptr<T
         }
         CHK_RET(PostSync_());
     } else {
+        std::vector<RxMemoryInfo> rxMems;
+        CHK_RET(PrepareRxMems(reducerMems, rxMems));
+        std::vector<RxWithReduceMemoryInfo> rxWithReduceMems;
+        CHK_RET(PrepareRxWithReduceMems(reducerMems, rxWithReduceMems));
         CHK_RET(PreSync_());
         CHK_RET(link->RxAsync(rxMems, stream));
         CHK_RET(PostSync_());

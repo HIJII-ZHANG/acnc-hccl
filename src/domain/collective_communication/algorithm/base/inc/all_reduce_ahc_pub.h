@@ -12,9 +12,6 @@
 #define ALL_REDUCE_AHC_PUB_H
 
 #include "asymmetric_hierarchical_concatenate_base_pub.h"
-#include "all_gather_ring_pub.h"
-#include "all_reduce_ring_pub.h"
-#include "reduce_scatter_ring_pub.h"
 
 namespace hccl {
 class AllReduceAHC : public AHCExecutorBase {
@@ -26,7 +23,7 @@ public:
 
 private:
     HcclResult CommAHCInfoInit(std::vector<std::vector<u32>> &subGroups) override;
-    HcclResult RunInterAllReduce(u32 rank, const std::vector<LINK> &links,
+    HcclResult RunInterAllReduce(const u32 rank, const std::vector<LINK> &links,
         const std::unique_ptr<CommAHCBaseInfo> &commAHCBaseInfo) override;
 };
 } // namespace hccl

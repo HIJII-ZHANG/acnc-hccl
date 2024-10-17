@@ -27,6 +27,8 @@ TopoInfoExtractor::TopoInfoExtractor(HcclAlgoAttr &algoAttr, HcclTopoAttr &topoA
       isUsedInterHccsMode_(algoAttr.isUsedInterHccsMode), isDiffAggregation_(topoAttr.isDiffDeviceModule),
       isConfigAHC_(false),
       isConfigNULL_(false),
+      multiModuleDiffDeviceNumMode_(topoAttr.multiModuleDiffDeviceNumMode),
+      multiSuperPodDiffServerNumMode_(topoAttr.multiSuperPodDiffServerNumMode),
       isAsymPlanVector_(COMM_LEVEL_RESERVED),
       CommPlaneSubGroupVector_(COMM_LEVEL_RESERVED),
       CommPlaneVector_(COMM_LEVEL_RESERVED)
@@ -36,10 +38,13 @@ TopoInfoExtractor::TopoInfoExtractor(HcclAlgoAttr &algoAttr, HcclTopoAttr &topoA
 // 为了适配老的LLT框架提供的构造函数
 TopoInfoExtractor::TopoInfoExtractor(std::string identifier, u32 userRank, u32 userRankSize, TopoType topoType,
     DevType deviceType, std::vector<RankInfo>& rankVector, u32 meshAggregationRankSize,
-    bool isUsedRdmaOuter, bool isUsedInterHccsMode)
+    bool isUsedRdmaOuter, bool isUsedInterHccsMode, bool multiModuleDiffDeviceNumMode,
+    bool multiSuperPodDiffServerNumMode)
     : identifier_(identifier), userRank_(userRank), userRankSize_(userRankSize), topoType_(topoType),
       deviceType_(deviceType), rankVector_(rankVector), meshAggregationRankSize_(meshAggregationRankSize),
       isUsedRdmaOuter_(isUsedRdmaOuter), isUsedInterHccsMode_(isUsedInterHccsMode), isDiffAggregation_(false),
+      multiModuleDiffDeviceNumMode_(multiModuleDiffDeviceNumMode),
+      multiSuperPodDiffServerNumMode_(multiSuperPodDiffServerNumMode),
       isConfigAHC_(false),
       isConfigNULL_(false),
       CommPlaneVector_(COMM_LEVEL_RESERVED),
@@ -262,11 +267,6 @@ HcclResult TopoInfoExtractor::CheckSuperPodInfo()
                 "devNum[%u] in superPodIdx[%u].", devNum, superPodToRank_.begin(),
                 curDevNum, iter->first);
             }
-        } else {
-            CHK_PRT_RET(devNum != curDevNum,
-                HCCL_ERROR("[Check][SuperPodInfo]devNum[%u] in superPodIdx[%u] is inconsistent with "\
-                "devNum[%u] in superPodIdx[%u].", devNum, superPodToRank_.begin(),
-                curDevNum, iter->first), HCCL_E_INTERNAL);
         }
     }
     return HCCL_SUCCESS;
@@ -354,6 +354,13 @@ HcclResult TopoInfoExtractor::SetTopologyInfo()
     CHK_RET(SetTopoInfoForLevel0());
     CHK_RET(SetTopoInfoForLevel1());
     CHK_RET(SetTopoInfoForLevel2());
+
+    // 判断非对称或配置 AHC 走 AHC 流程，合并 level1 和 level2 通信域处理；否则跳过相关处理
+    bool prepareAHC = (isConfigAHC_ || isAsymPlanVector_[COMM_LEVEL2]);
+    if (prepareAHC) {
+        HCCL_INFO("[Set][TopologyInfo] select AHC config, prepare AHC commplane");
+        CHK_RET(SetTopoInfoForLevel1(true));
+    }
 
     // 是否支持按mesh划分通信拓扑
     bool isSupportMeshTopo = meshAggregationRankSize_ > 0 &&
@@ -464,18 +471,16 @@ HcclResult TopoInfoExtractor::SetTopoInfoForLevel0()
     if (isConfigAHC_) {
         AHCCommSubgroupInit(); // 准备 AHC COMM 场景下的测试分组
     }
-    
+
     return HCCL_SUCCESS;
 }
 
-HcclResult TopoInfoExtractor::SetTopoInfoForLevel1()
+HcclResult TopoInfoExtractor::SetTopoInfoForLevel1(bool prepareAHC)
 {
-    // 判断对称且非静态 AHC 配置走原始流程，其他场景走 AHC 流程，合并 level1 和 level2 通信域为同个 level
     std::map<u32, std::vector<RankInfo>> &serverToRank =
-        (!isConfigAHC_ && !isAsymPlanVector_[COMM_LEVEL2]) ? serverToRank_ : serverToRankMerge_;
-
-    HCCL_INFO("[Set][TopoInfoForLevel1] select serverToRank_ info [%u]",
-        (!isConfigAHC_ && !isAsymPlanVector_[COMM_LEVEL2]));
+        (prepareAHC) ? serverToRankMerge_ : serverToRank_;
+    
+    CommPlane commPlaneLevel1 = (prepareAHC) ? COMM_LEVEL1_AHC : COMM_LEVEL1;
 
     u32 moduleIdx = 0;
     CHK_RET(GetModuleIdx(rankData_, moduleIdx));
@@ -570,32 +575,34 @@ HcclResult TopoInfoExtractor::SetTopoInfoForLevel1()
         }
 
         // 3、填充bridge_rank_vector_、isBridgeVector_
-        isBridgeVector_.push_back(bridgeRankFlag);
-        CommPlaneVector_[COMM_LEVEL1].push_back(tmpBridgeVector);
+        if (!prepareAHC) {
+            isBridgeVector_.push_back(bridgeRankFlag);
+        }
+        CommPlaneVector_[commPlaneLevel1].push_back(tmpBridgeVector);
 
         // 4、填充当前 level 的通信域内分组信息（用于层次化算法）
         if (!calcGroupDone) {
             for (auto iterMap = superPodGroup.begin(); iterMap != superPodGroup.end(); iterMap++) {
-                CommPlaneSubGroupVector_[COMM_LEVEL1].push_back(iterMap->second);
+                CommPlaneSubGroupVector_[commPlaneLevel1].push_back(iterMap->second);
             }
             calcGroupDone = true;
         }
 
-        if (GetExternalInputEnableRdmaSdmaConcurrent()) {
+        if (GetExternalInputEnableRdmaSdmaConcurrent() && !prepareAHC) {
             CommPlaneVector_[COMM_LEVEL1_RDMA].push_back(tmpBridgeVector);
         }
         HCCL_INFO("SetTopoInfoForLevel1: topoRankInfo[%s]", outLogInfo.c_str());
     }
 
     HCCL_RUN_INFO("SetTopoInfoForLevel1: identifier[%s], userRank[%u], userRankSize[%u], plane size[%u]",
-        identifier_.c_str(), userRank_, userRankSize_, CommPlaneVector_[COMM_LEVEL1].size());
+        identifier_.c_str(), userRank_, userRankSize_, CommPlaneVector_[commPlaneLevel1].size());
     return HCCL_SUCCESS;
 }
 
 HcclResult TopoInfoExtractor::SetTopoInfoForLevel2()
 {
     // 对称场景需要初始化多个平面，非对称 level1 和 level2 合并无需切分平面
-    if (!isAsymPlanVector_[COMM_LEVEL2]) {
+    if (!multiModuleDiffDeviceNumMode_ && !multiSuperPodDiffServerNumMode_) {
         HCCL_INFO("[Set][TopoInfoForLevel2] select origin proc");
 
         // 找到当前rank在本超节点内部的序号
@@ -1023,8 +1030,8 @@ HcclResult TopoInfoExtractor::GetIsUsedRdmaMap(std::unordered_map<u32, bool> &is
         bool isUsedRdma = (isInterSuperPod) ||
                 (isInterServer && !isUsedInterHccsMode_) || (isConnectedWithPcie && isUsedRdmaOuter_);
         isUsedRdmaMap[dstRank.userRank] = isUsedRdma;
-        HCCL_DEBUG("[GetIsUsedRdma]isUsedRdma[%d], isInterSuperPod[%d], isInterServer[%d], isUsedInterHccsMode_[%d], "\
-            "isConnectedWithPcie[%d], isUsedRdmaOuter_[%d], dstRank[%d]", isUsedRdma, isInterSuperPod, isInterServer,
+        HCCL_DEBUG("[GetIsUsedRdma]isUsedRdma[%u], isInterSuperPod[%u], isInterServer[%u], isUsedInterHccsMode_[%u], "\
+            "isConnectedWithPcie[%u], isUsedRdmaOuter_[%u], dstRank[%u]", isUsedRdma, isInterSuperPod, isInterServer,
             isUsedInterHccsMode_, isConnectedWithPcie, isUsedRdmaOuter_, dstRank.userRank);
     }
     return HCCL_SUCCESS;
@@ -1083,7 +1090,7 @@ void TopoInfoExtractor::InitAHCConfig()
         }
     }
 
-    for (u32 opType = 0; opType < static_cast<u32>(HcclCMDType::HCCL_CMD_MAX); opType++) {
+    for (u32 opType = 0; opType < static_cast<u32>(HcclCMDType::HCCL_CMD_MAX); opType++) {  //没配置算法的情况下默认会走AHC嘛？  给测试用
         isConfigNULL_ = GetExternalInputHcclAlgoConfig(static_cast<HcclCMDType>(opType))[HCCL_ALGO_LEVEL_0] == HcclAlgoType::HCCL_ALGO_TYPE_NULL;
         if (isConfigNULL_) {
             HCCL_INFO("[InitAHCConfig] set NULL alg, opType[%u]", opType);
@@ -1150,7 +1157,7 @@ void TopoInfoExtractor::GetIsAsymPlanVector(std::vector<bool> &isAsymPlanVector)
     isAsymPlanVector = isAsymPlanVector_;
     return;
 }
-                    
+
 void TopoInfoExtractor::GetRankData(RankInfo &rankData)
 {
     rankData = rankData_;
@@ -1221,7 +1228,8 @@ std::vector<std::vector<u32>> GetRingsOrderByTopoType(u32 ranksSize, TopoType to
         std::vector<u32> tmpOuter0;   // 环0
         std::vector<u32> tmpOuter1;  // 环1
         std::vector<u32> rohOuter;
-        if (GetExternalInputEnableRdmaSdmaConcurrent() && (CheckSdmaWithRohTopo(nicList, rohOuter))) {
+        if (GetExternalInputEnableRdmaSdmaConcurrent() && (CheckSdmaWithRohTopo(nicList, rohOuter)
+            && GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE)) {
             tmpOuter0 = rohOuter;          // 环0, 8卡 { 0, 1, 3, 2, 4, 5, 7, 6 };
             tmpOuter1.reserve(ranksSize);  // 环1, 8卡 { 0, 6, 7, 5, 4, 2, 3, 1 };
             tmpOuter1.push_back(rohOuter[0]);
@@ -1243,15 +1251,17 @@ std::vector<std::vector<u32>> GetRingsOrderByTopoType(u32 ranksSize, TopoType to
         multiRingOrder.push_back(tmpOuter0);
     }
     // 打印多个环
-    for (size_t i = 0; i < multiRingOrder.size(); i++) {
-        auto ring = multiRingOrder[i];
-        std::ostringstream stringRepresentation;
-        for (std::vector<uint32_t>::iterator it = ring.begin(); it != ring.end(); it++) {
-            stringRepresentation << *it << " ";
+    if (UNLIKELY(CheckDebugLogLevel())) {
+        for (size_t i = 0; i < multiRingOrder.size(); i++) {
+            auto ring = multiRingOrder[i];
+            std::ostringstream stringRepresentation;
+            for (std::vector<uint32_t>::iterator it = ring.begin(); it != ring.end(); it++) {
+                stringRepresentation << *it << " ";
+            }
+            std::string ringString = stringRepresentation.str();
+            const char *charRing = ringString.c_str();
+            HCCL_DEBUG("[GetRingsOrderByTopoType] The No.%zu ring: %s", i, charRing);
         }
-        std::string ringString = stringRepresentation.str();
-        const char *charRing = ringString.c_str();
-        HCCL_DEBUG("[GetRingsOrderByTopoType] The No.%zu ring: %s", i, charRing);
     }
     return multiRingOrder;
 }

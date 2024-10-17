@@ -78,7 +78,7 @@ u64 CollReduceScatterMeshDmaEliminationExecutor::CalcLoopMaxCount(const u32 unit
     return maxCountPerLoop;
 }
 
-bool CollReduceScatterMeshDmaEliminationExecutor::IsHugeData(const u64 curSize)
+bool CollReduceScatterMeshDmaEliminationExecutor::IsHugeData(const u64 curSize, OpParam *param)
 {
     bool hugeData = curSize > SDMA_SEND_MAX_SIZE;
     return hugeData;

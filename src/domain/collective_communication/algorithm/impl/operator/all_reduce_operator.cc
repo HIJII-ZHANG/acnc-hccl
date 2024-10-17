@@ -36,7 +36,7 @@ HcclDataCountType AllReduceOperator::GetCountTypeForDeterAllReduce(const u64 cou
     if ((GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB)) {
         if (dataSize <= HCCL_SMALL_COUNT_GRAPH_64_KB) {
             return HcclDataCountType::HCCL_COUNT_SMALL;
-        } else if ((dataSize <= HCCL_MEDIUM_COUNT_GRAPH_4_MB) && (deviceNumPerServer_ == DEVICE_EIGHT)) {
+        } else if ((dataSize <= HCCL_MEDIUM_COUNT_GRAPH_4_MB) && (deviceNumPerAggregation_ == DEVICE_EIGHT)) {
             return HcclDataCountType::HCCL_COUNT_MEDIUM;
         } else {
             return HcclDataCountType::HCCL_COUNT_HUGE;
@@ -149,6 +149,7 @@ HcclResult AllReduceOperator::SelectAlg(const std::string& tag, const OpParam& p
     } else {
         newTag = tag;
     }
+    newTag += (param.aicpuUnfoldMode ? "_device" : "_host");
     HCCL_INFO("[SelectAlg] all_reduce newTag is [%s]", newTag.c_str());
     return ret;
 }
@@ -423,8 +424,18 @@ HcclResult AllReduceOperator::SelectAlgfor91093(const OpParam& param, std::strin
         (GetLevel1AlgType(algType_) == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE)) {
         CHK_RET(SelectAlgforAHC());
     }
-    if (GetExternalInputEnableRdmaSdmaConcurrent() && topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING &&
-        !param.aicpuUnfoldMode) {
+    bool smallCountOptim91093 =
+        (!GetExternalInputEnableInplace()) &&
+        (serverNum_ == 1) &&
+        ((workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) ||
+        (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && !param.aicpuUnfoldMode)) &&
+        IsSupportSDMAReduce(param.inputPtr, param.outputPtr, param.DataDes.dataType, param.reduceType) &&
+        (deviceNumPerAggregation_ > HCCL_DEVICE_NUM_TWO) &&
+        (param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] <= HCCL_SMALL_COUNT_1_MB * userRankSize_);
+    if (smallCountOptim91093) {
+        algName = "AllReduceMeshSmallCountExecutor";
+    } else if (GetExternalInputEnableRdmaSdmaConcurrent() && topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING &&
+        !param.aicpuUnfoldMode && (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE)) {
         if (!(UseInterServerRingAlgo(algType_) || UseInterServerNBAlgo(algType_))) {
             HcclResult ret = SetInterServerRingAlgo(algType_);
             HCCL_WARNING("[AllReduceOperator][SelectAlgfor91093] concurrent only support ring or NB in AlgoLevel1 "\
@@ -465,7 +476,7 @@ HcclResult AllReduceOperator::SelectAlgforAHC()
     bool isAHCWholeConfig = ((algType_ == AlgType::ALG_WHOLE_AHC) ||
                              (algType_ == AlgType::ALG_WHOLE_AHC_BROKE));
     
-    CommPlane ahcSubGroupLevel = COMM_LEVEL1;
+    CommPlane ahcSubGroupLevel = COMM_LEVEL1_AHC;
     if (isAHCWholeConfig) {
         if (deviceType_ != DevType::DEV_TYPE_910_93) {
             ahcSubGroupLevel = COMM_COMBINE;

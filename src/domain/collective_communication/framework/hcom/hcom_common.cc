@@ -467,25 +467,6 @@ HcclResult QueryDestroyFlag(const char *group)
     return HCCL_SUCCESS;
 }
 
-HcclResult QueryAnyDestroyFlag()
-{
-    HcomInfo &hcomInfo = HcomGetCtxHomInfo();
-
-    lock_guard<mutex> groupParaLock(hcomInfo.groupParamsLock);
-    for (auto &iter : hcomInfo.hcomGroupMap) {
-        if (iter.second.destroyFlag) {
-            HCCL_RUN_INFO("group[%s] destroyFlag is true.", iter.first.c_str());
-            return HCCL_E_AGAIN;
-        }
-    }
-
-    if (hcomInfo.hcomGroupMap.size() == 0) {
-        HCCL_WARNING("hcomGroupMap size is 0, cannot query any destroy flag.");
-    }
-
-    return HCCL_SUCCESS;
-}
-
 HcclResult HcomDestroyGroupImpl(const std::string &group)
 {
     /* 调优模式直接返回success */

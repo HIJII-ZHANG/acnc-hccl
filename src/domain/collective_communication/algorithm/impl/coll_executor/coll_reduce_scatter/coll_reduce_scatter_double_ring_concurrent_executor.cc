@@ -63,7 +63,7 @@ HcclResult CollReduceScatterDoubleRingConcurrentExecutor::CalcStreamNum(u32& str
         totalStreamNum = OUTER_PLANE_NUM_IN_NPRING_DOUBLE;
     }
     if (GetExternalInputEnableRdmaSdmaConcurrent()) {
-        totalStreamNum += RDMA_PLANE_NUM_IN_NPRING_DOUBLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
+        totalStreamNum += RDMA_PLANE_NUM_IN_NPRING_DOUBLE;
     }
     streamNum = totalStreamNum - 1;
     HCCL_INFO("[CollReduceScatterDoubleRingConcurrentExecutor][CalcStreamNum] tag[%s] streamNum[%u]",
@@ -142,7 +142,7 @@ u64 CollReduceScatterDoubleRingConcurrentExecutor::CalcLoopMaxCount(const u32 un
     return maxCountPerLoop;
 }
 
-bool CollReduceScatterDoubleRingConcurrentExecutor::IsHugeData(const u64 curSize)
+bool CollReduceScatterDoubleRingConcurrentExecutor::IsHugeData(const u64 curSize, OpParam *param)
 {
     // 这里如果CheckCommSize返回ERROR，相当于HugeData true，防止GetSubCommInfo越界
     CHK_RET(CheckCommSize(COMM_LEVEL2, COMM_INDEX_0 + 1));
@@ -157,15 +157,9 @@ bool CollReduceScatterDoubleRingConcurrentExecutor::IsHugeData(const u64 curSize
     return hugeData;
 }
 
-u32 CollReduceScatterDoubleRingConcurrentExecutor::IsDataSplit(const u64 curSize)
+bool CollReduceScatterDoubleRingConcurrentExecutor::IsDataSplitForRdmaSdmaConcurrent(const u64 curSize)
 {
-    u32 dataSplit = 0;
-    u64 dataValue = curSize * topoAttr_.userRankSize;
-    if ((topoAttr_.serverNum > 1) && ((dataValue / topoAttr_.serverNum) <= HCCL_SDMA_RDMA_SPLIT_SIZE)) {
-        dataSplit = 1;
-    } else if (dataValue <= HCCL_SDMA_RDMA_SPLIT_SIZE) {
-        dataSplit = HCCL_SPLIT_FLAG;
-    }
+    bool dataSplit = (curSize >= HCCL_SPLIT_SIZE_INTER_SERVER);
     return dataSplit;
 }
 
@@ -188,7 +182,7 @@ HcclResult CollReduceScatterDoubleRingConcurrentExecutor::KernelRun(const OpPara
     CHK_RET(CheckCommSize(COMM_LEVEL2, COMM_INDEX_0 + 1));
     SubCommInfo level2CommInfo = GetSubCommInfo(COMM_LEVEL2, COMM_INDEX_0);
     u32 level2RankSize = level2CommInfo.localRankSize;
-    u32 syncTrans = BEST_SPLIT_VALUE;
+    u32 syncTrans = BEST_SPLIT_VALUE_SR;
 
     std::vector<Slice> dataSegsSlice;   // 数据分成ranksize份，每份的起始偏移和大小
     std::vector<std::vector<Slice> > multiStreamSlice; // 每个stream使用的数据基于用户buffer的偏移
@@ -327,8 +321,8 @@ HcclResult CollReduceScatterDoubleRingConcurrentExecutor::KernelRun(const OpPara
 
     std::vector<std::pair<bool, std::vector<Slice>>> mult4RingsSlice;
     std::vector<std::vector<Slice>> mult4RingsSlicetemp;
-    u64 totalDataSize = execMem.outputMem.size() * dataSegsSlice.size();
-    if (totalDataSize <= HCCL_SDMA_RDMA_SPLIT_SIZE) {
+    u64 totalDataSize = execMem.outputMem.size();
+    if (totalDataSize < HCCL_SPLIT_SIZE_INTER_SERVER) {
         syncTrans = MAX_SPLIT_VALUE;
     }
     mult4RingsSlice.resize(level0DataSegsSlice.size() * SLICES_FACTOR);
@@ -372,7 +366,7 @@ HcclResult CollReduceScatterDoubleRingConcurrentExecutor::KernelRun(const OpPara
     HcomCollOpInfo opInfo = {"", execMem.inputPtr, execMem.outputPtr, param.DataDes.count, param.DataDes.dataType,
         param.root, param.reduceType};
     HcomCollOpInfo *opInfoPtr = nullptr;
-    if (DMAReduceFlag_) {
+    if (DMAReduceFlag_ && (!GetExternalInputEnableInplace())) {
         opInfoPtr = &opInfo;
     }
 
@@ -436,6 +430,10 @@ HcclResult CollReduceScatterDoubleRingConcurrentExecutor::KernelRun(const OpPara
             HCCL_DEBUG("rank[%u], level1DataSegsSlice[%u].offset=%llu, size=[%llu]", topoAttr_.userRank, i,
                 sliceTemp.offset, sliceTemp.size);
         }
+        u32 syncTrans1 = BEST_SPLIT_VALUE_DR;
+        if (execMem.outputMem.size() < HCCL_SPLIT_SIZE_INTER_SERVER) {
+            syncTrans1 = MAX_SPLIT_VALUE;
+        }
 
         // 基于2环数据切分SDMA+ROH; bool = true表示SDMA
         std::vector<std::pair<bool, std::vector<Slice>>> innerMultSlice;
@@ -446,9 +444,9 @@ HcclResult CollReduceScatterDoubleRingConcurrentExecutor::KernelRun(const OpPara
         {
             auto totalSize = level1DataSegsSlice[segsIndex].size;
             auto sdmaSliceOffset = level1DataSegsSlice[segsIndex].offset;
-            auto sdmaSliceSize = ((totalSize <= HCCL_MIN_SLICE_ALIGN_910_93) || (syncTrans == MAX_SPLIT_VALUE)) ? 
+            auto sdmaSliceSize = ((totalSize <= HCCL_MIN_SLICE_ALIGN_910_93) || (syncTrans1 == MAX_SPLIT_VALUE)) ? 
                 totalSize :
-                ((syncTrans * totalSize / MAX_SPLIT_VALUE) / HCCL_MIN_SLICE_ALIGN_910_93) * HCCL_MIN_SLICE_ALIGN_910_93;
+                ((syncTrans1 * totalSize / MAX_SPLIT_VALUE) / HCCL_MIN_SLICE_ALIGN_910_93) * HCCL_MIN_SLICE_ALIGN_910_93;
             Slice sdmaSliceTmp;
             sdmaSliceTmp.offset = sdmaSliceOffset;
             sdmaSliceTmp.size = sdmaSliceSize;
@@ -464,7 +462,7 @@ HcclResult CollReduceScatterDoubleRingConcurrentExecutor::KernelRun(const OpPara
         }
         innerMultSlice[0] = std::make_pair(true, sdmaSlice);  // true表示使用sdma
         innerMultSlice[1] = std::make_pair(false, rdmaSlice); // false表示rdma
-        if (syncTrans == MAX_SPLIT_VALUE) {
+        if (syncTrans1 == MAX_SPLIT_VALUE) {
             innerMultSlice.erase(innerMultSlice.end() - 1, innerMultSlice.end());
         }
 

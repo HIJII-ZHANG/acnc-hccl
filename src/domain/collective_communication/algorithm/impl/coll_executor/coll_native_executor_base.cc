@@ -89,13 +89,6 @@ HcclResult CollNativeExecutorBase::GetIfNeedAivBuffer(bool &needAivBuffer)
     return HCCL_SUCCESS;
 }
 
-HcclResult CollNativeExecutorBase::CheckIfAllowAHC()
-{
-    // 非 AllReduce 场景不允许使用 AHC 算法
-    HCCL_ERROR("[CollNativeExecutorBase][CheckIfAllowAHC]Only support AHC in AllReduce.");
-    return HCCL_E_PARA;
-}
-
 HcclResult CollNativeExecutorBase::CalcCommInfo(std::vector<LevelNSubCommTransport>& opTransport)
 {
     return HCCL_SUCCESS;
@@ -114,7 +107,7 @@ HcclResult CollNativeExecutorBase::CalcLevel1CommInfo(TransportMemType inputType
 {
     HCCL_INFO("[CollNativeExecutorBase][CalcInnerCommInfo]tag[%s] start", tag_.c_str());
     u32 root = root_;
-    if (opType_ == HcclCMDType::HCCL_CMD_BROADCAST && topoAttr_.devNumInLevel2 > 1) {
+    if (opType_ == HcclCMDType::HCCL_CMD_BROADCAST && topoAttr_.superPodNum > 1) {
         root = topoMatcher_->GetSubRootWithSuperPod(topoAttr_.userRank, root_);
         HCCL_DEBUG("[CollNativeExecutorBase][CalcInnerCommInfo]tag[%s] subroot is %u usrRank is %u root_ is %u",
             tag_.c_str(), root, topoAttr_.userRank, root_);
@@ -131,11 +124,11 @@ HcclResult CollNativeExecutorBase::CalcLevel1CommInfo(TransportMemType inputType
         commParaLevel1.commType = CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING_V1;
         HCCL_INFO("[CollNativeExecutorBase][CalcInnerCommInfo]tag[%s] Calc NHRV1CommInfo", tag_.c_str());
     } else if (UseInterServerAHCAlgo(algType_)) {
-        CHK_RET(CheckIfAllowAHC());
+        commParaLevel1.commPlane = CommPlane::COMM_LEVEL1_AHC;
         commParaLevel1.commType = CommType::COMM_TAG_ASYMMETRIC_HIERARCHICAL_CONCATENATE;
         HCCL_INFO("[CollNativeExecutorBase][CalcInnerCommInfo]tag[%s] Calc AHCCommInfo", tag_.c_str());
     } else if (UseInterServerAHCBrokeAlgo(algType_)) {
-        CHK_RET(CheckIfAllowAHC());
+        commParaLevel1.commPlane = CommPlane::COMM_LEVEL1_AHC;
         commParaLevel1.commType = CommType::COMM_TAG_ASYMMETRIC_HIERARCHICAL_CONCATENATE_BROKE;
         HCCL_INFO("[CollNativeExecutorBase][CalcInnerCommInfo]tag[%s] Calc AHCBrokeCommInfo", tag_.c_str());
     } else if (UseInterServerNBAlgo(algType_)) {
@@ -146,7 +139,7 @@ HcclResult CollNativeExecutorBase::CalcLevel1CommInfo(TransportMemType inputType
         HCCL_INFO("[CollNativeExecutorBase][CalcInnerCommInfo]tag[%s] Calc HDCommInfo", tag_.c_str());
     }
     commParaLevel1.forceRdma = false;
-    CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel1, opTransport[COMM_LEVEL1], inputType, outputType));
+    CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel1, opTransport[commParaLevel1.commPlane], inputType, outputType));
     HCCL_INFO("[CollNativeExecutorBase][COMM_LEVEL1]tag[%s] Calc CommInfo Finish", tag_.c_str());
     if (topoMatcher_->GetExternalInputEnableRdmaSdmaConcurrent()) {
         CommParaInfo commParaLevel1Rdma(COMM_LEVEL1_RDMA, CommType::COMM_TAG_RING_INNER);
@@ -231,6 +224,7 @@ HcclResult CollNativeExecutorBase::AddSubStreamToProfiling()
     return HCCL_SUCCESS;
 }
 
+
 HcclResult CollNativeExecutorBase::CheckCommSize(const CommPlane levelIndex, const u32 expectedSize)
 {
     if (algResResp_->opTransportResponse[levelIndex].size() < expectedSize) {
@@ -271,6 +265,8 @@ HcclResult CollNativeExecutorBase::GetRankByUserRank(CommPlane levelIndex, u32 s
     SingleSubCommTransport &transportInfo =
         const_cast<SingleSubCommTransport&>(algResResp_->opTransportResponse[levelIndex][subLevelIndex]);
     rank = transportInfo.userRank2subCommRank[userRank];
+    HCCL_DEBUG("[GetRankByUserRank]levelIndex[%u] subLevelIndex[%u], userRank[%u], rank[%u]",
+        levelIndex, subLevelIndex, userRank, rank);
     return HCCL_SUCCESS;
 }
 

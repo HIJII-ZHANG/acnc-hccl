@@ -26,9 +26,9 @@ public:
 protected:
     // ReduceScatter Loop Executor公共接口
     virtual u64 CalcLoopMaxCount(const u32 unitSize);
-    virtual bool IsHugeData(const u64 curSize);
+    virtual bool IsHugeData(const u64 curSize, OpParam *param = nullptr);
     virtual bool IsSmallData(const u64 totalSize, const u64 curSize);
-    virtual u32 IsDataSplit(const u64 curSize);
+    virtual bool IsDataSplitForRdmaSdmaConcurrent(const u64 curSize);
     virtual HcclResult RunLoop(OpParam &param, AlgResourceResponse &algRes);
 
     // 工具类

@@ -47,9 +47,10 @@ using HcclOpMetaInfo = struct HcclOpMetaInfoDef {
     u32 algolevel1Type = 0;
     bool hugeData = false;
     u64 sliceNum = 1;
-    u32 dataSplit = 0;
+    bool dataSplit = false;
     bool isAivMode = false;
     bool isEnableCache = true;
+    bool isDeterministic = false;
 
     static bool CheckEnableCache(const HcclOpMetaInfoDef &opMetaInfo)
     {
@@ -71,7 +72,7 @@ using HcclOpMetaInfo = struct HcclOpMetaInfoDef {
         HcclDataType dataType = HCCL_DATA_TYPE_RESERVED, ReduceType reduceType = ReduceType::INLINE_REDUCE,
         bool isSmallCount = false, u32 piplineSliceNum = 1, bool hugeData = false,
         CopyPattern copyPattern = CopyPattern::BCOPY, u64 sliceNum = 1,
-        bool isAivMode = false, bool isDefaultPath = true)
+        bool isAivMode = false, bool isDefaultPath = true, bool dataSplit = false, bool isDeterministic = false)
     {
         HcclOpMetaInfoDef meta;
         meta.opType = HcclCMDType::HCCL_CMD_ALLREDUCE;
@@ -86,23 +87,27 @@ using HcclOpMetaInfo = struct HcclOpMetaInfoDef {
         meta.isAivMode = isAivMode;
         meta.isEnableCache = CheckEnableCache(meta);
         meta.isDefaultPath = isDefaultPath;
+        meta.dataSplit = dataSplit;
+        meta.isDeterministic = isDeterministic;
         return meta;
     }
 
-    static HcclOpMetaInfoDef GetOneForAllGather(u32 algolevel1Type = 0, bool hugeData = false,
-        CopyPattern copyPattern = CopyPattern::BCOPY)
+    static HcclOpMetaInfoDef GetOneForAllGather(u32 algolevel1Type = 0, bool hugeData = false, bool smallCount = false,
+        CopyPattern copyPattern = CopyPattern::BCOPY, bool dataSplit = false)
     {
         HcclOpMetaInfoDef meta;
         meta.opType = HcclCMDType::HCCL_CMD_ALLGATHER;
         meta.copyPattern = copyPattern;
         meta.algolevel1Type = algolevel1Type;
         meta.hugeData = hugeData;
+        meta.isSmallCount = smallCount; 
         meta.isEnableCache = CheckEnableCache(meta);
+        meta.dataSplit = dataSplit;
         return meta;
     }
 
     static HcclOpMetaInfoDef GetOneForBroadcast(bool isRootRank, uint32_t rootRank,
-        bool hugeData = false, bool isSmallCount = false)
+        bool hugeData = false, bool isSmallCount = false, u64 sliceNum = 1)
     {
         HcclOpMetaInfoDef meta;
         meta.opType = HcclCMDType::HCCL_CMD_BROADCAST;
@@ -110,6 +115,7 @@ using HcclOpMetaInfo = struct HcclOpMetaInfoDef {
         meta.isRootRank = isRootRank;
         meta.rootRank = rootRank;
         meta.hugeData = hugeData;
+        meta.sliceNum = sliceNum;
         meta.isEnableCache = CheckEnableCache(meta);
         return meta;
     }
@@ -127,7 +133,8 @@ using HcclOpMetaInfo = struct HcclOpMetaInfoDef {
     static HcclOpMetaInfoDef GetOneForReduceScatter(
         u32 algolevel1Type = 0, HcclDataType dataType = HCCL_DATA_TYPE_RESERVED,
         ReduceType reduceType = ReduceType::INLINE_REDUCE, bool hugeData = false,
-        bool isSmallCount = false, CopyPattern copyPattern = CopyPattern::BCOPY)
+        bool isSmallCount = false, CopyPattern copyPattern = CopyPattern::BCOPY, bool dataSplit = false,
+        bool isDeterministic = false)
     {
         HcclOpMetaInfoDef meta;
         meta.opType = HcclCMDType::HCCL_CMD_REDUCE_SCATTER;
@@ -138,6 +145,8 @@ using HcclOpMetaInfo = struct HcclOpMetaInfoDef {
         meta.isSmallCount = isSmallCount; // 是否小数据
         meta.copyPattern = copyPattern;
         meta.isEnableCache = CheckEnableCache(meta);
+        meta.dataSplit = dataSplit;
+        meta.isDeterministic = isDeterministic;
         return meta;
     }
 
@@ -189,7 +198,7 @@ using HcclOpMetaInfo = struct HcclOpMetaInfoDef {
 
     static HcclOpMetaInfoDef GetOneForReduce(bool isRootRank, uint32_t rootRank, u32 algolevel1Type = 0,
         HcclDataType dataType = HCCL_DATA_TYPE_RESERVED, ReduceType reduceType = ReduceType::INLINE_REDUCE,
-        bool hugeData = false, CopyPattern copyPattern = CopyPattern::BCOPY)
+        bool hugeData = false, bool isDeterministic = false)
     {
         HcclOpMetaInfoDef meta;
         meta.opType = HcclCMDType::HCCL_CMD_REDUCE;
@@ -199,8 +208,8 @@ using HcclOpMetaInfo = struct HcclOpMetaInfoDef {
         meta.dataType = dataType;
         meta.algolevel1Type = algolevel1Type;
         meta.hugeData = hugeData;
-        meta.copyPattern = copyPattern;
         meta.isEnableCache = CheckEnableCache(meta);
+        meta.isDeterministic = isDeterministic;
         return meta;
     }
 
@@ -211,10 +220,11 @@ using HcclOpMetaInfo = struct HcclOpMetaInfoDef {
         std::string isDefaultPathStr = isDefaultPath ? "1" : "0";
         std::string dataSplitStr = dataSplit ? "1" : "0";
         std::string isAivModeStr = isAivMode ? "1" : "0";
+        std::string isDeterministicStr = isDeterministic ? "1" : "0";
         return std::to_string(static_cast<int>(opType)) + isRootRankStr + std::to_string(static_cast<int>(reduceType)) +
                std::to_string(rootRank) + std::to_string(sliceNum) + std::to_string(static_cast<int>(dataType)) +
                isSmallCountStr + isDefaultPathStr + std::to_string(piplineSliceNum) + std::to_string(algolevel1Type) +
-               std::to_string(static_cast<int>(copyPattern)) + dataSplitStr + isAivModeStr;
+               std::to_string(static_cast<int>(copyPattern)) + dataSplitStr + isAivModeStr + isDeterministicStr;
     }
 };
 }

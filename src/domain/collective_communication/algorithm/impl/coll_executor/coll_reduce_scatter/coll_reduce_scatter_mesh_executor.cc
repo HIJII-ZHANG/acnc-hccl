@@ -118,7 +118,7 @@ u64 CollReduceScatterMeshExecutor::CalcLoopMaxCount(const u32 unitSize)
     return maxCountPerLoop;
 }
 
-bool CollReduceScatterMeshExecutor::IsHugeData(const u64 curSize)
+bool CollReduceScatterMeshExecutor::IsHugeData(const u64 curSize, OpParam *param)
 {
     if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT) {
         return true;

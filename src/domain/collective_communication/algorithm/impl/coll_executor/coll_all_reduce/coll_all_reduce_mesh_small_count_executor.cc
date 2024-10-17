@@ -28,18 +28,26 @@ void CollAllReduceMeshSmallCountExecutor::ParseParam(const OpParam& param)
 
 bool CollAllReduceMeshSmallCountExecutor::CalcScratchMemFlag(const u64 totalSize)
 {
-    return workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB &&
+    bool isDeter910B = workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB &&
         topoAttr_.deviceType == DevType::DEV_TYPE_910B &&
         topoMatcher_->GetExternalInputHcclDeterministic() &&
         topoAttr_.deviceNumPerAggregation > DEVICE_TWO &&
         topoAttr_.deviceNumPerAggregation < DEVICE_EIGHT &&
         totalSize <= HCCL_SMALL_COUNT_GRAPH_64_KB;
+    return workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB &&
+        (isDeter910B || topoAttr_.deviceType == DevType::DEV_TYPE_910_93);
 }
 
 HcclResult CollAllReduceMeshSmallCountExecutor::CalcScratchMemSize(u64& scratchMemSize)
 {
+    const u32 base = 2;
     if (CalcScratchMemFlag(totalSize_) == true) {
-        scratchMemSize = totalSize_ * (topoAttr_.userRankSize - 1);
+        if (topoAttr_.deviceType == DevType::DEV_TYPE_910B) {
+            scratchMemSize = totalSize_ * (topoAttr_.userRankSize - 1);
+        } else {
+            u64 factor = static_cast<u64>(log2(base * topoAttr_.userRankSize - 1));
+            scratchMemSize = totalSize_ * factor;
+        }
     } else {
         scratchMemSize = 0U;
     }
@@ -159,8 +167,9 @@ HcclResult CollAllReduceMeshSmallCountExecutor::KernelRun(const OpParam &param, 
         (param.DataDes.dataType != HCCL_DATA_TYPE_INT64)) ?
         ReduceType::INLINE_REDUCE : ReduceType::TBE_REDUCE;
     auto originalAlgTypeLevel1 = static_cast<u32>(algType_) >> HCCL_LEVEL_ALGO_WIDTH;
+    bool isDeterministic = topoMatcher_->GetExternalInputHcclDeterministic();
     auto opMeta = HcclOpMetaInfo::GetOneForAllReduce(originalAlgTypeLevel1, param.DataDes.dataType, reduceType,
-        (execMem.count * SIZE_TABLE[param.DataDes.dataType]) <= HCCL_SMALL_COUNT_256_KB, 1);
+        true, 1, false, CopyPattern::BCOPY, 1, false, true, false, isDeterministic);
     CHK_RET(InitTask(dispatcher_, const_cast<Stream&>(param.stream), opMeta.isEnableCache, opMeta.GetCacheKey()));
 
     CHK_RET(ActiveSlaveStreams(param.stream));
@@ -171,12 +180,18 @@ HcclResult CollAllReduceMeshSmallCountExecutor::KernelRun(const OpParam &param, 
     };
 
     std::unique_ptr<ExecutorBase> outer2Executor;
-    if (!topoMatcher_->GetExternalInputHcclDeterministic()) {
+    if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
+        bool aicpu = true;
+        aicpu = false;
+        outer2Executor.reset(new (std::nothrow) AllReduceHDOptim(dispatcher_,
+            reduceAttr, algResResp_->slaveStreams, algResResp_->notifiesM2S, algResResp_->notifiesS2M,
+            outerCommInfo.localRank, &opInfo, aicpu));
+    } else if (!topoMatcher_->GetExternalInputHcclDeterministic()) {
         outer2Executor.reset(new (std::nothrow) AllReduceReduceBcast(dispatcher_,
             reduceAttr, algResResp_->slaveStreams, algResResp_->notifiesM2S, algResResp_->notifiesS2M,
             outerCommInfo.localRank, outerCommInfo.localRankSize, topoAttr_.userRank, &opInfo));
     } else if (topoAttr_.deviceNumPerAggregation == DEVICE_EIGHT) {
-        if (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
+        if (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE || aicpuUnfoldMode_) {
             outer2Executor.reset(new (std::nothrow) AllReduceDoubling(dispatcher_, reduceAttr));
         } else {
             outer2Executor.reset(new (std::nothrow) AllReduceDoublingDirect(dispatcher_, reduceAttr, &opInfo));

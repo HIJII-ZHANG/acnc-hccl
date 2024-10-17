@@ -34,6 +34,12 @@ struct ReadDataBlock {
     u64 recvOffset;
 };
 
+struct RecvDataBlock {
+    u64 recvOffset;
+    u64 recvLen;
+    u64 scratchOffset;
+};
+
 struct AlltoallSendRecvInfo {
     std::vector<SendDataBlock> sendInfo;
     std::vector<ReadDataBlock> readInfo;

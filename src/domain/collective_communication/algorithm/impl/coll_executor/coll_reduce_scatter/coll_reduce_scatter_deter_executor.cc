@@ -108,7 +108,7 @@ u64 CollReduceScatterDeterExecutor::CalcLoopMaxCount(const u32 unitSize)
     return maxCountPerLoop;
 }
 
-bool CollReduceScatterDeterExecutor::IsHugeData(const u64 curSize)
+bool CollReduceScatterDeterExecutor::IsHugeData(const u64 curSize, OpParam *param)
 {
     bool hugeData = curSize > SDMA_SEND_MAX_SIZE;
     return hugeData;
@@ -116,7 +116,12 @@ bool CollReduceScatterDeterExecutor::IsHugeData(const u64 curSize)
 
 bool CollReduceScatterDeterExecutor::IsSmallData(const u64 totalSize, const u64 curSize)
 {
-    bool smallData = totalSize <= HCCL_SMALL_COUNT_32_KB;
+    bool smallData = false;
+    if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
+        smallData = totalSize <= HCCL_SMALL_COUNT_2_MB;
+    } else {
+        smallData = totalSize <= HCCL_SMALL_COUNT_32_KB;
+    }
     return smallData;
 }
 
@@ -135,11 +140,19 @@ HcclResult CollReduceScatterDeterExecutor::KernelRun(const OpParam &param, ExecM
     HcomCollOpInfo opInfo = {"", execMem.inputPtr, execMem.outputPtr, param.DataDes.count, param.DataDes.dataType,
         param.root, param.reduceType};
 
-    if ((param.DataDes.count * unitSize > HCCL_SMALL_COUNT_32_KB) ||
+    bool isLocalReduce91073 = ((((topoAttr_.userRankSize & (topoAttr_.userRankSize - 1)) != 0) ||
+        aicpuUnfoldMode_ || (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB)) 
+        && (topoAttr_.deviceType == DevType::DEV_TYPE_910_93));
+
+    bool isLocalReduce910B = ((param.DataDes.count * unitSize > HCCL_SMALL_COUNT_32_KB) ||
         (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB) ||
-        ((topoAttr_.deviceNumPerAggregation != DEVICE_EIGHT) && (topoAttr_.deviceNumPerAggregation != DEVICE_FOUR))) {
+        ((topoAttr_.deviceNumPerAggregation != DEVICE_EIGHT) && (topoAttr_.deviceNumPerAggregation != DEVICE_FOUR)))&&
+        (topoAttr_.deviceType == DevType::DEV_TYPE_910B);
+
+    if (isLocalReduce91073 || isLocalReduce910B) {
         outerExecutor.reset(new (std::nothrow) ReduceScatterLocalReduce(dispatcher_, reduceAttr,
-            algResResp_->slaveStreams, algResResp_->notifiesM2S, algResResp_->notifiesS2M, topoAttr_.userRank, &opInfo));
+            algResResp_->slaveStreams, algResResp_->notifiesM2S, algResResp_->notifiesS2M,
+            topoAttr_.userRank, &opInfo));
     } else {
         outerExecutor.reset(new (std::nothrow) ReduceScatterHDStage(dispatcher_, reduceAttr, algResResp_->slaveStreams,
             algResResp_->notifiesM2S, algResResp_->notifiesS2M, topoAttr_.userRank, &opInfo));
