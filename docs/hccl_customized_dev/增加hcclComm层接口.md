@@ -1,13 +1,11 @@
 # 增加hcclComm层接口<a name="ZH-CN_TOPIC_0000001904666546"></a>
 
-hcclComm为通信域层，在HCCL架构中隶属于框架层。
+hcclComm为通信域层，在HCCL架构中隶属于**通信框架层**。
 
 涉及代码文件：
 
-```
-src/domain/collective_communication/framework/communicator/hccl_comm.cc
-src/domain/collective_communication/framework/inc/hccl_comm_pub.h
-```
+-   src/domain/collective\_communication/framework/communicator/hccl\_comm.cc
+-   src/domain/collective\_communication/framework/inc/hccl\_comm\_pub.h
 
 1.  定义新算子的API。
 
@@ -20,12 +18,12 @@ src/domain/collective_communication/framework/inc/hccl_comm_pub.h
     例如，ReduceScatter算子的定义如下：
 
     ```
-    HcclResult ReduceScatterOutPlace(const std::string &tag, void *inputPtr, void *outputPtr, u64 count, HcclDataType dataType, HcclReduceOp op, HcclRtStream stream);
+    HcclResult ReduceScatterOutPlace(const std::string &tag, void *inputPtr, void *outputPtr, u64 recvCount, HcclDataType dataType, HcclReduceOp op, HcclRtStream stream);
     ```
 
 2.  校验入参合法性。
 
-    HcclCommunicator类（见[增加HcclCommunicator接口](增加HcclCommunicator接口.md)）中提供了的若干Check接口，可以按需调用以实现入参校验。
+    HcclCommunicator类（见[增加HcclCommunicator接口](增加HcclCommunicator接口.md)）中提供了的若干Check接口，开发者可以按需调用相关接口实现入参校验。
 
     例如：CheckDataType，CheckReduceDataType，CheckUserRank等。
 

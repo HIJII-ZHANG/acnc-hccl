@@ -1,34 +1,32 @@
 # 增加HcclCommunicator接口<a name="ZH-CN_TOPIC_0000001941345833"></a>
 
-HcclCommunicator是通信域功能的执行层，在HCCL架构中隶属于框架层。HcclCommunicator与算子类通过三个接口进行交互（参考[增加通信算子Operator](增加通信算子Operator.md)），并进行资源创建（stream、notify、memory、建链等）。
+HcclCommunicator是通信域功能的执行层，在HCCL架构中隶属于通信框架层。HcclCommunicator与算子类通过三个接口进行交互（算法选择接口、资源计算接口与编排接口，详细可参考[增加通信算子Operator](增加通信算子Operator.md)），并进行资源创建（stream、notify、memory、建链等）。
 
 涉及代码文件：
+-   src/domain/collective\_communication/framework/communicator/impl/hccl\_communicator.cc
+-   src/domain/collective\_communication/framework/communicator/impl/hccl\_communicator.h
+-   src/domain/collective\_communication/algorithm/impl/alg\_configurator.h
+-   CANN软件安装目录/include/experiment/hccl/hccl\_common.h
 
-```
-src/domain/collective_communication/framework/communicator/impl/hccl_communicator.cc
-src/domain/collective_communication/framework/communicator/impl/hccl_communicator.h
-```
+1.  添加新的算子枚举值。
+    1.  在“hccl\_common.h”文件中的HcclCMDType枚举类中为新算子添加一个枚举值。
 
-1.  <a name="li1544184665913"></a>在枚举类 HcclCMDType 中为新算子添加一个枚举值。
+        枚举值的格式为“HCCL\_CMD\_XXX”，每个算子都唯一对应HcclCMDType中的一个值。
 
-    HcclCMDType 定义在 hccl\_common.h，每个算子都唯一对应 HcclCMDType 中的一个值。
+        其中HCCL\_CMD\_INVALID，HCCL\_CMD\_MAX 和 HCCL\_CMD\_ALL为特殊值，具有特定作用。
 
-    枚举值格式：HCCL\_CMD\_XXX
+        -   HCCL\_CMD\_INVALID 表示无效算子，必须放在第一个，且值等于0。
+        -   HCCL\_CMD\_MAX 记录了 HcclCMDType 中枚举值的数量，必须放在最后。
+        -   HCCL\_CMD\_ALL 在某些场景下表示所有算子，建议放在 HCCL\_CMD\_MAX 的前一个位置。
 
-    **注意：** 
+    2.  在 “alg\_configurator.h” 中的以下map成员的默认值中添加新枚举值。
 
-    - HCCL\_CMD\_INVALID，HCCL\_CMD\_MAX 和 HCCL\_CMD\_ALL 为特殊值，具有特定作用。
-    - HCCL\_CMD\_INVALID 表示无效算子，必须放在第一个，且值等于0。
-    - HCCL\_CMD\_MAX 记录了 HcclCMDType 中枚举值的数量，必须放在最后。
-    - HCCL\_CMD\_ALL 在某些场景下表示所有算子，建议放在 HCCL\_CMD\_MAX 的前一个位置。
+        ```
+        algType_
+        isAlgoLevel1Default_
+        ```
 
-    此外，还需要在 hccl\_impl.h 中的以下 map 成员的默认值中添加新枚举值：
-
-    > algType\_
-
-    > isAlgoLevel1Default\_
-
-2.  定义新算子的API。
+2. 定义新算子的API。
 
     在 hccl\_communicator.h 中声明新算子的接口。
 
@@ -79,15 +77,13 @@ src/domain/collective_communication/framework/communicator/impl/hccl_communicato
 
 4.  添加Debug信息（按需）。
 
-    Hccl提供了若干维测功能，可记录算子运行时的一些信息，用于分析算子行为，有助于问题定位。
+    HCCL提供了若干维测功能，可记录算子运行时的一些信息，用于分析算子行为，有助于问题定位。
 
-    例如：算子统计：在算子执行前后分别调用 StarsCounter 接口，进行头计数和尾计数
+    例如算子统计功能：在算子执行前后分别调用 StarsCounter 接口，进行头计数和尾计数
 
     ```
     HcclResult StarsCounter(const HcclDispatcher &dispatcher, Stream &stream, int flag)
     ```
-
-    功能：stars任务计数，用于Debug
 
     <a name="table10972811151010"></a>
     <table><thead align="left"><tr id="row597216118108"><th class="cellrowborder" valign="top" width="16.31%" id="mcps1.1.5.1.1"><p id="p13972141181016"><a name="p13972141181016"></a><a name="p13972141181016"></a>参数</p>
@@ -132,7 +128,7 @@ src/domain/collective_communication/framework/communicator/impl/hccl_communicato
 
     其中，HcclDispacher 为调度器类，用于封装内存拷贝操作；Stream 为流类。
 
-    返回值：Hccl执行结果，成功时返回HCCL\_SUCCESS，异常时返回相应的错误类型。
+    返回值：HCCL执行结果，成功时返回HCCL\_SUCCESS，异常时返回相应的错误类型。
 
     以 ReduceScatter 算子为例：
 
@@ -151,9 +147,9 @@ src/domain/collective_communication/framework/communicator/impl/hccl_communicato
     }
     ```
 
-5.  调用算子执行接口。
+5. 调用算子执行接口。
 
-    通过调用ExecOp接口执行算子流程，包含通过opType获取算子实例，算法选择，根据资源计算结果进行资源创建，和执行算法编排。
+    通过调用ExecOp接口执行算子流程，包含通过opType获取算子实例，算法选择，根据资源计算结果进行资源创建，执行算法编排。
 
     ```
     HcclResult ExecOp(HcclCMDType opType, const OpParam &opParam)
@@ -190,215 +186,17 @@ src/domain/collective_communication/framework/communicator/impl/hccl_communicato
     <td class="cellrowborder" valign="top" width="12.5%" headers="mcps1.2.5.1.3 "><p id="p8103173701314"><a name="p8103173701314"></a><a name="p8103173701314"></a>输入</p>
     </td>
     <td class="cellrowborder" valign="top" width="50.739999999999995%" headers="mcps1.2.5.1.4 "><p id="p151038375137"><a name="p151038375137"></a><a name="p151038375137"></a>算子的入参，包括输入输出指针、数据量等信息。</p>
+        <p id="p1764074615421"><a name="p1764074615421"></a><a name="p1764074615421"></a>OpParam数据结构的介绍可参见<a href="OpParam.md">OpParam</a>，构造OpParam时只需为当前算子实际用到的成员赋值即可。</p>
     </td>
     </tr>
     </tbody>
     </table>
 
-    返回值：Hccl执行结果，成功时返回HCCL\_SUCCESS，异常时返回相应的错误类型。
 
-    其中OpParam类型包含的成员如下表所示，包含了所有算子可能用到的入参，构造OpParam时只需为当前算子实际用到的成员赋值即可。
-
-    **表 2**  OpParam成员说明
-
-    <a name="table15958201412115"></a>
-    <table><thead align="left"><tr id="row18958414101111"><th class="cellrowborder" colspan="3" valign="top" id="mcps1.2.6.1.1"><p id="p9958614111110"><a name="p9958614111110"></a><a name="p9958614111110"></a>成员</p>
-    </th>
-    <th class="cellrowborder" valign="top" id="mcps1.2.6.1.2"><p id="p89581614131117"><a name="p89581614131117"></a><a name="p89581614131117"></a>类型</p>
-    </th>
-    <th class="cellrowborder" valign="top" id="mcps1.2.6.1.3"><p id="p17958114121116"><a name="p17958114121116"></a><a name="p17958114121116"></a>说明</p>
-    </th>
-    </tr>
-    </thead>
-    <tbody><tr id="row159588144119"><td class="cellrowborder" colspan="3" valign="top" headers="mcps1.2.6.1.1 "><p id="p116754327116"><a name="p116754327116"></a><a name="p116754327116"></a>tag</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.2 "><p id="p1995961417119"><a name="p1995961417119"></a><a name="p1995961417119"></a>std::string</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.3 "><p id="p1295918143115"><a name="p1295918143115"></a><a name="p1295918143115"></a>算子在通信域中的标记，用于DFX方面。</p>
-    </td>
-    </tr>
-    <tr id="row11959101412112"><td class="cellrowborder" colspan="3" valign="top" headers="mcps1.2.6.1.1 "><p id="p1227315321312"><a name="p1227315321312"></a><a name="p1227315321312"></a>stream</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.2 "><p id="p9959121413116"><a name="p9959121413116"></a><a name="p9959121413116"></a>Stream</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.3 "><p id="p19959191421113"><a name="p19959191421113"></a><a name="p19959191421113"></a>算子执行的主流</p>
-    </td>
-    </tr>
-    <tr id="row17381182171416"><td class="cellrowborder" colspan="3" valign="top" headers="mcps1.2.6.1.1 "><p id="p8613162913142"><a name="p8613162913142"></a><a name="p8613162913142"></a>inputPtr</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.2 "><p id="p1651112335146"><a name="p1651112335146"></a><a name="p1651112335146"></a>void*</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.3 "><p id="p1538152171410"><a name="p1538152171410"></a><a name="p1538152171410"></a>输入地址指针</p>
-    </td>
-    </tr>
-    <tr id="row12744122511144"><td class="cellrowborder" colspan="3" valign="top" headers="mcps1.2.6.1.1 "><p id="p6990165012619"><a name="p6990165012619"></a><a name="p6990165012619"></a>inputSize</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.2 "><p id="p485144551714"><a name="p485144551714"></a><a name="p485144551714"></a>u64</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.3 "><p id="p4408162132312"><a name="p4408162132312"></a><a name="p4408162132312"></a>输入地址大小</p>
-    </td>
-    </tr>
-    <tr id="row7532371880"><td class="cellrowborder" colspan="3" valign="top" headers="mcps1.2.6.1.1 "><p id="p16667501186"><a name="p16667501186"></a><a name="p16667501186"></a>outputPtr</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.2 "><p id="p06669501686"><a name="p06669501686"></a><a name="p06669501686"></a>void*</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.3 "><p id="p15531937283"><a name="p15531937283"></a><a name="p15531937283"></a>输出地址指针</p>
-    </td>
-    </tr>
-    <tr id="row85318373819"><td class="cellrowborder" colspan="3" valign="top" headers="mcps1.2.6.1.1 "><p id="p866618501687"><a name="p866618501687"></a><a name="p866618501687"></a>outputSize</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.2 "><p id="p1366615501189"><a name="p1366615501189"></a><a name="p1366615501189"></a>u64</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.3 "><p id="p175418378818"><a name="p175418378818"></a><a name="p175418378818"></a>输出地址大小</p>
-    </td>
-    </tr>
-    <tr id="row1540379810"><td class="cellrowborder" colspan="3" valign="top" headers="mcps1.2.6.1.1 "><p id="p16534113913104"><a name="p16534113913104"></a><a name="p16534113913104"></a>reduceType</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.2 "><p id="p7541737482"><a name="p7541737482"></a><a name="p7541737482"></a>HcclReduceOp</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.3 "><p id="p3546374814"><a name="p3546374814"></a><a name="p3546374814"></a>消减运算类型，如求和，乘积，最大值，最小值</p>
-    </td>
-    </tr>
-    <tr id="row155414373819"><td class="cellrowborder" colspan="3" valign="top" headers="mcps1.2.6.1.1 "><p id="p1534133981020"><a name="p1534133981020"></a><a name="p1534133981020"></a>syncMode</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.2 "><p id="p13548371282"><a name="p13548371282"></a><a name="p13548371282"></a>SyncMode</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.3 "><p id="p19542378818"><a name="p19542378818"></a><a name="p19542378818"></a>notifywait超时类型</p>
-    </td>
-    </tr>
-    <tr id="row951423531018"><td class="cellrowborder" colspan="3" valign="top" headers="mcps1.2.6.1.1 "><p id="p1553473919104"><a name="p1553473919104"></a><a name="p1553473919104"></a>root</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.2 "><p id="p1451423521010"><a name="p1451423521010"></a><a name="p1451423521010"></a>RankId</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.3 "><p id="p65147351102"><a name="p65147351102"></a><a name="p65147351102"></a>根节点rankid</p>
-    </td>
-    </tr>
-    <tr id="row351413541016"><td class="cellrowborder" colspan="3" valign="top" headers="mcps1.2.6.1.1 "><p id="p85341739201017"><a name="p85341739201017"></a><a name="p85341739201017"></a>dstRank</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.2 "><p id="p1451433517109"><a name="p1451433517109"></a><a name="p1451433517109"></a>RankId</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.3 "><p id="p185141935171010"><a name="p185141935171010"></a><a name="p185141935171010"></a>目的rankid</p>
-    </td>
-    </tr>
-    <tr id="row175143354101"><td class="cellrowborder" colspan="3" valign="top" headers="mcps1.2.6.1.1 "><p id="p13534133913104"><a name="p13534133913104"></a><a name="p13534133913104"></a>srcRank</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.2 "><p id="p65151735191014"><a name="p65151735191014"></a><a name="p65151735191014"></a>RankId</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.3 "><p id="p7515133571017"><a name="p7515133571017"></a><a name="p7515133571017"></a>源rankid</p>
-    </td>
-    </tr>
-    <tr id="row1651563551013"><td class="cellrowborder" colspan="3" valign="top" headers="mcps1.2.6.1.1 "><p id="p9255952201011"><a name="p9255952201011"></a><a name="p9255952201011"></a>opBaseAtraceInfo</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.2 "><p id="p1515193591015"><a name="p1515193591015"></a><a name="p1515193591015"></a>HcclOpBaseAtraceInfo*</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.3 "><p id="p251511358102"><a name="p251511358102"></a><a name="p251511358102"></a>用于DFX</p>
-    </td>
-    </tr>
-    <tr id="row115152351106"><td class="cellrowborder" rowspan="11" align="center" valign="top" width="8.85088508850885%" headers="mcps1.2.6.1.1 "><p id="p84471432317"><a name="p84471432317"></a><a name="p84471432317"></a></p>
-    <p id="p1166418333118"><a name="p1166418333118"></a><a name="p1166418333118"></a></p>
-    <p id="p16815133183117"><a name="p16815133183117"></a><a name="p16815133183117"></a></p>
-    <p id="p29760319317"><a name="p29760319317"></a><a name="p29760319317"></a></p>
-    <p id="p0129142319"><a name="p0129142319"></a><a name="p0129142319"></a></p>
-    <p id="p830615413318"><a name="p830615413318"></a><a name="p830615413318"></a></p>
-    <p id="p105385417319"><a name="p105385417319"></a><a name="p105385417319"></a></p>
-    <p id="p2312114418413"><a name="p2312114418413"></a><a name="p2312114418413"></a>union</p>
-    </td>
-    <td class="cellrowborder" rowspan="2" valign="top" width="16.781678167816782%" headers="mcps1.2.6.1.1 "><p id="p1522019072812"><a name="p1522019072812"></a><a name="p1522019072812"></a>DataDes</p>
-    </td>
-    <td class="cellrowborder" valign="top" width="14.031403140314033%" headers="mcps1.2.6.1.1 "><p id="p21711227161513"><a name="p21711227161513"></a><a name="p21711227161513"></a>count</p>
-    </td>
-    <td class="cellrowborder" valign="top" width="27.412741274127413%" headers="mcps1.2.6.1.2 "><p id="p17515735111011"><a name="p17515735111011"></a><a name="p17515735111011"></a>u64</p>
-    </td>
-    <td class="cellrowborder" valign="top" width="32.92329232923292%" headers="mcps1.2.6.1.3 "><p id="p7515335171015"><a name="p7515335171015"></a><a name="p7515335171015"></a>输入数据个数</p>
-    </td>
-    </tr>
-    <tr id="row3651174412147"><td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p1865264481417"><a name="p1865264481417"></a><a name="p1865264481417"></a>dataType</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p15652204431412"><a name="p15652204431412"></a><a name="p15652204431412"></a>HcclDataType</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p2652344131417"><a name="p2652344131417"></a><a name="p2652344131417"></a>输入数据类型，如int8, in16, in32, float16, fload32等</p>
-    </td>
-    </tr>
-    <tr id="row16515123521017"><td class="cellrowborder" rowspan="7" valign="top" headers="mcps1.2.6.1.1 "><p id="p1722010132810"><a name="p1722010132810"></a><a name="p1722010132810"></a>All2AllDataDes</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p121151620151617"><a name="p121151620151617"></a><a name="p121151620151617"></a>sendType</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p13463926115313"><a name="p13463926115313"></a><a name="p13463926115313"></a>HcclDataType</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.2 "><p id="p196324110192"><a name="p196324110192"></a><a name="p196324110192"></a>发送数据类型</p>
-    </td>
-    </tr>
-    <tr id="row13737122515192"><td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p773792521914"><a name="p773792521914"></a><a name="p773792521914"></a>recvType</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p1373772513191"><a name="p1373772513191"></a><a name="p1373772513191"></a>HcclDataType</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p87378258192"><a name="p87378258192"></a><a name="p87378258192"></a>接收数据类型</p>
-    </td>
-    </tr>
-    <tr id="row520163521919"><td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p142103591917"><a name="p142103591917"></a><a name="p142103591917"></a>sendCounts</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p62103531912"><a name="p62103531912"></a><a name="p62103531912"></a>void*</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p82173541915"><a name="p82173541915"></a><a name="p82173541915"></a>发送数据个数</p>
-    </td>
-    </tr>
-    <tr id="row142163531919"><td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p1214355198"><a name="p1214355198"></a><a name="p1214355198"></a>recvCounts</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p5211735191914"><a name="p5211735191914"></a><a name="p5211735191914"></a>void*</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p112113353195"><a name="p112113353195"></a><a name="p112113353195"></a>接收数据个数</p>
-    </td>
-    </tr>
-    <tr id="row17830174161917"><td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p48316416199"><a name="p48316416199"></a><a name="p48316416199"></a>sdispls</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p5831204181917"><a name="p5831204181917"></a><a name="p5831204181917"></a>void*</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p1683104116194"><a name="p1683104116194"></a><a name="p1683104116194"></a>表示发送偏移量的uint64数组</p>
-    </td>
-    </tr>
-    <tr id="row1983194113192"><td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p78313411196"><a name="p78313411196"></a><a name="p78313411196"></a>rdispls</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p6831241111917"><a name="p6831241111917"></a><a name="p6831241111917"></a>void*</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p48310411196"><a name="p48310411196"></a><a name="p48310411196"></a>表示接收偏移量的uint64数组</p>
-    </td>
-    </tr>
-    <tr id="row1783114111193"><td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p17831124120194"><a name="p17831124120194"></a><a name="p17831124120194"></a>sendCountMatrix</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p2831341101912"><a name="p2831341101912"></a><a name="p2831341101912"></a>void*</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p183114415194"><a name="p183114415194"></a><a name="p183114415194"></a>代表每张卡要发给别人的count的信息</p>
-    </td>
-    </tr>
-    <tr id="row165151235131018"><td class="cellrowborder" rowspan="2" valign="top" headers="mcps1.2.6.1.1 "><p id="p11579121311510"><a name="p11579121311510"></a><a name="p11579121311510"></a>BatchSendRecvDataDes</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p2220130122818"><a name="p2220130122818"></a><a name="p2220130122818"></a>orderedList</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p19916526155319"><a name="p19916526155319"></a><a name="p19916526155319"></a>HcclSendRecvItem**</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.2 "><p id="p1747095991811"><a name="p1747095991811"></a><a name="p1747095991811"></a>发送和接收的item列表</p>
-    </td>
-    </tr>
-    <tr id="row28241920181813"><td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p1382592017184"><a name="p1382592017184"></a><a name="p1382592017184"></a>itemNum</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p8825720111818"><a name="p8825720111818"></a><a name="p8825720111818"></a>u32</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.1 "><p id="p17825182012189"><a name="p17825182012189"></a><a name="p17825182012189"></a>item数量</p>
-    </td>
-    </tr>
-    <tr id="row19515163591012"><td class="cellrowborder" colspan="3" valign="top" headers="mcps1.2.6.1.1 "><p id="p185151735111015"><a name="p185151735111015"></a><a name="p185151735111015"></a>opType</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.2 "><p id="p651516356109"><a name="p651516356109"></a><a name="p651516356109"></a>HcclCMDType</p>
-    </td>
-    <td class="cellrowborder" valign="top" headers="mcps1.2.6.1.3 "><p id="p12515193541010"><a name="p12515193541010"></a><a name="p12515193541010"></a>算子类型</p>
-    </td>
-    </tr>
-    </tbody>
-    </table>
+    返回值：HCCL执行结果，成功时返回HCCL\_SUCCESS，异常时返回相应的错误类型。
 
     **注意：** 
 
-    -   对于一个算子，DataDes，All2AllDataDes，BatchSendRecvDataDes只会生效其一，所以为union类型。
     -   若自定义算子使用了OpParam未包含的入参，需在OpParam的定义中对应增加新的成员。
     -   调用ExecOp时，opType需要传入步骤[1](#li1544184665913)新增的枚举值，opParam需要用算子入参构造。
 

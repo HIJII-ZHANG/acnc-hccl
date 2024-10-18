@@ -10,7 +10,6 @@
     -   [适配资源计算阶段](适配资源计算阶段.md)
     -   [适配算法编排接口](适配算法编排接口.md)
     -   [如何验证](如何验证.md)
-
 -   [通信算子开发](通信算子开发.md)
     -   [总体流程](总体流程.md)
     -   [增加单算子API](增加单算子API.md)
@@ -18,7 +17,12 @@
     -   [增加HcclCommunicator接口](增加HcclCommunicator接口.md)
     -   [增加通信算子Operator](增加通信算子Operator.md)
     -   [增加通信算法Executor](增加通信算法Executor.md)
-
+-   [数据类型说明](数据类型说明.md)
+    -   [简介](简介.md)
+    -   [OpParam](OpParam.md)
+    -   [AlgResourceRequest](AlgResourceRequest.md)
+    -   [AlgResourceResponse](AlgResourceResponse.md)
+    -   [OpCommTransport](OpCommTransport.md)
 -   [通信平台接口参考](通信平台接口参考.md)
     -   [简介](简介.md)
     -   [Dispatcher](Dispatcher.md)

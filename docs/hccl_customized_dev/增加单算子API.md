@@ -2,61 +2,76 @@
 
 本节描述如何添加单算子模式下HCCL对外的算子接口，涉及代码文件为：
 
-```
-src/domain/collective_communication/framework/op_base/src/op_base.cc
-```
+-   “inc/hccl/hccl.h“
+-   “src/domain/collective\_communication/framework/op\_base/src/op\_base.cc“
 
 1.  定义新算子的API。
+    
+    1.  在“hccl.h”中添加定义，如下所示：
 
-    在 op\_base.cc 中添加定义，如下所示：
+        ```
+        extern HcclResult HcclMyOperator(args...);
+        ```
 
-    ```
-    HcclResult HcclMyOperator(args...)
-    ```
+        _arfgs_为所有可能参数的列表。
 
-    _arfgs_为所有可能参数的列表。
+        例如，ReduceScatter算子的定义如下：
 
-    例如，ReduceScatter算子的定义如下：
+        ```
+        extern HcclResult HcclReduceScatter(void *sendBuf, void *recvBuf, uint64_t recvCount, HcclDataType dataType,    HcclReduceOp op, HcclComm comm, aclrtStream stream);
+        ```
 
-    ```
-    HcclResult HcclReduceScatter(void *sendBuf, void *recvBuf, uint64_t recvCount, HcclDataType dataType, HcclReduceOp op, HcclComm comm, aclrtStream stream)
-    ```
+    2.  在“op\_base.cc” 中添加定义，如下所示：
 
-2.  校验入参合法性。
+        ```
+        HcclResult HcclMyOperator(args...)
+        ```
 
-    对于指针类型的入参，可调用 CHK\_PTR\_NUL 宏检查指针是否为空。
+        _arfgs_为所有可能参数的列表。
 
-    例如，检查 sendBuf 是否为空指针：
+        例如，ReduceScatter算子的定义如下：
 
-    ```
-    CHK_PTR_NULL(sendBuf);
-    ```
+        ```
+        HcclResult HcclReduceScatter(void *sendBuf, void *recvBuf, uint64_t recvCount, HcclDataType dataType, HcclReduceOp op, HcclComm comm, aclrtStream stream)
+        ```
+    
+2. 校验入参合法性。
 
-    如果sendBuf是空指针，则程序会报错并返回。
+   对于指针类型的入参，可调用 CHK\_PTR\_NUL 宏检查指针是否为空。
 
-    此外，param\_check\_pub.h 中提供了若干校验函数，可根据需要调用这些接口来校验入参。
+   例如，检查 sendBuf 是否为空指针：
 
-3.  定义tag。tag用作下发算子的标识，与资源复用等功能有关。
+   ```
+   CHK_PTR_NULL(sendBuf);
+   ```
 
-    例如，ReduceScatter 算子的 tag 定义为算子名+通信域id：
+   如果sendBuf是空指针，则程序会报错并返回。
+
+   此外，“src/domain/collective\_communication/framework/common/src/param\_check\_pub.h”中提供了若干校验函数，可根据需要调用这些接口来校验入参。
+
+3.  定义tag。
+
+    tag是下发算子的标识，标识资源是否可以复用。
+
+    例如，ReduceScatter算子的tag定义为算子名+通信域id：
 
     ```
     const string tag = "ReduceScatter_" + hcclComm->GetIdentifier();
     ```
 
-    在此定义下，同通信域同算子会复用tag。
+    同通信域同算子会复用此tag。
 
-4.  配置属性（按需）。
+4. 配置属性（按需）。
 
-    为通信域配置若干属性的默认值。
+   为通信域配置若干属性的默认值。
 
     例如：
 
-    SetDefaultQosConfig
+    SetDefaultQosConfig：获取并设置qos值，qos用于按需调整计算和通信的优先级。
 
-    SetOverFlowAddr
+    SetOverFlowAddr：配置溢出检测地址。
 
-5.  调用hcclComm层算子接口。
+5. 调用hcclComm层算子接口。
 
-    关于hcclComm层接口的详细实现方法可参见[增加hcclComm层接口](增加hcclComm层接口.md)。
+   关于hcclComm层接口的详细实现方法可参见[增加hcclComm层接口](增加hcclComm层接口.md)。
 
