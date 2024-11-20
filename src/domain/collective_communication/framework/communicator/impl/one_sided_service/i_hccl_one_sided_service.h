@@ -29,8 +29,11 @@ public:
     virtual ~IHcclOneSidedService() = default;
 
     // 为了尽可能保障框架依赖兼容性，除了引用以外，参数不通过构造函数传递
-    virtual HcclResult Config(const HcclNetDevCtx &netDevCtx, const HcclDispatcher &dispatcher,
+    virtual HcclResult Config(const HcclDispatcher &dispatcher,
         const HcclRankLinkInfo &localRankInfo, const RankTable_t *rankTable);
+
+    virtual HcclResult SetNetDevCtx(const HcclNetDevCtx &netDevCtx);
+    virtual HcclResult GetNetDevCtx(HcclNetDevCtx &netDevCtx);
 
 protected:
     HcclNetDevCtx netDevCtx_{};

@@ -168,17 +168,26 @@ HcclResult TopoinfoRanktableHeterog::GetRanktableInfo(RankTable_t &clusterInfo)
     std::string version;
     std::string mode;
 
-    CHK_RET(GetJsonProperty(fileContent_, "collective_id", collective_id));
+    std::string heterogSubVersion;
+    // 解析91093-ES专属标志
+    if (fileContent_.find("heterog_sub_version") != fileContent_.end()) {
+        CHK_RET(GetJsonProperty(fileContent_, "heterog_sub_version", heterogSubVersion, false));
+        CHK_RET(CheckHeterogSubVersion(heterogSubVersion));
+        HCCL_DEBUG("[Get][RanktableInfo] heterog_sub_version exists!");
+        is91093_ = true;
+    }
+
+    CHK_RET(GetJsonProperty(fileContent_, "collective_id", collective_id, false));
     if (collective_id.length() > COLLECTIVEID_MAX_LEN) {
         HCCL_ERROR("[Get][RanktableInfo]errNo[0x%016llx] collectiveId length is over than %d bytes.",
             HCOM_ERROR_CODE(HCCL_E_PARA), collective_id.length());
         return HCCL_E_PARA;
     }
-    CHK_RET(GetJsonProperty(fileContent_, "node_list", node_list));
-    CHK_RET(GetJsonProperty(fileContent_, "version", version));
+    CHK_RET(GetJsonProperty(fileContent_, "node_list", node_list, false));
+    CHK_RET(GetJsonProperty(fileContent_, "version", version, false));
 
     if (fileContent_.find("mode") != fileContent_.end()) {
-        CHK_RET(GetJsonProperty(fileContent_, "mode", mode));
+        CHK_RET(GetJsonProperty(fileContent_, "mode", mode, false));
         CHK_RET(CheckMode(mode));
     }
 
@@ -230,6 +239,17 @@ HcclResult TopoinfoRanktableHeterog::CheckMode(std::string &mode) const
     return HCCL_E_PARA;
 }
 
+HcclResult TopoinfoRanktableHeterog::CheckHeterogSubVersion(std::string &subVersion) const
+{
+    if (subVersion == "1.2") {
+        return HCCL_SUCCESS;
+    }
+ 
+    HCCL_ERROR("[Get][RanktableInfo]errNo[0x%016llx] subVersion[%s] is not supported, support for 1.2",
+        HCOM_ERROR_CODE(HCCL_E_PARA), subVersion.c_str());
+    return HCCL_E_PARA;
+}
+
 HcclResult TopoinfoRanktableHeterog::GetHostPort(const u32 &localRank, u32 &hostPort)
 {
     u32 basePort = (GetExternalInputHcclIfBasePort() == HCCL_INVALIED_IF_BASE_PORT) ?
@@ -253,15 +273,23 @@ HcclResult TopoinfoRanktableHeterog::GetRanks(const nlohmann::json &NodeListObj,
     HCCL_DEBUG("Get Node[%u]: nodeAddr:[%s], nodeIdx:[%u]", objIndex, serverId.c_str(), serverIdx);
     // 获取信息
     nlohmann::json Ranks;
-    CHK_RET(GetJsonArrayMemberProperty(NodeListObj, objIndex, "ranks", Ranks));
+    CHK_RET(GetJsonArrayMemberProperty(NodeListObj, objIndex, "ranks", Ranks, false));
 
     HCCL_DEBUG("[%s.json] -> rank_list: size:%zu", fileName_.c_str(), Ranks.size());
     CHK_PRT_RET(Ranks.size() == 0, HCCL_ERROR("[Get][Ranks]Ranks size is zero"), HCCL_E_PARA);
 
-    // 获取单rank信息
-    for (u32 index = 0; index < Ranks.size(); index++) {
-        CHK_RET(GetSingleRank(Ranks, index, clusterInfo, serverId, serverIdx, nodeIp));
+    // 91093的GetSingleRank单独操作
+    if (is91093_) {
+        for (u32 index = 0; index < Ranks.size(); index++) {
+            CHK_RET(GetSingleRank91093(Ranks, index, clusterInfo, serverId, serverIdx, nodeIp));
+        }
+    } else {
+        // 获取单rank信息
+        for (u32 index = 0; index < Ranks.size(); index++) {
+            CHK_RET(GetSingleRank(Ranks, index, clusterInfo, serverId, serverIdx, nodeIp));
+        }
     }
+
     // 重新分配host port
     for (auto &rankInfo : clusterInfo.rankList) {
         if (rankInfo.hostPort == HCCL_INVALIED_IF_BASE_PORT) {
@@ -280,7 +308,7 @@ HcclResult TopoinfoRanktableHeterog::GetSingleNode(const nlohmann::json &NodeLis
     HcclResult ret;
     std::string nodeAddr;
     std::string serverId;
-    CHK_RET(GetJsonArrayMemberProperty(NodeListObj, objIndex, "node_addr", nodeAddr));
+    CHK_RET(GetJsonArrayMemberProperty(NodeListObj, objIndex, "node_addr", nodeAddr, false));
     // 将serverId添加到资源池,内部会进行IP地址校验，如果资源池中有serverId，则报错
     serverId = nodeAddr;
     CHK_RET(CheckUniqueAndInsertPool(JsonUniqueInfoType::UNIQUE_INFO_TYPE_SERVER_ID, serverId,
@@ -300,16 +328,93 @@ HcclResult TopoinfoRanktableHeterog::GetSingleNode(const nlohmann::json &NodeLis
     return HCCL_SUCCESS;
 }
 
+// 91093暂定所有字段都是必选字段。除了ranks里面的 bind_device_id
+HcclResult TopoinfoRanktableHeterog::GetSingleRank91093(const nlohmann::json &ranksObj, u32 objIndex,
+    RankTable_t &clusterInfo, std::string &serverId, u32 &serverIdx, HcclIpAddress &nodeIp)
+{
+    HCCL_INFO("Entry-GetSingleRank91093");
+    std::string rankId;
+    CHK_RET(GetJsonArrayMemberProperty(ranksObj, objIndex, "rank_id", rankId, false));
+ 
+    s32 devicePhyId = 0;
+    std::string devPhyIdStr;
+    CHK_RET(GetJsonArrayMemberProperty(ranksObj, objIndex, "device_id", devPhyIdStr, false));
+    CHK_RET(SalStrToInt(devPhyIdStr, HCCL_BASE_DECIMAL, devicePhyId));
+ 
+    s32 port = 0;
+    std::string portStr;
+    CHK_RET(GetJsonArrayMemberProperty(ranksObj, objIndex, "port", portStr, false));
+    CHK_RET(SalStrToInt(portStr, HCCL_BASE_DECIMAL, port));
+ 
+    // 如果device没有网卡，则缺省，通信使用node_addr
+    HcclIpAddress rankIp;
+    std::string rankIpStr;
+    CHK_RET(GetJsonArrayMemberProperty(ranksObj, objIndex, "rank_ip", rankIpStr, false));
+    if (rankIpStr.empty()) {
+        rankIp = nodeIp;
+    } else {
+        CHK_RET(ConvertIpAddress(rankIpStr, rankIp));
+    }
+ 
+    s32 sdid = 0;
+    std::string sdidStr;
+    CHK_RET(GetJsonArrayMemberProperty(ranksObj, objIndex, "sdid", sdidStr, false));
+    CHK_RET(SalStrToInt(sdidStr, HCCL_BASE_DECIMAL, sdid));
+ 
+    // 如果deviceId == -1, 则去获取可选字段
+    s32 bindDeviceId = -1;
+    std::string bindDeviceIdStr;
+    if (devicePhyId == HOST_DEVICE_ID) {
+        CHK_RET(GetJsonArrayMemberProperty(ranksObj, objIndex, "bind_device_id", bindDeviceIdStr, false));
+        CHK_RET(SalStrToInt(bindDeviceIdStr, HCCL_BASE_DECIMAL, bindDeviceId));
+    }
+ 
+    // rankList
+    RankInfo_t rankInfo;
+    rankInfo.localRank = objIndex;
+    rankInfo.serverId = serverId;
+    rankInfo.serverIdx = serverIdx;
+    rankInfo.hostIp = nodeIp;
+    rankInfo.superDeviceId = sdid;
+    rankInfo.bindDeviceId = bindDeviceId;
+    rankInfo.deviceInfo.devicePhyId = devicePhyId;
+    rankInfo.deviceInfo.port = port;
+    rankInfo.deviceInfo.deviceIp.push_back(rankIp);
+ 
+    if (SalStrToULong(rankId, HCCL_BASE_DECIMAL, rankInfo.rankId) != HCCL_SUCCESS) {
+        RPT_INPUT_ERR(true, "EI0004", std::vector<std::string>({ "error_reason", "ranktable_path" }),
+            std::vector<std::string>({ "The rankid in ranktable is invalid. Please check ranktable",
+            "The ranktable path configured in the training can be found in the plogs." }));
+        HCCL_ERROR("[Get][SingleRank]errNo[0x%016llx] rankid[%s] is invalid",
+            HCOM_ERROR_CODE(HCCL_E_PARA), rankId.c_str());
+        return HCCL_E_PARA;
+    }
+ 
+    rankInfo.podName = "";  // podname在新场景下置空
+    // ranktable中port无效，设置为环境变量HCCL_IF_BASE_PORT+该rank的local_rank_id,否则按照配置的port使用
+    if (port == 0) {
+        rankInfo.hostPort = HCCL_INVALIED_IF_BASE_PORT;
+    } else {
+        rankInfo.hostPort = port;
+        hostPortMap_[rankInfo.hostPort] = HOST_PORT_USED;
+    }
+    clusterInfo.rankList.push_back(rankInfo);
+    HCCL_DEBUG("[%s.json]->rankId[%u], nodeAddr[%s]", fileName_.c_str(),
+        rankInfo.rankId, rankInfo.serverId.c_str());
+ 
+    return HCCL_SUCCESS;
+}
+
 HcclResult TopoinfoRanktableHeterog::GetSingleRank(const nlohmann::json &ranksObj, u32 objIndex,
     RankTable_t &clusterInfo, std::string &serverId, u32 &serverIdx, HcclIpAddress &nodeIp)
 {
     // 获取rank_id
     std::string rankId;
-    CHK_RET(GetJsonArrayMemberProperty(ranksObj, objIndex, "rank_id", rankId));
+    CHK_RET(GetJsonArrayMemberProperty(ranksObj, objIndex, "rank_id", rankId, false));
 
     s32 devicePhyId = 0;
     std::string devPhyIdStr;
-    if (GetJsonArrayMemberProperty(ranksObj, objIndex, "device_id", devPhyIdStr) == HCCL_E_NOT_FOUND) {
+    if (GetJsonArrayMemberProperty(ranksObj, objIndex, "device_id", devPhyIdStr, true) == HCCL_E_NOT_FOUND) {
         devicePhyId = HOST_DEVICE_ID;
     } else {
         HCCL_DEBUG("[Get][GetRanks]device_id:[%s]", devPhyIdStr.c_str());
@@ -318,7 +423,7 @@ HcclResult TopoinfoRanktableHeterog::GetSingleRank(const nlohmann::json &ranksOb
 
     s32 port = 0;
     std::string portStr;
-    if (GetJsonArrayMemberProperty(ranksObj, objIndex, "port", portStr) == HCCL_E_NOT_FOUND) {
+    if (GetJsonArrayMemberProperty(ranksObj, objIndex, "port", portStr, true) == HCCL_E_NOT_FOUND) {
         port = 0;
     } else {
         CHK_RET(SalStrToInt(portStr, HCCL_BASE_DECIMAL, port));
@@ -327,7 +432,7 @@ HcclResult TopoinfoRanktableHeterog::GetSingleRank(const nlohmann::json &ranksOb
     // 如果device没有网卡，则缺省，通信使用node_addr
     HcclIpAddress rankIp;
     std::string rankIpStr;
-    if (GetJsonArrayMemberProperty(ranksObj, objIndex, "rank_ip", rankIpStr) == HCCL_E_NOT_FOUND) {
+    if (GetJsonArrayMemberProperty(ranksObj, objIndex, "rank_ip", rankIpStr, true) == HCCL_E_NOT_FOUND) {
         rankIp = nodeIp;
     } else {
         if (rankIpStr.empty()) {

@@ -42,6 +42,7 @@ constexpr u32 HCCL_RANKTABLE_TIMEOUT_S = (30 * 60); // 读取ranktable json文�
 
 const std::map<JsonUniqueInfoType, std::string> JsonInfoTypeNameMap = {
     {JsonUniqueInfoType::UNIQUE_INFO_TYPE_DEVICE_IP, "device_ip"},
+    {JsonUniqueInfoType::UNIQUE_INFO_TYPE_BACKUP_DEVICE_IP, "backup_device_ip"},
     {JsonUniqueInfoType::UNIQUE_INFO_TYPE_SERVER_ID, "server_id"},
     {JsonUniqueInfoType::UNIQUE_INFO_TYPE_ETH_IP, "eth_ip"},
     {JsonUniqueInfoType::UNIQUE_INFO_TYPE_GROUP_NAME, "group_name"},
@@ -261,7 +262,7 @@ HcclResult TopoInfoRanktableParser::GetRanktableVersion(std::string &version)
         version = "Standard";
         HCCL_DEBUG("RankTableVersion is not found, Parser: %s", version.c_str());
     } else {
-        CHK_RET(GetJsonProperty(fileContent_, CLUSTER_PROP_VERSION, version_));
+        CHK_RET(GetJsonProperty(fileContent_, CLUSTER_PROP_VERSION, version_, false));
         version = version_;
         HCCL_DEBUG("%s.json -> version: %s", fileName_.c_str(), version.c_str());
     }
@@ -271,7 +272,7 @@ HcclResult TopoInfoRanktableParser::GetRanktableVersion(std::string &version)
 HcclResult TopoInfoRanktableParser::RefreshStatus()
 {
     std::string status = "";
-    CHK_RET(GetJsonProperty(fileContent_, "status", status));
+    CHK_RET(GetJsonProperty(fileContent_, "status", status, false));
     HCCL_DEBUG("%s.json -> status: %s", fileName_.c_str(), status.c_str());
     statusCompleted_ = (status == "completed");
     return HCCL_SUCCESS;
@@ -283,11 +284,15 @@ bool TopoInfoRanktableParser::IsReady() const
 }
 
 HcclResult TopoInfoRanktableParser::GetJsonProperty(const nlohmann::json &obj, const char *propName,
-    std::string &propValue) const
+    std::string &propValue, bool optionalProp) const
 {
     /* 查找json对象中是否有该属性, 不存在的属性不能直接访问 */
     if (obj.find(propName) == obj.end()) {
-        HCCL_WARNING("json object has no property called %s", propName);
+        if (optionalProp) {
+            HCCL_WARNING("json object has no property called %s", propName);
+        } else {
+            HCCL_ERROR("json object has no property called %s", propName);
+        }
         return HCCL_E_NOT_FOUND;
     }
 
@@ -302,11 +307,15 @@ HcclResult TopoInfoRanktableParser::GetJsonProperty(const nlohmann::json &obj, c
 }
 
 HcclResult TopoInfoRanktableParser::GetJsonProperty(const nlohmann::json &obj, const char *propName,
-    nlohmann::json &propValue) const
+    nlohmann::json &propValue, bool optionalProp) const
 {
     /* 查找json对象中是否有该属性, 不存在的属性不能直接访问 */
     if (obj.find(propName) == obj.end()) {
-        HCCL_WARNING("json object has no property called %s", propName);
+        if (optionalProp) {
+            HCCL_WARNING("json object has no property called %s", propName);
+        } else {
+            HCCL_ERROR("json object has no property called %s", propName);
+        }
         return HCCL_E_NOT_FOUND;
     }
     propValue = obj[propName];
@@ -316,7 +325,7 @@ HcclResult TopoInfoRanktableParser::GetJsonProperty(const nlohmann::json &obj, c
 }
 
 HcclResult TopoInfoRanktableParser::GetJsonArrayMemberProperty(const nlohmann::json &obj, const u32 index,
-    const char *propName, std::string &propValue) const
+    const char *propName, std::string &propValue, bool optionalProp) const
 {
     if (!obj.is_array() || index >= obj.size()) {
         HCCL_ERROR("[Get][JsonArrayMemberProperty]errNo[0x%016llx] index[%u] is out of json object range",
@@ -326,22 +335,25 @@ HcclResult TopoInfoRanktableParser::GetJsonArrayMemberProperty(const nlohmann::j
 
     nlohmann::json subObj = obj.at(index);
     if (subObj.find(propName) == subObj.end()) {
-        HCCL_WARNING("json object index[%u] has no property called %s", index, propName);
+        if (optionalProp) {
+            HCCL_WARNING("json object index[%u] has no property called %s", index, propName);
+        } else {
+            HCCL_ERROR("json object index[%u] has no property called %s", index, propName);
+        }
         return HCCL_E_NOT_FOUND;
     }
     if (subObj[propName].is_string()) {
         propValue = subObj[propName];
         return HCCL_SUCCESS;
     } else {
-        std::string buffer = obj.dump(2);
-        HCCL_ERROR("[Get][JsonArrayMemberProperty]errNo[0x%016llx] json[%s] object property value of Name[%s] is "\
-            "not string!", HCOM_ERROR_CODE(HCCL_E_PARA), buffer.c_str(), propName);
+        HCCL_ERROR("[Get][JsonArrayMemberProperty]errNo[0x%016llx] json object property value of Name[%s] is not string!",
+            HCOM_ERROR_CODE(HCCL_E_PARA), propName);
         return HCCL_E_PARA;
     }
 }
 
 HcclResult TopoInfoRanktableParser::GetJsonArrayMemberProperty(const nlohmann::json &obj, const u32 index,
-    const char *propName, u32 &propValue)
+    const char *propName, u32 &propValue, bool optionalProp)
 {
     if (!obj.is_array() || index >= obj.size()) {
         HCCL_ERROR("[Get][JsonArrayMemberProperty]errNo[0x%016llx] index[%u] is out of json object range",
@@ -351,7 +363,11 @@ HcclResult TopoInfoRanktableParser::GetJsonArrayMemberProperty(const nlohmann::j
 
     nlohmann::json subObj = obj.at(index);
     if (subObj.find(propName) == subObj.end()) {
-        HCCL_WARNING("json object index[%u] has no property called %s", index, propName);
+        if (optionalProp) {
+            HCCL_WARNING("json object index[%u] has no property called %s", index, propName);
+        } else {
+            HCCL_ERROR("json object index[%u] has no property called %s", index, propName);
+        }
         return HCCL_E_NOT_FOUND;
     }
     if (subObj[propName].is_number_unsigned()) {
@@ -365,7 +381,7 @@ HcclResult TopoInfoRanktableParser::GetJsonArrayMemberProperty(const nlohmann::j
 }
 
 HcclResult TopoInfoRanktableParser::GetJsonArrayMemberProperty(const nlohmann::json &obj, const u32 index,
-    const char *propName, nlohmann::json &propValue) const
+    const char *propName, nlohmann::json &propValue, bool optionalProp) const
 {
     if (!obj.is_array() || index >= obj.size()) {
         HCCL_ERROR("[Get][JsonArrayMemberProperty]errNo[0x%016llx] index[%u] is out of json object range",
@@ -375,7 +391,11 @@ HcclResult TopoInfoRanktableParser::GetJsonArrayMemberProperty(const nlohmann::j
 
     nlohmann::json subObj = obj.at(index);
     if (subObj.find(propName) == subObj.end()) {
-        HCCL_WARNING("json object index[%u] has no property called %s", index, propName);
+        if (optionalProp) {
+            HCCL_WARNING("json object index[%u] has no property called %s", index, propName);
+        } else {
+            HCCL_ERROR("json object index[%u] has no property called %s", index, propName);
+        }
         return HCCL_E_NOT_FOUND;
     }
     propValue = subObj[propName];
@@ -395,6 +415,7 @@ HcclResult TopoInfoRanktableParser::CheckUniquePara(const JsonUniqueInfoType &ty
     strType = it->second;
     switch (type) {
         case JsonUniqueInfoType::UNIQUE_INFO_TYPE_DEVICE_IP:
+        case JsonUniqueInfoType::UNIQUE_INFO_TYPE_BACKUP_DEVICE_IP:
         case JsonUniqueInfoType::UNIQUE_INFO_TYPE_ETH_IP: {
             /* 必须是一个有效的ip地址 */
             HcclIpAddress ip(value);

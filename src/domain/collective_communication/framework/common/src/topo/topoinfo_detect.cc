@@ -14,6 +14,9 @@
 #include "adapter_rts_common.h"
 #include "hccl_whitelist.h"
 #include "hccl_socket.h"
+#include "sal_pub.h"
+#include "device_capacity.h"
+
 using namespace std;
 namespace hccl {
 const u32 TOPO_EXCHANGE_SERVER_STATUS_IDLE = 0;
@@ -56,6 +59,9 @@ void TopoInfoDetect::SetupTopoExchangeServer(s32 devicePhysicID, s32 deviceLogic
     vector<HcclIpAddress> whitelist, HcclNetDevCtx netDevCtx, std::shared_ptr<HcclSocket> listenSocket,
     bool isMasterInfo)
 {
+    //给当前线程添加名字
+    SetThreadName("Hccl_TopoInfoDetect");
+
     HcclResult ret = hrtSetDevice(deviceLogicID);
     if (ret != HCCL_SUCCESS) {
         topoExchangeServerStatus_[hostPort] = TOPO_EXCHANGE_SERVER_STATUS_ERROR;
@@ -506,6 +512,33 @@ HcclResult TopoInfoDetect::StopNetwork(HcclIpAddress &hostIP, bool bInitDevNic)
     return HCCL_SUCCESS;
 }
 
+HcclResult TopoInfoDetect::FilterDevIPs(std::vector<HcclIpAddress> &sourceDeviceIPs,
+    std::vector<HcclIpAddress> &targetDeviceIPs) const
+{
+    std::vector<HcclIpAddress> deviceIPv4;
+    std::vector<HcclIpAddress> deviceIPv6;
+    for (auto &iter : sourceDeviceIPs) {
+        if (iter.IsIPv6()) {
+            deviceIPv6.push_back(iter);
+        } else {
+            deviceIPv4.push_back(iter);
+        }
+    }
+    // 同时存在ipv4/ipv6时，除非指定socket family，否则ipv4优先
+    // 只存在ipv4/ipv6单栈时，不受用户指定的socket family约束
+    if ((((GetExternalInputHcclSocketFamily() == -1) ||
+        (GetExternalInputHcclSocketFamily() == AF_INET)) &&
+        (!deviceIPv4.empty())) || deviceIPv6.empty()) {
+        targetDeviceIPs = deviceIPv4;
+        HCCL_RUN_INFO("select AF_INET family as device socket family.");
+    } else if (!deviceIPv6.empty()) {
+        std::sort(deviceIPv6.begin(), deviceIPv6.end());
+        targetDeviceIPs.push_back(deviceIPv6[0]);
+        HCCL_RUN_INFO("select AF_INET6 family as device socket family.");
+    }
+    return HCCL_SUCCESS;
+}
+
 HcclResult TopoInfoDetect::GenerateLocalRankInfo(u32 rankSize, u32 rankID, HcclBasicRankInfo &localRankInfo)
 {
     localRankInfo.hostIP = GetBootstrapHostIP();
@@ -521,38 +554,44 @@ HcclResult TopoInfoDetect::GenerateLocalRankInfo(u32 rankSize, u32 rankID, HcclB
     if (localRankInfo.deviceType == DevType::DEV_TYPE_910_93) {
         CHK_RET(GetSuperPodInfo(localRankInfo.deviceLogicID, localRankInfo.superPodId, localRankInfo.superDeviceId));
     }
-    
+
     localRankInfo.deviceIP.clear();
     if (localRankInfo.nicDeploy == NICDeployment::NIC_DEPLOYMENT_DEVICE && rankSize != 1) {
         std::vector<HcclIpAddress> deviceIPs;
-        std::vector<HcclIpAddress> deviceIPv4;
-        std::vector<HcclIpAddress> deviceIPv6;
         CHK_RET(hrtRaGetDeviceIP(localRankInfo.devicePhysicID, deviceIPs));
-        for (auto &iter : deviceIPs) {
-            if (iter.IsIPv6()) {
-                deviceIPv6.push_back(iter);
+        CHK_RET(FilterDevIPs(deviceIPs, localRankInfo.deviceIP));
+
+        // 此处不知道拓扑形态，无法判断是否需要backupIp，只能从硬件类型和重执行开关判断一下
+        bool useSuperPodMode = false;
+        CHK_RET(IsSuperPodMode(useSuperPodMode));
+        if (useSuperPodMode && GetExternalInputInterSuperPodRetryEnable()) {
+            std::vector<std::vector<HcclIpAddress>> chipDeviceIPs;
+            CHK_RET(hrtRaGetDeviceAllNicIP(chipDeviceIPs));
+            if (chipDeviceIPs.size() != 2U) {
+                // 910A3场景下一个chip上有两组deviceIP
+                HCCL_RUN_INFO("[TopoInfoDetect][GenerateLocalRankInfo]Fail to load backup device ip!");
             } else {
-                deviceIPv4.push_back(iter);
+                // 取到一组backup ip，按照devPhyId排序，ipv4在前，ipv6在后，每个网卡的ip顺序一一对应
+                // 取其中对端网卡的ip作为备用网卡ip
+                u32 ipIdex = 1U - (localRankInfo.devicePhysicID % 2U);
+                CHK_RET(FilterDevIPs(chipDeviceIPs[ipIdex], localRankInfo.backupDeviceIP));
+                HCCL_INFO("[TopoInfoDetect][GenerateLocalRankInfo]devicePhysicID[%u], backupDeviceIP[0]:[%s]",
+                    localRankInfo.devicePhysicID, localRankInfo.backupDeviceIP[0].GetReadableIP());
             }
         }
-        // 同时存在ipv4/ipv6时，除非指定socket family，否则ipv4优先
-        // 只存在ipv4/ipv6单栈时，不受用户指定的socket family约束
-        if ((((GetExternalInputHcclSocketFamily() == -1) ||
-            (GetExternalInputHcclSocketFamily() == AF_INET)) &&
-            (!deviceIPv4.empty())) || deviceIPv6.empty()) {
-            localRankInfo.deviceIP = deviceIPv4;
-            HCCL_RUN_INFO("select AF_INET family as device socket family.");
-        } else if (!deviceIPv6.empty()) {
-            std::sort(deviceIPv6.begin(), deviceIPv6.end());
-            localRankInfo.deviceIP.push_back(deviceIPv6[0]);
-            HCCL_RUN_INFO("select AF_INET6 family as device socket family.");
-        }
     }
+
     if (localRankInfo.deviceIP.size() == 0) {
         // 和 rank table 保持一致，如果没有device网卡时，默认填充 0。
         HcclIpAddress invalidAddr;
         localRankInfo.deviceIP.push_back(invalidAddr);
         HCCL_RUN_INFO("no device ip: use 0 as device ip.");
+    }
+    if (localRankInfo.backupDeviceIP.size() == 0) {
+        // 如果没有 backup device ip 时，默认填充 0。
+        HcclIpAddress invalidAddr;
+        localRankInfo.backupDeviceIP.push_back(invalidAddr);
+        HCCL_RUN_INFO("no backup device ip: use 0 as device ip.");
     }
     return HCCL_SUCCESS;
 }
@@ -628,7 +667,7 @@ HcclResult TopoInfoDetect::TransformDeviceList(const RankTable_t &clusterInfo,
             if (clusterInfo.nicDeploy == NICDeployment::NIC_DEPLOYMENT_DEVICE && it->deviceInfo.deviceIp.size() != 0 &&
                 !it->deviceInfo.deviceIp[0].IsInvalid()) {
                 perDeviceJson[PROP_DEV_IP] = std::string(it->deviceInfo.deviceIp[0].GetReadableIP());
-            } 
+            }
             if (!it->hostIp.IsInvalid()) {
                 perServerJson[PROP_HOST_IP] = std::string(it->hostIp.GetReadableIP());
             }

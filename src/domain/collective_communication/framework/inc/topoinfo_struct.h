@@ -42,6 +42,7 @@ using ServerInfo_t = struct tagServerInfo {
 using DeviceInfo_t = struct tagDeviceInfo {
     s32 devicePhyId;                     // 服务器内device唯一标识
     std::vector<HcclIpAddress> deviceIp; // device 对应的网卡ip
+    std::vector<HcclIpAddress> backupDeviceIp; // 同一卡另一个device的网卡ip，应用于重执行借轨场景
     HcclIpAddress refIp;                 // [DEPRECATED]device 对应的ref ip
     u32 port { HCCL_INVALIED_PORT };
 };
@@ -126,6 +127,7 @@ const std::string PROP_SERVER_ID = "server_id";
 const std::string PROP_SERVER_LIST = "server_list";
 const std::string PROP_DEV_ID = "device_id";
 const std::string PROP_DEV_IP = "device_ip";
+const std::string PROP_BACKUP_DEV_IP = "backup_device_ip";
 const std::string PROP_HOST_IP = "host_ip";
 const std::string PROP_DEPLOY_MODE = "deploy_mode";
 const std::string PROP_TRANS_INFO = "trans_info";

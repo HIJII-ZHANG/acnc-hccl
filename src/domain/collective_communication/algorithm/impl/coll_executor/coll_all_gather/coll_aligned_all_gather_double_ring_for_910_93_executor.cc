@@ -41,7 +41,7 @@ HcclResult CollAlignedAllGatherDoubleRingFor91093Executor::DoubleRingAllGather(
         multiRingsOrder, multRingsUserMemSlice, userMemOutputSlicesOfDoubleRing));
     // 生成两个ring上的rankOrder
     std::vector<std::vector<u32>> rankOrders;
-    CollectMultiRingsRankOrder(ringNum, multiRingsOrder, rankOrders);
+    CHK_RET(CollectMultiRingsRankOrder(ringNum, multiRingsOrder, rankOrders));
     // 初始化executor
     std::unique_ptr<ExecutorBase> executor;
     executor.reset(new (std::nothrow) AlignedAllGatherDoubleRing(dispatcher_,

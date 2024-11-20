@@ -15,7 +15,7 @@
 
 namespace hccl {
 const uint32_t ALLTOALLV_DIRECT_FULLMESH_SDMA_CONCURRENT_SIZE =  16; // SDMA链路上的并发数量
-const uint32_t ALLTOALLV_DIRECT_FULLMESH_RDMA_CONCURRENT_SIZE =  2; // RDMA链路上的并发数量
+const uint32_t ALLTOALLV_DIRECT_FULLMESH_RDMA_CONCURRENT_SIZE =  1; // RDMA链路上的并发数量
 
 class AlltoAllVDirectFullMesh : public ExecutorBase {
 public:

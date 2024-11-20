@@ -43,6 +43,7 @@ target_include_directories(hccl_alg PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/impl/coll_executor/coll_scatter
     ${CMAKE_CURRENT_SOURCE_DIR}/impl/coll_executor/coll_broadcast
     ${CMAKE_CURRENT_SOURCE_DIR}/impl/coll_executor/coll_broadcast/310P
+    ${CMAKE_CURRENT_SOURCE_DIR}/pub_inc
     ${HCCL_BASE_DIR}/../../../../inc/external
     ${HCCL_BASE_DIR}/../../../../inc/external/hccl
     ${HCCL_BASE_DIR}/../../../../inc/hccl

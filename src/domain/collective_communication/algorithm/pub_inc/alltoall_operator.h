@@ -54,6 +54,7 @@ private:
     HcclResult RunAlltoAllVFullMesh(DeviceMem &sendBuf, HcclDataType sendType, DeviceMem &recvBuf,
         HcclDataType recvType, std::vector<SendRecvInfo> &allMeshAggregationSendRecvInfo,
         Stream &stream, const std::string &tag);
+    bool IsDirectFullMeshNotSupportAsym();
 
     HcclResult SetExecutorAttr(const OpParam& param) override;
 

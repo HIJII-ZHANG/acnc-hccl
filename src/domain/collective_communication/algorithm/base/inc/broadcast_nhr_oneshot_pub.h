@@ -34,6 +34,12 @@ private:
 
     HcclResult SimpleCheck(const u32 rank, const u32 rankSize, const std::vector<LINK> &links);
 
+    HcclResult SdmaRx(LINK &linkLeft, LINK &linkRight, InterServerAlgoStep &stepInfo,
+        const std::vector<LINK> &links);
+        
+    HcclResult RdmaTxRx(LINK &linkLeft, LINK &linkRight, InterServerAlgoStep &stepInfo,
+        const std::vector<LINK> &links);
+
     HcclResult GetStepInfo(u32 step, u32 nSteps, u32 rank, u32 rankSize, InterServerAlgoStep &stepInfo) override;
 
     u64 localBaseOffset_;

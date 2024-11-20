@@ -114,13 +114,16 @@ HcclResult ReduceOperator::SelectAlgfor91093(const OpParam& param, std::string& 
 {
     bool isRingTopo = topoType_ == TopoType::TOPO_TYPE_NP_SINGLE_RING;
     bool isDoubleRingTopo = topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING;
-	
-    if (isRingTopo || isDoubleRingTopo) {
+
+    if (multiModuleDiffDeviceNumMode_ || multiSuperPodDiffServerNumMode_) {
+        algName = "ReduceComm";
+    } else if (isRingTopo || isDoubleRingTopo) {
         algName = "ReduceRingFor91093Executor";
     } else {
         algName = "ReduceComm";
     }
-    if ((!UseInterServerRingAlgo(algType_) && topoMatcher_->GetTopoInfo().superPodNum > 1) ||
+    if ((!UseInterServerRingAlgo(algType_) && !UseInterServerHDAlgo(algType_)) ||
+        (!UseInterServerRingAlgo(algType_) && topoMatcher_->GetTopoInfo().superPodNum > 1) ||
         !UseWholeRingAlgo(algType_)) {
         SetInterServerRingAlgo(algType_);
         HCCL_WARNING("[ReduceOperator][SelectAlgfor91093][Superpod] inter-server only support ring yet, "\

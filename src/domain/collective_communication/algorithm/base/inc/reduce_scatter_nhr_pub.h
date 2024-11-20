@@ -47,6 +47,27 @@ private:
 
     HcclResult GetStepInfo(u32 step, u32 nSteps, u32 rank, u32 rankSize, InterServerAlgoStep &stepInfo) override;
 
+    HcclResult InlineReducer(const LINK &linkLeft, const std::vector<ReducerMemoryInfo> &rxReduceMems);
+
+    HcclResult InlineReduceRx(const LINK &linkLeft, std::vector<Slice> &rxSlices, std::vector<Slice> &rxSlicestemp);
+
+    HcclResult InlineReduceRxLastStep(const LINK &linkLeft, InterServerAlgoStep &stepInfo,
+        const std::vector<Slice> &inputSlices, const std::vector<Slice> &outputSlices);
+
+    HcclResult TbeReduceRx(const LINK &linkLeft, std::vector<Slice> &rxSlices, std::vector<Slice> &rxSlicestemp);
+
+    HcclResult TbeReduceRxLastStep(const LINK &linkLeft, InterServerAlgoStep &stepInfo,
+        const std::vector<Slice> &inputSlices, const std::vector<Slice> &outputSlices);
+
+    HcclResult RunDestReducerLastStep(const LINK &linkLeft, InterServerAlgoStep &stepInfo,
+        const std::vector<Slice> &inputSlices, const std::vector<Slice> &outputSlices);
+
+    HcclResult GetRxSlices(std::vector<Slice> &rxSlices, std::vector<Slice> &rxSlicestemp,
+        InterServerAlgoStep &stepInfo, const std::vector<Slice> &inputSlices, const std::vector<Slice> &outputSlices);
+
+    HcclResult SdmaReducer(const u32 nSteps, const LINK &linkLeft, InterServerAlgoStep &stepInfo,
+        const std::vector<Slice> &inputSlices, const std::vector<Slice> &outputSlices);
+
     const u64 reduceAttr_; /* 0x1:表示data_type + reduce_type支持inlinereduce  */
 
     std::unique_ptr<Sender> senderInfo_;

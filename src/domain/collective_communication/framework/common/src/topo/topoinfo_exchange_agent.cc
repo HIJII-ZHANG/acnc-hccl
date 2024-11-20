@@ -305,6 +305,7 @@ HcclResult TopoInfoExchangeAgent::ConstructRankTableMsg(RankTable_t &clusterInfo
     myRankInfo.hostIp = localRankInfo_.hostIP;
     myRankInfo.deviceInfo.devicePhyId = localRankInfo_.devicePhysicID;
     myRankInfo.deviceInfo.deviceIp = localRankInfo_.deviceIP;
+    myRankInfo.deviceInfo.backupDeviceIp = localRankInfo_.backupDeviceIP;
     myRankInfo.superPodId = localRankInfo_.superPodId;
     myRankInfo.superDeviceId = localRankInfo_.superDeviceId;
     ConstructRankTableServerId(myRankInfo.serverId);
@@ -356,7 +357,7 @@ HcclResult TopoInfoExchangeAgent::DetectTransportType(const RankInfo_t& localRan
     return HCCL_SUCCESS;
 }
 
-HcclResult TopoInfoExchangeAgent::VerifyClusterInfo(const RankTable_t &clusterInfo)
+HcclResult TopoInfoExchangeAgent::VerifyClusterInfo(RankTable_t &clusterInfo)
 {
     CHK_PRT_RET((clusterInfo.rankList.size() != localRankInfo_.rankSize),
         HCCL_ERROR("[Verify][ClusterInfo]rank num[%u] is different with rank list size[%zu] in total topo rank "\
@@ -376,6 +377,7 @@ HcclResult TopoInfoExchangeAgent::VerifyClusterInfo(const RankTable_t &clusterIn
     CHK_RET(VerifyClusterRankID(clusterInfo));
     if (localRankInfo_.nicDeploy == NICDeployment::NIC_DEPLOYMENT_DEVICE) {
         CHK_RET(VerifyClusterDeviceIP(clusterInfo));
+        CHK_RET(VerifyClusterBackupDeviceIP(clusterInfo));
     }
     std::map<std::string, std::vector<RankInfo_t>> serverMap;
     for (uint32_t i = 0; i < clusterInfo.rankList.size(); i++) {
@@ -440,6 +442,66 @@ HcclResult TopoInfoExchangeAgent::VerifyClusterDeviceIP(const RankTable_t &clust
                 clusterInfo.rankList[j].deviceInfo.deviceIp);
             CHK_PRT_RET(err, HCCL_ERROR("[Verify][ClusterDeviceIP]rank[%u]'s device ip is repeated with rank[%u].",
                 clusterInfo.rankList[i].rankId, clusterInfo.rankList[j].rankId), HCCL_E_PARA);
+        }
+    }
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoInfoExchangeAgent::VerifyClusterBackupDeviceIP(RankTable_t &clusterInfo)
+{
+    if (localRankInfo_.deviceType != DevType::DEV_TYPE_910_93 || !GetExternalInputInterSuperPodRetryEnable()) {
+        // 未开启重执行，则无需 backup device ip
+        return HCCL_SUCCESS;
+    }
+    bool useSuperPodMode = false;
+    CHK_RET(IsSuperPodMode(useSuperPodMode));
+    if (!useSuperPodMode || clusterInfo.superPodNum == 1) {
+        // 非多超节点场景，backup device ip 不做要求
+        return HCCL_SUCCESS;
+    }
+    if (clusterInfo.rankList.size() == 1 || clusterInfo.serverList.size() == 1) {
+        // 单卡或单机场景对 device ip 不做要求
+        return HCCL_SUCCESS;
+    }
+
+    std::unordered_map<std::string, s32> devIp2PhyId;
+    for (auto &rankInfo : clusterInfo.rankList) {
+        for (auto &devIp : rankInfo.deviceInfo.deviceIp) {
+            devIp2PhyId.emplace(devIp.GetReadableIP(), rankInfo.deviceInfo.devicePhyId);
+        }
+    }
+
+    for (auto &rankInfo : clusterInfo.rankList) {
+        for (auto &backupDevIp : rankInfo.deviceInfo.backupDeviceIp) {
+            if (backupDevIp.IsInvalid()) {
+                continue;
+            }
+            std::string backupIpStr = std::string(backupDevIp.GetReadableIP());
+            if (devIp2PhyId.find(backupIpStr) == devIp2PhyId.end()) {
+                backupDevIp.clear();
+                HCCL_RUN_INFO("[Verify][ClusterBackupDeviceIP] unknown backup devIp[%s] for devicePhyId[%d]. "
+                    "Fail to find relative device info, backup device ip is set to empty.",
+                    backupIpStr.c_str(), rankInfo.deviceInfo.devicePhyId);
+                continue;
+            }
+
+            s32 backupDevPhyId = devIp2PhyId[backupIpStr];
+            CHK_PRT_RET(backupDevPhyId == rankInfo.deviceInfo.devicePhyId,
+                HCCL_ERROR("[Verify][ClusterBackupDeviceIP]errNo[0x%016llx], "
+                    "PhyId[%d] for backup devIp[%s] is the same with self devicephyId[%d]. "
+                    "Please do not use self ip as backup ip!",
+                    HCOM_ERROR_CODE(HCCL_E_PARA), backupDevPhyId, backupIpStr.c_str(), rankInfo.deviceInfo.devicePhyId),
+                HCCL_E_PARA);
+
+            LinkTypeInServer linkType = LinkTypeInServer::RESERVED_LINK_TYPE;
+            CHK_RET(hrtGetPairDeviceLinkType(rankInfo.deviceInfo.devicePhyId, backupDevPhyId, linkType));
+            CHK_PRT_RET(linkType != LinkTypeInServer::SIO_TYPE,
+                HCCL_ERROR("[Verify][ClusterBackupDeviceIP]errNo[0x%016llx], "
+                    "link between device phyId[%d] and backup device phyId[%d] is not sio link, backup device ip[%s]. "
+                    "Please check backup ip validation and whether it is on a pair device!",
+                    HCOM_ERROR_CODE(HCCL_E_PARA), rankInfo.deviceInfo.devicePhyId,
+                    backupDevPhyId, backupIpStr.c_str()),
+                HCCL_E_PARA);
         }
     }
     return HCCL_SUCCESS;

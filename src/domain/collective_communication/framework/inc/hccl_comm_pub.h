@@ -219,7 +219,9 @@ public:
     HcclResult CreateCommCCLbuffer() const;
     HcclResult CreateIndirectCCLbuf();
     void ReleaseIndirectCCLbuf();
+
     HcclResult GetOneSidedService(IHcclOneSidedService** service);
+    HcclResult InitOneSidedServiceNetDevCtx();
     HcclResult GetIndirectInCCLbuf(void* &ptr, u64 &size);
     HcclResult GetIndirectOutCCLbuf(void* &ptr, u64 &size);
     HcclResult GetWorkspaceSubStreamNum(u64 &streamNum, u64 dataSize = 0,

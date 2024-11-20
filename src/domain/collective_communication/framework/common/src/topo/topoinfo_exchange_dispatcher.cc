@@ -73,6 +73,9 @@ bool TopoInfoExchangeDispather::GetTask(WorkerTask &workTask)
 
 void TopoInfoExchangeDispather::RunWorkerThread(int workId)
 {
+    //给当前线程添加名字
+    SetThreadName("Hccl_RunWorker");
+
     while (!stop_) {
         WorkerWait(workId);
         while (true) {

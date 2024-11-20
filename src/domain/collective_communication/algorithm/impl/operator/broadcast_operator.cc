@@ -140,7 +140,9 @@ HcclResult BroadCastOperator::SelectAlgfor91093(const OpParam& param, std::strin
         (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && !param.aicpuUnfoldMode)) &&
         (deviceNumPerAggregation_ > HCCL_DEVICE_NUM_TWO) &&
         (param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] <= HCCL_SMALL_COUNT_2_MB * userRankSize_);
-    if (smallCountOptim91093) {
+    if (multiModuleDiffDeviceNumMode_ || multiSuperPodDiffServerNumMode_) {
+        algName = "BroadCastComm";
+    } else if (smallCountOptim91093) {
         algName = "BroadCastSmallCountExecutor";
     } else if (topoType_ == TopoType::TOPO_TYPE_NP_SINGLE_RING || topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) {
         algName = "BroadCastRingFor91093Executor";

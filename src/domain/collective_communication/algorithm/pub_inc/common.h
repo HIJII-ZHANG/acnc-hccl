@@ -33,6 +33,7 @@ public:
     s32 devicePhyId{-1};                                                  // 当前rank在操作的设备物理编号
     DevType deviceType{DevType::DEV_TYPE_NOSOC};                          // 当前rank在操作的设备属性
     std::vector<HcclIpAddress> nicIp;                                     // 当前rank所归属网卡的IP值(实际建链所用网卡IP)
+    std::vector<HcclIpAddress> backupNicIp;                               // 当前rank所在卡备用网卡的IP值
     std::vector<u32> nicIdx;                                              // 当前rank在server内的所有device网卡位置（devicePhyId）
     NICDeployment nicDeploy{NICDeployment::NIC_DEPLOYMENT_DEVICE};        // 参数平面位置 0:host 1:device other:reserve
     HcclIpAddress hostIp;                                                 // 当前rank使用的host socket addr

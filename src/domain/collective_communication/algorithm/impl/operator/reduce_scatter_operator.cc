@@ -163,14 +163,16 @@ HcclResult ReduceScatterOperator::SelectAlgfor910B(const OpParam& param, std::st
 HcclResult ReduceScatterOperator::SelectAlgfor91093(const OpParam& param, std::string& algName)
 {
     bool smallCountOptim91093 =
-        (!GetExternalInputEnableInplace()) &&
+        (!param.retryEnable) &&
         (serverNum_ == 1) &&
         ((workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) ||
         (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && !param.aicpuUnfoldMode)) &&
         IsSupportSDMAReduce(param.inputPtr, param.outputPtr, param.DataDes.dataType, param.reduceType) &&
         (deviceNumPerAggregation_ > HCCL_DEVICE_NUM_TWO) &&
         (param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] <= HCCL_SMALL_COUNT_2_MB);
-    if (smallCountOptim91093) {
+    if (multiModuleDiffDeviceNumMode_ || multiSuperPodDiffServerNumMode_) {
+        algName = "ReduceScatterComm";
+    } else if (smallCountOptim91093) {
         algName = "ReduceScatterDeterExecutor";
     } else if (topoType_ == TopoType::TOPO_TYPE_NP_SINGLE_RING) {
         algName = "ReduceScatterRingFor91093Executor";
@@ -198,8 +200,15 @@ HcclResult ReduceScatterOperator::SelectAlgfor91093(const OpParam& param, std::s
         algName = "ReduceScatterComm";
     }
 
-    // 910_93超节点只支持server间ring,NB和NHR，默认需继续使用NHR
-    if (!(UseInterServerRingAlgo(algType_) || UseInterServerNBAlgo(algType_) || UseWholeRingAlgo(algType_))) {
+    if (GetExternalInputEnableRdmaSdmaConcurrent()) {
+        if (!(UseInterServerRingAlgo(algType_) || UseInterServerNBAlgo(algType_))) {
+                HcclResult ret = SetInterServerRingAlgo(algType_);
+                CHK_PRT_RET(ret != HCCL_SUCCESS,
+                    HCCL_ERROR("[ReduceScatterOperator][SelectAlgfor91093]errNo[0x%016llx] tag[%s], ReduceScatter "\
+                    "concurrent set inter server ring algo failed", HCCL_ERROR_CODE(ret), param.tag.c_str()), ret);
+        }
+    } else if (!(UseInterServerRingAlgo(algType_) || UseInterServerNBAlgo(algType_) || UseWholeRingAlgo(algType_))) {
+        // 910_93超节点只支持server间ring,NB和NHR，默认需继续使用NHR
         HcclResult ret = SetInterServerNHRAlgo(algType_);
         HCCL_WARNING("[ReduceScatterOperator][SelectAlgfor91093] only support ring, NB and NHR in AlgoLevel1 yet, "\
             "default is algType=NHR.");

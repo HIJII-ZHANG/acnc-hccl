@@ -30,6 +30,11 @@ HcclResult CollAllReduceRingFor91093Executor::CalcStreamNum(u32& streamNum)
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
         totalStreamNum *= STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
     }
+    if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB && 
+        GetExternalInputEnableRdmaSdmaConcurrent()) {
+        totalStreamNum += (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) ? OUTER_PLANE_NUM_IN_NPRING_DOUBLE :
+        OUTER_PLANE_NUM_IN_NPRING_SINGLE;
+    }
     streamNum = totalStreamNum - 1;
     HCCL_INFO("[CollAllReduceRingFor91093Executor][CalcStreamNum] tag[%s] streamNum_[%u].",
         tag_.c_str(), streamNum);
@@ -113,7 +118,7 @@ HcclResult CollAllReduceRingFor91093Executor::RunIntraSeverReduceScatter(
     const u64 count, const HcclDataType &dataType, const HcclReduceOp &reductionOp,
     const std::vector<std::vector<Slice>> &multRingsSliceZero, const Stream &stream, s32 profStage,
     const u64 baseOffset, const HcomCollOpInfo *opInfo,
-    const std::vector<std::vector<Slice>> &multRingsUserMemSlice)
+    const std::vector<std::vector<Slice>> &multRingsUserMemSlice, const bool retryEnable)
 {
     CHK_RET(MultiRingReduceScatter(tag, inputMem, outputMem, count, dataType, reductionOp,
         multRingsSliceZero, stream, profStage, baseOffset, opInfo, multRingsUserMemSlice));
@@ -166,16 +171,17 @@ HcclResult CollAllReduceRingFor91093Executor::KernelRun(const OpParam &param, Ex
     if (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) {
         reduceScatterOpInfoPtr = &reduceScatterGraphModeOpInfo;
     }
-    if (DMAReduceFlag_ && (!GetExternalInputEnableInplace())) {
+    if (DMAReduceFlag_) {
         reduceScatterOpInfoPtr = &reduceScatterOpInfo;
     }
+    const std::vector<std::vector<Slice>> multRingsUserMemSliceDefault = std::vector<std::vector<Slice>>(0);
     CHK_RET(RunIntraSeverReduceScatter(param.tag, execMem.inputMem, execMem.outputMem, execMem.count,
         param.DataDes.dataType, param.reduceType, multRingsSliceZero, param.stream,
-        PROF_STAGE_0, 0, reduceScatterOpInfoPtr));
+        PROF_STAGE_0, 0, reduceScatterOpInfoPtr, multRingsUserMemSliceDefault, param.retryEnable));
     HCCL_INFO("allreduce double ring stage0 run success.");
 
     bool isSelectAHC = (UseInterServerAHCAlgo(algType_) || UseInterServerAHCBrokeAlgo(algType_));
-    
+
     /* 三步算法step2: 内层 - 节点间 allreduce */
     u64 hdSize;
     u32 segmentIdx;
@@ -370,7 +376,7 @@ HcclResult CollAllReduceRingFor91093Executor::KernelRun(const OpParam &param, Ex
     if (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) {
         allgatherOpInfoPtr = &allgatherOpInfoGraphModeOpInfo;
     }
-    if (DMAReduceFlag_ && (!GetExternalInputEnableInplace())) {
+    if (DMAReduceFlag_) {
         allgatherOpInfoPtr = &allgatherOpInfo;
     }
     CHK_RET(RunIntraSeverAllGather(param.tag, execMem.inputMem, execMem.outputMem, hdCount,

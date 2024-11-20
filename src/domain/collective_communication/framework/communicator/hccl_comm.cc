@@ -841,6 +841,12 @@ HcclResult hcclComm::GetOneSidedService(IHcclOneSidedService** service)
     return HCCL_SUCCESS;
 }
 
+HcclResult hcclComm::InitOneSidedServiceNetDevCtx()
+{
+    CHK_RET(communicator_->InitOneSidedServiceNetDevCtx());
+    return HCCL_SUCCESS;
+}
+
 HcclResult hcclComm::GetInCCLbuffer(void* &buffer, u64 &size)
 {
     CHK_RET(communicator_->GetInCCLbuffer(buffer, size));
@@ -977,6 +983,7 @@ HcclResult hcclComm::GetHccsLinkNum(u32 &numHccsLink)
 
 HcclResult hcclComm::GetDeviceId(s32 &deviceId)
 {
+    CHK_SMART_PTR_NULL(communicator_);
     CHK_RET(communicator_->GetDeviceId(deviceId));
 
     return HCCL_SUCCESS;

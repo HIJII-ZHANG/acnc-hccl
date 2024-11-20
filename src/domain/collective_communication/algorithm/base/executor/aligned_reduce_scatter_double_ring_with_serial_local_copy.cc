@@ -65,7 +65,7 @@ HcclResult AlignedReduceScatterDoubleRingWithSerialLocalCopy::MemcpyInitSlices(
         CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dstInit, srcInit, stream_));
         CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dstSubInit, srcSubInit, stream_));
     } else {
-        if (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB && (!GetExternalInputEnableInplace())) {
+        if (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB && (!retryEnable_)) {
             CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dstInit, srcInit, subStreams_[0]));
             CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dstSubInit, srcSubInit, subStreams_[1]));
         } else {
@@ -122,7 +122,7 @@ HcclResult AlignedReduceScatterDoubleRingWithSerialLocalCopy::LocalMemcpy(
 {
     // 先调通单算子模式
     // 通过校验流数判断是单算子模式还是图模式
-    if (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB && (!GetExternalInputEnableInplace())) {
+    if (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB && (!retryEnable_)) {
         if (ringIndex == 0) {
             CHK_RET(LocalNotify::Post(subStreams_[ringIndex + 1], dispatcher_, mainSignals_[ringIndex + 1], profilerInput_.stage));
             CHK_RET(LocalNotify::Wait(subStreams_[ringIndex + 1], dispatcher_, subSignals_[ringIndex + 1], profilerInput_.stage));
@@ -181,7 +181,7 @@ HcclResult AlignedReduceScatterDoubleRingWithSerialLocalCopy::PreSync(const u32 
 {
     HCCL_DEBUG("[AlignedReduceScatterDoubleRingWithSerialLocalCopy] PreSync starts");
     if (ringIndex == 1) {
-        if (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB && (!GetExternalInputEnableInplace())) {
+        if (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB && (!retryEnable_)) {
             CHK_RET(LocalNotify::Wait(stream_, dispatcher_, mainSignals_[0], profilerInput_.stage));
             CHK_RET(LocalNotify::Wait(stream_, dispatcher_, mainSignals_[1], profilerInput_.stage));
             CHK_RET(ExecutorBase::ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
@@ -317,7 +317,7 @@ HcclResult AlignedReduceScatterDoubleRingWithSerialLocalCopy::GetActiveSubstream
                 subStreams_.size());
             return HCCL_E_PARA;
         }
-        if (GetExternalInputEnableInplace()) {
+        if (retryEnable_) {
             activeSubstreamNum = subStreams_.size() - 2;
         } else {
             activeSubstreamNum = subStreams_.size() - 1;

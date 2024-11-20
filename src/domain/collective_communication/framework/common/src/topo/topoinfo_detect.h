@@ -66,6 +66,8 @@ private:
     HcclResult WaitTopoExchangeServerCompelte(u32 idx) const;
     void SetBootstrapHostIP(HcclIpAddress &ip) const;
     HcclIpAddress GetBootstrapHostIP() const;
+    HcclResult FilterDevIPs(std::vector<HcclIpAddress> &sourceDeviceIPs,
+        std::vector<HcclIpAddress> &targetDeviceIPs) const;
     s32 deviceLogicID_;
     HcclBasicRankInfo localRankInfo_;
     RankTable_t clusterTopoInfo_;

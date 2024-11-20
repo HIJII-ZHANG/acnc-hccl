@@ -33,13 +33,13 @@ HcclResult TopoinfoRoletable::GetSingleNode(const nlohmann::json &NodeListObj, u
     HcclIpAddress ipAddr;
     u32 port;
 
-    if (GetJsonArrayMemberProperty(NodeListObj, objIndex, NODE_ID, id) == HCCL_E_NOT_FOUND) {
+    if (GetJsonArrayMemberProperty(NodeListObj, objIndex, NODE_ID, id, true) == HCCL_E_NOT_FOUND) {
         HCCL_WARNING("[Parser][RoleTable]node id is not found!");
         id = INVALID_UINT;
     }
 
-    CHK_RET(GetJsonArrayMemberProperty(NodeListObj, objIndex, NODE_IP, ip));
-    CHK_RET(GetJsonArrayMemberProperty(NodeListObj, objIndex, NODE_PORT, port));
+    CHK_RET(GetJsonArrayMemberProperty(NodeListObj, objIndex, NODE_IP, ip, false));
+    CHK_RET(GetJsonArrayMemberProperty(NodeListObj, objIndex, NODE_PORT, port, false));
     CHK_RET(ConvertIpAddress(ip, ipAddr));
 
     RoleTableNodeInfo roleTableNodeInfo;
@@ -54,7 +54,7 @@ HcclResult TopoinfoRoletable::GetSingleNode(const nlohmann::json &NodeListObj, u
 HcclResult TopoinfoRoletable::GetServersInfo(std::vector<RoleTableNodeInfo> &servers)
 {
     nlohmann::json serverList;
-    CHK_RET(GetJsonProperty(fileContent_, SERVER_LIST, serverList));
+    CHK_RET(GetJsonProperty(fileContent_, SERVER_LIST, serverList, false));
     // 获得single server信息
     for (u32 index = 0; index < serverList.size(); index++) {
         CHK_RET(GetSingleNode(serverList, index, servers));
@@ -66,7 +66,7 @@ HcclResult TopoinfoRoletable::GetServersInfo(std::vector<RoleTableNodeInfo> &ser
 HcclResult TopoinfoRoletable::GetClientsInfo(std::vector<RoleTableNodeInfo> &clients)
 {
     nlohmann::json clientList;
-    CHK_RET(GetJsonProperty(fileContent_, CLIENT_LIST, clientList));
+    CHK_RET(GetJsonProperty(fileContent_, CLIENT_LIST, clientList, false));
     // 获得single client信息
     for (u32 index = 0; index < clientList.size(); index++) {
         CHK_RET(GetSingleNode(clientList, index, clients));

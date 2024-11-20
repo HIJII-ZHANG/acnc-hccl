@@ -192,7 +192,6 @@ HcclResult AllGatherRingConcurrentDirect::RunAllGather(const u32 rank, const u32
     CHK_RET(ExecutorBase::ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
     CHK_RET(MainRecordSub()); // 主流通知从流开始通信
     CHK_RET(SubWaitMain());   // 从流等待主流通知
-
     CHK_RET(ExecutorBase::ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
     CHK_RET(ExecutorBase::ExecEmptyTask(inputMem_, outputMem_, subStreams_[0], dispatcher_));
     u32 txSliceIdx = rank;

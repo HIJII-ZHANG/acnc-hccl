@@ -35,7 +35,6 @@ HcclResult CollRunAlltoAllDirectFullmesh::Orchestrate(OpParam& param, AlgResourc
     execMem.outputPtr = param.outputPtr;
     execMem.inputMem = algRes.cclInputMem;
     execMem.outputMem = algRes.cclOutputMem;
-
     ret = KernelRun(param, execMem);
 
     CHK_PRT_RET(ret != HCCL_SUCCESS,
@@ -238,7 +237,7 @@ HcclResult CollRunAlltoAllDirectFullmesh::GetAlltoAllvTmpRankSendRecvInfo(const 
 
 HcclResult CollRunAlltoAllDirectFullmesh::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollRunAlltoAllDirectFullmesh][KernelRun] alltoall fullmesh start");
+    HCCL_INFO("[CollRunAlltoAllDirectFullmesh][KernelRun] alltoall fullmesh start.");
 
     // 准备数据
     CHK_RET(GetAlltoAllvTmpRankSendRecvInfo(param));
@@ -272,8 +271,11 @@ HcclResult CollRunAlltoAllDirectFullmesh::KernelRun(const OpParam &param, ExecMe
 
     CHK_RET(executor->RunAsync());
 
-    HCCL_INFO("[CollRunAlltoAllDirectFullmesh] excutor run success");
-
+    HCCL_INFO("[CollRunAlltoAllDirectFullmesh] excutor run success.");
+    if (param.isPostSync == true) {
+        OpParam postSyncParam = param;
+        CHK_RET(InplaceOpSync(postSyncParam, execMem));
+    }
     return HCCL_SUCCESS;
 }
 

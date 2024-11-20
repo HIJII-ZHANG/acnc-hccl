@@ -30,6 +30,7 @@ using HcclBasicRankInfo = struct HcclBasicRankInfoDef {
     s32 deviceLogicID{0};
     u32 devicePhysicID{0};
     std::vector<HcclIpAddress> deviceIP;
+    std::vector<HcclIpAddress> backupDeviceIP;
     u32 superDeviceId{INVALID_UINT}; // 超节点内device id，超节点内唯一
     std::string superPodId{""};     // 超节点标识
 };
@@ -61,8 +62,9 @@ private:
     HcclResult ConstructRankTableMsg(RankTable_t &clusterInfo);
     void ConstructRankTableServerId(std::string &serverId);
     HcclResult SetTransportInfo(RankTable_t &clusterInfo);
-    HcclResult VerifyClusterInfo(const RankTable_t &clusterInfo);
+    HcclResult VerifyClusterInfo(RankTable_t &clusterInfo);
     HcclResult VerifyClusterDeviceIP(const RankTable_t &clusterInfo);
+    HcclResult VerifyClusterBackupDeviceIP(RankTable_t &clusterInfo);
     HcclResult VerifyClusterRankID(const RankTable_t &clusterInfo) const;
     HcclResult VerifyServerDevicePhysicID(const std::vector<RankInfo_t> &serverInfo) const;
     HcclResult VerifyClusterSuperPodInfo(const std::vector<RankInfo_t> &rankInfo) const;

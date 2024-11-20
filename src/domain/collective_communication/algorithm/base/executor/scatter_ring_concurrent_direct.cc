@@ -254,7 +254,6 @@ HcclResult ScatterRingConcurrentDirect::RunSubStream(const u32 step, const Slice
 HcclResult ScatterRingConcurrentDirect::RunScatter(const u32 rank, const u32 rankSize)
 {
     HCCL_INFO("ScatterRingConcurrentDirect starts, the input param rank[%u]", rank);
-
     CHK_RET(ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
 
     CHK_RET(RunInitStep(rank, rankSize));

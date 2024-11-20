@@ -21,27 +21,27 @@ public:
     HcclResult Orchestrate(OpParam& param, AlgResourceResponse& algRes) override;
     // 增量建链资源计算接口
     HcclResult CalcIncreLinkRequest(const OpParam& param, AlgResourceRequest& resourceRequest) override;
-private:
+protected:
     /* *************** 资源计算 *************** */
     void ParseParam(const OpParam& param) override;
-    HcclResult CalcStreamNum(u32& streamNum) override;
     HcclResult CalcCommInfo(std::vector<LevelNSubCommTransport>& opTransport) override;
 
     /* *************** 算法编排 *************** */
-    HcclResult GetPairWiseList(HcclSendRecvItem *sendRecvItemsPtr, u32 itemNum, 
-        std::vector<HcclSendRecvItem *> &orderedList);
     HcclResult ProcessSelfSendRecvTasks(std::vector<HcclSendRecvItem*> &orderedList,
         u32 itemNum, u32& loopStartIndex, Stream& stream);
     u64 CalcSendLoopMaxCount(DeviceMem& inCCLBuffer, const u32 unitSize);
     u64 CalcRecvLoopMaxCount(DeviceMem& outCCLBuffer, const u32 unitSize);
     HcclResult GetSendRecvInfo(HcclSendRecvItem* itemPtr);
-    HcclResult RunLoop(OpParam &param, AlgResourceResponse &algRes, HcclSendRecvItem* sendRecvItem);
-    HcclResult KernelRun(const OpParam &param, ExecMem &execMem) override;
 
-private:
-    std::set<u32> commTargetUserRankSet_;
     u32 remoteUserRank_ = 0;
     HcclSendRecvType sendRecvType_;
+private:
+    HcclResult CalcStreamNum(u32& streamNum) override;
+    HcclResult GetPairWiseList(HcclSendRecvItem *sendRecvItemsPtr, u32 itemNum,
+        std::vector<HcclSendRecvItem *> &orderedList);
+    HcclResult RunLoop(OpParam &param, AlgResourceResponse &algRes, HcclSendRecvItem* sendRecvItem);
+    HcclResult KernelRun(const OpParam &param, ExecMem &execMem) override;
+    std::set<u32> commTargetUserRankSet_;
 };
 } // namespace hccl
 

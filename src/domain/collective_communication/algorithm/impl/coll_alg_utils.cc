@@ -231,6 +231,9 @@ HcclResult SetInterServerRingAlgo(AlgType &algType)
             break;
         case AlgType::ALG_NP_DOUBLE_RING_PLUS_PIPELINE:
         case AlgType::ALG_DOUBLE_RING_PLUS_HD:
+        case AlgType::ALG_DOUBLE_RING_PLUS_NHR:
+        case AlgType::ALG_NP_DOUBLE_RING_PLUS_NHR_V1:
+        case AlgType::ALG_NP_DOUBLE_RING_PLUS_NB:
             algType = AlgType::ALG_DOUBLE_RING_PLUS_RING;
             break;
         default:
@@ -247,18 +250,51 @@ bool IsAlgTypeLevel0Mesh(AlgTypeLevel0 &originalAlgTypeLevel0)
            originalAlgTypeLevel0 == AlgTypeLevel0::ALG_LEVEL0_1P_MESH;
 }
 
-bool IsSupportDirectFullmeshFor91093(const HcclCMDType &opType, DevType deviceType, u32 superPodNum,
-    bool useSuperPodMode, u32 serverNum)
+bool IsAlltoAllvcSatisfyBufferSize(const OpParam& param, u32 userRankSize) {
+    for (u32 i = 0; i < userRankSize; i++) {
+        u64 maxSendLength = 0;
+        u64 maxRecvLength = 0;
+        // 计算每个rank需使用的中转内存大小是否满足cclbuffer大小
+        for (u32 j = 0; j < userRankSize; j++) {
+            u64 curSendCounts =
+                *(static_cast<const u64 *>(param.All2AllDataDes.sendCountMatrix) + i * userRankSize + j);
+            u64 curSendLength = curSendCounts * SIZE_TABLE[param.All2AllDataDes.sendType];
+
+            u64 curRecvCounts =
+                *(static_cast<const u64 *>(param.All2AllDataDes.sendCountMatrix) + i + userRankSize * j);
+            u64 curRecvLength = curRecvCounts * SIZE_TABLE[param.All2AllDataDes.recvType];
+
+            maxSendLength += curSendLength;
+            maxRecvLength += curRecvLength;
+        }
+        if ((maxSendLength <= GetExternalInputCCLBuffSize()) || (maxRecvLength <= GetExternalInputCCLBuffSize())) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool IsSupportDirectFullmeshForAlltoallv(const OpParam& param, DevType deviceType, bool useSuperPodMode, u32 serverNum,
+    bool isSingleMeshAggregation, u32 userRankSize)
 {
-    (void)superPodNum;
-    (void)opType;
-    bool isDevice91093 = (deviceType == DevType::DEV_TYPE_910_93);
+    bool isDeviceType = (deviceType == DevType::DEV_TYPE_910_93 || deviceType == DevType::DEV_TYPE_910B);
     bool isOpbase = (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
-    bool isHCCS = (serverNum > 1) ?
-        (!GetExternalInputInterHccsDisable() && useSuperPodMode) : (!GetExternalInputInterHccsDisable());
-    HCCL_DEBUG("[IsSupportDirectFullmeshFor91093]isDevice91093[%u], isOpbase[%u], isHCCS[%u]",
-        isDevice91093, isOpbase, isHCCS);
-    return isDevice91093 && isOpbase && isHCCS;
+    bool isHCCS = false;
+    bool isSatisfyBuffer = true;
+    if (deviceType == DevType::DEV_TYPE_910_93) {
+        isHCCS = (serverNum > 1) ?
+            (!GetExternalInputInterHccsDisable() && useSuperPodMode) : (!GetExternalInputInterHccsDisable());
+    } else if (deviceType == DevType::DEV_TYPE_910B) {
+        isHCCS = (isSingleMeshAggregation) ? (true) : (false);
+        if (isHCCS && (param.opType == HcclCMDType::HCCL_CMD_ALLTOALLVC ||
+                       param.opType == HcclCMDType::HCCL_CMD_ALLTOALL)) {
+            // 910B场景下alltoall和alltoallvc需满足数据量大于cclbuffer大小条件
+            isSatisfyBuffer = IsAlltoAllvcSatisfyBufferSize(param, userRankSize);
+        }
+    }
+    HCCL_DEBUG("[IsSupportDirectFullmeshForAlltoallv]isDevice91093[%u], isOpbase[%u], isHCCS[%u], isSatisfyBuffer[%u]",
+        isDeviceType, isOpbase, isHCCS, isSatisfyBuffer);
+    return isDeviceType && isOpbase && isHCCS && isSatisfyBuffer;
 }
 
 bool SatisfyIntraSuperPod(DevType deviceType, u32 rankSize, bool useSuperPodMode, u32 superPodNum)
@@ -267,7 +303,8 @@ bool SatisfyIntraSuperPod(DevType deviceType, u32 rankSize, bool useSuperPodMode
     bool isDevice91093 = (deviceType == DevType::DEV_TYPE_910_93);
     bool isHCCS = !GetExternalInputInterHccsDisable() && useSuperPodMode;
     bool isSingleSuperPod = superPodNum == 1;
-    return (isDevice91093 && rankSizeSupport && isHCCS && isSingleSuperPod);
+    bool isOpbase = (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
+    return (isDevice91093 && rankSizeSupport && isHCCS && isSingleSuperPod && isOpbase);
 }
 
 bool FullmeshPairwiseSatisfyHighPerfAlltoallMeshCondition(DevType deviceType, u32 rankSize, bool useSuperPodMode)
@@ -385,5 +422,132 @@ u64 GetGlobalMaxUserInSize(const std::vector<SendRecvInfo> &allMeshAggregationSe
         }
     }
     return maxUserIn;
+}
+
+bool HcclOpInplaceDefaultCase(const OpParam &param, u8 &isInplaceStatus)
+{
+    // unknown op
+    if (param.inputPtr != param.outputPtr) {
+        // 可以走重执行
+        HCCL_DEBUG("[CollAlgOperator][IsHcclOpInplace]param.inputPtr[%p] != param.outputPtr[%p]. They do not overlap.",
+            param.inputPtr, param.outputPtr);
+        isInplaceStatus = 0;
+        return false;
+    } else {
+        HCCL_DEBUG("[CollAlgOperator][IsHcclOpInplace]param.inputPtr[%p] == param.outputPtr[%p]. They overlap.",
+            param.inputPtr, param.outputPtr);
+        isInplaceStatus = 1;
+        return true;
+    }
+}
+
+bool IsInputOutputOverlap(const OpParam &param, u64 inputDataSize, u64 outputDataSize, u8 &isInplaceStatus)
+{
+    if (inputDataSize == 0 || outputDataSize == 0) {
+        // 不存在overlap情况
+        HCCL_INFO("[CollAlgOperator][OpRetry][AICPU]The inputPtr[%p] dataSize[%llu], the outputPtr[%p] dataSize[%llu]."
+            "They do not overlap.", param.inputPtr, inputDataSize, param.outputPtr, outputDataSize);
+        isInplaceStatus = 0;
+        return false;
+    }
+    u64 inputStart = reinterpret_cast<u64>(param.inputPtr);
+    u64 inputEnd = reinterpret_cast<u64>(param.inputPtr) + inputDataSize - 1;
+    u64 outputStart = reinterpret_cast<u64>(param.outputPtr);
+    u64 outputEnd = reinterpret_cast<u64>(param.outputPtr) + outputDataSize - 1;
+
+    if (inputStart <= outputEnd && outputStart <= inputEnd) {
+        HCCL_DEBUG("[CollAlgOperator][OpRetry][AICPU]The inputPtr[%p] dataSize[%llu], the outputPtr[%p] dataSize[%llu]."
+            "They overlap.", param.inputPtr, inputDataSize, param.outputPtr, outputDataSize);
+        isInplaceStatus = 2; // The status 2 is overlap with dataSize.
+        return true;
+    } else {
+        HCCL_DEBUG("[CollAlgOperator][OpRetry][AICPU]The inputPtr[%p] dataSize[%llu], the outputPtr[%p] dataSize[%llu]."
+            "They do not overlap.", param.inputPtr, inputDataSize, param.outputPtr, outputDataSize);
+        isInplaceStatus = 0;
+        return false;
+    }
+}
+
+bool IsInputOutPtrNotNullPtr(const OpParam &param, u8 &isInplaceStatus)
+{
+    if (param.inputPtr == nullptr || param.outputPtr == nullptr) {
+        // 不存在overlap情况
+        HCCL_DEBUG("[CollAlgOperator][OpRetry][AICPU]param.tag[%s], the inputPtr[%p], the outputPtr[%p]."
+            "They do not overlap.", param.tag.c_str(), param.inputPtr, param.outputPtr);
+        isInplaceStatus = 0;
+        return false;
+    } else {
+        return true;
+    }
+}
+
+u32 InplaceDataUnitSize(const HcclCMDType &opType, const OpParam &param)
+{
+    u32 unitSize = 0;
+    if (opType != HcclCMDType::HCCL_CMD_ALLTOALLV && opType != HcclCMDType::HCCL_CMD_ALLTOALLVC &&
+        opType != HcclCMDType::HCCL_CMD_ALLTOALL) {
+        if (param.DataDes.dataType >= HCCL_DATA_TYPE_RESERVED) {
+            HCCL_WARNING("[InplaceDataUnitSize] out of range[%d, %d]",
+                HCCL_DATA_TYPE_INT8, HCCL_DATA_TYPE_RESERVED - 1);
+            return 0;
+        }
+        unitSize = SIZE_TABLE[param.DataDes.dataType];
+    }
+    return unitSize;
+}
+
+bool IsHcclOpInplace(const HcclCMDType &opType, const OpParam &param, u32 userRank, u32 userRankSize,
+    u8 &isInplaceStatus)
+{
+    if (!IsInputOutPtrNotNullPtr(param, isInplaceStatus)) {
+        return false;
+    }
+    u32 unitSize = InplaceDataUnitSize(opType, param);
+    u64 inputDataSize = 0;
+    u64 outputDataSize = 0;
+    switch (opType) {
+        case HcclCMDType::HCCL_CMD_SEND:
+        case HcclCMDType::HCCL_CMD_RECEIVE:
+            isInplaceStatus = 0;
+            return false;
+            break;
+        case HcclCMDType::HCCL_CMD_ALLREDUCE:
+            inputDataSize = param.DataDes.count * unitSize;
+            outputDataSize = param.DataDes.count * unitSize;
+            break;
+        case HcclCMDType::HCCL_CMD_REDUCE:
+            inputDataSize = param.DataDes.count * unitSize;
+            if (userRank == param.root) {
+                outputDataSize = param.DataDes.count * unitSize;
+            }
+            break;
+        case HcclCMDType::HCCL_CMD_ALLGATHER:
+            inputDataSize = param.DataDes.count * unitSize;
+            outputDataSize = param.DataDes.count * unitSize * userRankSize;
+            break;
+        case HcclCMDType::HCCL_CMD_REDUCE_SCATTER:
+            inputDataSize = param.DataDes.count * unitSize * userRankSize;
+            outputDataSize = param.DataDes.count * unitSize;
+            break;
+        case HcclCMDType::HCCL_CMD_GATHER:
+            inputDataSize = param.DataDes.count * unitSize;
+            if (userRank == param.root) {
+                outputDataSize = param.DataDes.count * unitSize * userRankSize;
+            }
+            break;
+        case HcclCMDType::HCCL_CMD_SCATTER:
+            if (userRank == param.root) {
+                inputDataSize = param.DataDes.count * unitSize * userRankSize;
+            }
+            outputDataSize = param.DataDes.count * unitSize;
+            break;
+        case HcclCMDType::HCCL_CMD_ALLTOALLV:
+        case HcclCMDType::HCCL_CMD_ALLTOALLVC:
+        case HcclCMDType::HCCL_CMD_ALLTOALL:
+        default:
+            return HcclOpInplaceDefaultCase(param, isInplaceStatus);
+            break;
+    }
+    return IsInputOutputOverlap(param, inputDataSize, outputDataSize, isInplaceStatus);
 }
 }

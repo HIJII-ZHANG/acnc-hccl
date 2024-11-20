@@ -17,7 +17,6 @@
 #include "hccl_communicator_attrs.h"
 #include "hccl/base.h"
 #include "hccl_impl_pub.h"
-#include "comm_factory_pub.h"
 #include "heartbeat_pub.h"
 #include "opexecounter_pub.h"
 #include "op_base_stream_manager_pub.h"
@@ -47,7 +46,10 @@
 namespace hccl {
 using ServRankInfo_t = std::map<std::string, std::vector<RankInfo_t> >;
 constexpr u32 COMM_MAX_WORK_SPACE_SIZE = 16 * 1024 * 1024; // 默认16MB
+constexpr u32 INPUT = 0;
+constexpr u32 OUTPUT = 1;
 const std::string COMM_LOOPBACK_IP = "127.0.0.1";
+constexpr u8 INPLACE_PRESYNC_STATUS_SEVEN = 7;
 struct RemoteRes {
     u64 inbufferSize;
     u64 outbufferSize;
@@ -69,7 +71,6 @@ using rankTagSignalInfo_t = std::unordered_map<u32, std::unordered_map<std::stri
 using rankTagKey_t = std::unordered_map<u32, std::unordered_map<std::string, std::vector<u32>>>;
 using rankTagAddr_t = std::unordered_map<u32, std::unordered_map<std::string, std::vector<u64>>>;
 using rankTagChipId_t = std::unordered_map<u32, std::unordered_map<std::string, s64>>;
-using rankTagMem_t = std::unordered_map<u32, std::unordered_map<std::string, std::vector<MemDetails>>>;
 class HcclCommunicator {
 public:
     explicit HcclCommunicator();
@@ -222,6 +223,7 @@ public:
     static bool CompareWithNicName(const NetworkInfo_t &left, const NetworkInfo_t &right);
 
     HcclResult GetOneSidedService(IHcclOneSidedService** service);
+    HcclResult InitOneSidedServiceNetDevCtx();
 
     u32 GetUserRank();
     u32 GetGroupRank();
@@ -279,7 +281,7 @@ public:
 
     virtual HcclResult GetAicpuOpStreamNotify(HcclRtStream *opStream, void** aicpuNotify);
 
-    HcclResult GetAlgInfo(const std::string &algConfig, const std::string &tag,
+    HcclResult GetAlgInfo(const std::string &algConfig, const std::string &tag, HcclCMDType commType,
         std::string &algName, std::string &newTag);
     HcclResult FillOpParam(const HcclCMDType commType, OpParam& opParam,
         const uint64_t count, void *pCount, void *pDispls);
@@ -306,6 +308,8 @@ public:
     HcclResult SetDeterministicConfig(const u8 deterministic);  // 设置确定性计算配置
     bool GetMC2EnvFlag();
     HcclResult ResetNotify();
+    HcclResult ResetNotifyForDestRank(s64 destRank);
+    HcclResult SetTransportStatus(std::string &newTag, bool statusStop, bool isSendRecv, u32 remoteRank);
 private:
     bool IsEnableRoce();
     void SetAttrs();
@@ -341,6 +345,7 @@ private:
     HcclResult InitNic();
     HcclResult DeinitNic();
     HcclResult RegisterToHeartBeat();
+    HcclResult RegisterToHeartBeat(u32 peerRankId, std::string &tag);
     HcclResult MrManagerInit();
     HcclResult MrManagerDeInit();
     HcclResult InitRecvMsgAndRequestBuffer();
@@ -357,6 +362,14 @@ private:
     const std::string &kernelName, const AicpuOpTiling opTilingInfo);
     HcclResult AicpuKfcTilingDataLaunchExt(const OpParam &opParam, const HcclCMDType &opType,
         const DeviceMem &deviceContext, const std::string &kernelName, const AicpuOpTiling opTilingInfo);
+    u64 CalcOpTilingDynamicDataSize(
+        const OpParam &opParam, const HcclCMDType &opType, const u32 &rankSize);
+    HcclResult AicpuInitOpTilingDataFromOpParam(const OpParam &opParam, const HcclCMDType &opType,
+        struct OpTilingData* opTilingData);
+    HcclResult AicpuInitOpTilingDataBuf(const OpParam &opParam, const HcclCMDType &opType, 
+        const std::string &kernelName, const AicpuOpTiling opTilingInfo, u64 dynamicDataSize);
+    HcclResult AicpuKfcTilingDataLaunchIn(const OpParam &opParam, const DeviceMem &deviceContext, 
+        const std::string &kernelName, const AicpuOpTiling opTilingInfo, u64 opTilingDataSize);
     HcclResult AllReduceAicpuUnfold(const std::string &tag, void *inputPtr, void *outputPtr, u64 count,
         HcclDataType dataType, HcclReduceOp op, HcclRtStream stream);
     HcclResult CreateMutiStreamResFor310P(const std::string &tag, innerStreamInfo_t &streamInfo);
@@ -365,7 +378,7 @@ private:
     HcclResult ProfilerAdd(const OpParam &param, AlgType algType);
     HcclResult SetDynamicTilingDataAlltoallv(const OpParam &opParam, HostMem &dynamicDataMem);
     HcclResult SetDynamicTilingDataAlltoallvc(const OpParam &opParam, HostMem &dynamicDataMem);
-
+    HcclResult GetReportHcclMC2Info(const Stream &kfcStream, const std::vector<Stream> &aicpuStreams);
     u32 deviceNumPerServer_;
     HcclDispatcher dispatcher_; // dispatcher放到最后析构
     HcclDispatcher vDispatcher_; // virtualDispatcher放到最后析构
@@ -386,6 +399,7 @@ private:
     u32 devicePhyId_;
     s32 deviceLogicId_;
     std::vector<HcclIpAddress> devIpAddr_;
+    std::vector<HcclIpAddress> devBackupIpAddr_;
     HcclIpAddress hostIp_;
     u32 hostPort_;
     u32 localRank_;
@@ -522,7 +536,8 @@ private:
         const std::string &newTag);
     HcclResult BuildOpRetryParam(const AlgResourceResponse &algResource, const std::string &newTag);
     HcclResult BuildOpRemoteBufferResParam(const u32 &rankId, const std::string &tag, const LINK &link);
-    HcclResult BuildRdmaOpRemoteBufferResParam(const u32 &rankId, const std::string &tag, const LINK &link);
+    HcclResult BuildRdmaOpBufferResParam(const u32 &rankId, const std::string &tag, const LINK &link);
+    HcclResult BuildRdmaOpQpInfosParam(const u32 &rankId, const std::string &tag, const LINK &link);
     void AddIpcNotifyResParam(const u32 &rankId, const std::string &tag, const HcclSignalInfo &signalInfo,
         rankTagSignalInfo_t &rankTagSignalInfo, std::unordered_map<u32, std::unordered_set<u64>> &resIdSet);
     void AddRdmaNotifyResParam(const u32 &rankId, const std::string &tag, const HcclSignalInfo &signalInfo,
@@ -548,8 +563,13 @@ private:
     HcclResult ParseRemoteSignalToMem(const std::string &newTag, const u32 &usrRankId,
         std::vector<HcclSignalInfo> &tagRemoteNotifyUsed, std::vector<HcclSignalInfo> &tagLocalNotifyUsed,
         HcclRankRelationResV2 *rankRelationResHostPtr);
+    HcclResult ParseRdmaRemoteSignalToMem(const std::string &newTag, const u32 &usrRankId,
+        std::vector<u64> &tagRemoteNotifyUsed, std::vector<HcclSignalInfo> &tagLocalNotifyUsed,
+        HcclRankRelationResV2 *rankRelationResHostPtr);
     HcclResult ParseRemoteTagDataToMem(const std::string &newTag, const u32 &usrRankId,
         HcclRankRelationResV2 *rankRelationResHostPtr, HcclRankRelationResV2 *rankRelationResDevicePtr);
+    HcclResult AssignQpInfo(const std::string &tag, const u32 &usrRankId, HcclQpInfoV2 QpInfo[],
+        std::vector<HcclQpInfoV2> tagQpInfo);
     HcclResult ParseRdmaRemoteTagDataToMem(const std::string &newTag, const u32 &usrRankId,
         HcclRankRelationResV2 *rankRelationResHostPtr, HcclRankRelationResV2 *rankRelationResDevicePtr);
     HcclResult ParseRemoteDataToMem(const std::string &newTag);
@@ -612,6 +632,7 @@ private:
     bool inplaceSupportRetry_ = false; //inplace是否支持重执行
     u8 isInplaceStatus_ = 0; // 算子是不是inplace的状态
     u8 inPlaceSupportRetryStatus_ = 0; // 算子在inplace时，是否支持重执行的状态
+    HcclWorkflowMode retryOrigWorkflowMode_ = HcclWorkflowMode::HCCL_WORKFLOW_MODE_RESERVED;
     HcclOpResParam opResPara_{};
     DeviceMem opResDevicePara_;
     HcclOpResParam *opResDeviceParaPtr_;
@@ -623,6 +644,9 @@ private:
     std::unordered_map<u32, std::unordered_set<u64>> localIpcNotifyExist_;
     std::unordered_map<u32, std::unordered_set<u64>> remoteIpcNotifyExist_;
     std::unordered_map<u32, std::unordered_map<std::string, RemoteRes>> rankTagRemoteRes_;
+    std::unordered_map<u32, std::unordered_map<std::string, RemoteRes>> rankTagLocalRes_;
+    std::unordered_map<u32, std::unordered_map<std::string, std::vector<HcclQpInfoV2>>> rankTagQpInfo_;
+    std::unordered_map<u32, std::unordered_set<u64>> rankTagQpPtrSet_;
     rankTagKey_t rdmaNotifyValueKey_;
     rankTagKey_t remoteRdmaNotifyKey_;
     rankTagSignalInfo_t localRdmaNotify_;
@@ -630,8 +654,6 @@ private:
     rankTagAddr_t localRdmaNotifyValue_;
     rankTagAddr_t remoteRdmaNotify_;
     std::unordered_map<u32, std::unordered_set<u64>> remoteRdmaNotifyExist_;
-    rankTagMem_t localInputMem_;
-    rankTagMem_t localOutputMem_;
     rankTagChipId_t chipIdList_;
     std::vector<std::shared_ptr<DeviceMem>> deviceMemVec_;
     std::vector<std::shared_ptr<HostMem>> hostMemVec_;

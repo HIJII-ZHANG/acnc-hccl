@@ -153,6 +153,8 @@ HcclResult CollRunAlltoAllVTwoLevelPipeline::KernelRun(const OpParam &param, Exe
         a2aPipelineMemory.scratchMem = execMem.scratchMem;
     }
 
+    CHK_RET(AddSubStreamToProfiling());
+
     std::unique_ptr<AlltoallPipelineBase> alltoallPipe = nullptr;
     if (cclEnough) {
         alltoallPipe.reset(new (std::nothrow)AlltoallPipelineMeshPairwiseCCLEnough(dispatcher_,

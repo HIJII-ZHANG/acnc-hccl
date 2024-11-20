@@ -278,4 +278,115 @@ HcclResult CollNativeExecutorBase::GetUserRankByRank(CommPlane levelIndex, u32 s
     userRank = transportInfo.subCommRank2UserRank[rank];
     return HCCL_SUCCESS;
 }
+
+HcclResult CollNativeExecutorBase::SendRecvSignalOnLinks(OpParam &param, ExecMem &execMem, std::vector<LINK> links)
+{
+    // 实验结果: 算子间隔1s能够被PreSync拦截
+    // 收发信号校验
+    for (size_t i = 0; i < links.size(); i++) {
+        if (links[i] == nullptr) {
+            HCCL_DEBUG("[CollNativeExecutorBase][SendRecvSignalOnLinks]links[%zu] == nullptr.", i);
+            continue;
+        }
+        if (!links[i]->IsValid()) {
+            HCCL_DEBUG("[CollNativeExecutorBase][SendRecvSignalOnLinks]links[%zu]!links[i]->IsValid().", i);
+            continue;
+        }
+        HCCL_INFO("[CollNativeExecutorBase][SendRecvSignalOnLinks]links[%zu].", i);
+        CHK_RET(links[i]->TxAck(param.stream));
+        CHK_RET(links[i]->RxAck(param.stream));
+    }
+    // 拷贝数据从而占满端口，才能在注入故障时在PreSync算子触发重执行
+    for (size_t i = 0; i < links.size(); i++) {
+        if (links[i] == nullptr) {
+            HCCL_DEBUG("[CollNativeExecutorBase][SendRecvSignalOnLinks]links[%zu] == nullptr.", i);
+            continue;
+        }
+        if (!links[i]->IsValid()) {
+            HCCL_DEBUG("[CollNativeExecutorBase][SendRecvSignalOnLinks]links[%zu]!links[i]->IsValid().", i);
+            continue;
+        }
+        HCCL_INFO("[CollNativeExecutorBase][SendRecvSignalOnLinks]links[%zu] start memcopy.", i);
+        u64 size = HCCL_INPLACE_MEMCOPY_SIZE; // 传1M数据量占满所有端口
+        CHK_RET(links[i]->TxAsync(UserMemType::INPUT_MEM, 0, execMem.inputMem.ptr(), size, param.stream));
+        CHK_RET(links[i]->RxAsync(UserMemType::INPUT_MEM, 0, execMem.inputMem.ptr(), size, param.stream));
+        CHK_RET(links[i]->PostFinAck(param.stream));
+        CHK_RET(links[i]->WaitFinAck(param.stream));
+    }
+    // 防止某一个rank在link未通的情况下继续执行下一个算子
+    for (size_t i = 0; i < links.size(); i++) {
+        if (links[i] == nullptr) {
+            HCCL_DEBUG("[CollNativeExecutorBase][SendRecvSignalOnLinks]links[%zu] == nullptr.", i);
+            continue;
+        }
+        if (!links[i]->IsValid()) {
+            HCCL_DEBUG("[CollNativeExecutorBase][SendRecvSignalOnLinks]links[%zu]!links[i]->IsValid().", i);
+            continue;
+        }
+        HCCL_INFO("[CollNativeExecutorBase][SendRecvSignalOnLinks]links[%zu].", i);
+        CHK_RET(links[i]->TxDataSignal(param.stream));
+        CHK_RET(links[i]->RxDataSignal(param.stream));
+    }
+    return HCCL_SUCCESS;
+}
+
+bool CollNativeExecutorBase::OpSyncCheckCommSize(const CommPlane levelIndex, const u32 expectedSize)
+{
+    if (algResResp_->opTransportResponse[levelIndex].size() < expectedSize) {
+        HCCL_WARNING("[CollNativeExecutorBase][CheckCommSize]tag[%s], levelIndex[%u], " \
+            "ring size[%zu] is less than expected[%u]",
+            tag_.c_str(), levelIndex, algResResp_->opTransportResponse[levelIndex].size(), expectedSize);
+        return false;
+    }
+    return true;
+}
+
+HcclResult CollNativeExecutorBase::InplaceOpSync(OpParam &param, ExecMem &execMem)
+{
+    HCCL_INFO("[CollNativeExecutorBase][InplaceOpSync] The op with param.isInplacePreSync[%d] "
+        "or param.isPostSync[%d] starts.",
+        param.isInplacePreSync, param.isPostSync);
+    u32 level0ServerIndex = 0;
+    if (OpSyncCheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1)) {
+        SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+        level0ServerIndex = level0CommInfo.localRank;
+        HCCL_INFO("[CollNativeExecutorBase][InplaceOpSync]level0CommInfo.links check starts.");
+        CHK_RET(SendRecvSignalOnLinks(param, execMem, level0CommInfo.links));
+    }
+    if (OpSyncCheckCommSize(COMM_LEVEL1, level0ServerIndex + 1)) {
+        SubCommInfo level1CommInfo = GetSubCommInfo(COMM_LEVEL1, level0ServerIndex);
+        HCCL_INFO("[CollNativeExecutorBase][InplaceOpSync]level1CommInfo.links check starts.");
+        CHK_RET(SendRecvSignalOnLinks(param, execMem, level1CommInfo.links));
+    }
+    if (OpSyncCheckCommSize(COMM_LEVEL2, COMM_INDEX_0 + 1)) {
+        SubCommInfo level2CommInfo = GetSubCommInfo(COMM_LEVEL2, COMM_INDEX_0);
+        HCCL_INFO("[CollNativeExecutorBase][InplaceOpSync]level2CommInfo.links check starts.");
+        CHK_RET(SendRecvSignalOnLinks(param, execMem, level2CommInfo.links));
+    }
+    if (OpSyncCheckCommSize(COMM_LEVEL1, level0ServerIndex + 1)) {
+        SubCommInfo level1CommInfo = GetSubCommInfo(COMM_LEVEL1, level0ServerIndex);
+        HCCL_INFO("[CollNativeExecutorBase][InplaceOpSync]level1CommInfo.links check starts again.");
+        CHK_RET(SendRecvSignalOnLinks(param, execMem, level1CommInfo.links));
+    }
+    if (OpSyncCheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1)) {
+        SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+        HCCL_INFO("[CollNativeExecutorBase][InplaceOpSync]level0CommInfo.links check starts again.");
+        CHK_RET(SendRecvSignalOnLinks(param, execMem, level0CommInfo.links));
+    }
+    // alltoall-like opType
+    if (OpSyncCheckCommSize(COMM_COMBINE_ORDER, COMM_INDEX_0 + 1)) {
+        SubCommInfo combineOrderCommInfo = GetSubCommInfo(COMM_COMBINE_ORDER, COMM_INDEX_0);
+        HCCL_INFO("[CollNativeExecutorBase][InplaceOpSync]combineOrderCommInfo.links check starts.");
+        CHK_RET(SendRecvSignalOnLinks(param, execMem, combineOrderCommInfo.links));
+    }
+    if (OpSyncCheckCommSize(COMM_COMBINE_ORDER, COMM_INDEX_0 + 1)) {
+        SubCommInfo combineOrderCommInfo = GetSubCommInfo(COMM_COMBINE_ORDER, COMM_INDEX_0);
+        HCCL_INFO("[CollNativeExecutorBase][InplaceOpSync]combineOrderCommInfo.links check starts again.");
+        CHK_RET(SendRecvSignalOnLinks(param, execMem, combineOrderCommInfo.links));
+    }
+    HCCL_INFO("[CollNativeExecutorBase][InplaceOpSync] The op with param.isInplacePreSync[%d] "
+        "or param.isPostSync[%d] ends.",
+        param.isInplacePreSync, param.isPostSync);
+    return HCCL_SUCCESS;
+}
 }

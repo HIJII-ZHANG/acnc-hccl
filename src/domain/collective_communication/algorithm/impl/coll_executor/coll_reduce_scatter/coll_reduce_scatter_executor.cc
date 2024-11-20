@@ -52,7 +52,19 @@ HcclResult CollReduceScatterExecutor::Orchestrate(OpParam& param, AlgResourceRes
         execMem.scratchMem = algRes.scratchMem;
         ret = KernelRun(param, execMem);
     } else {
-        ret = RunLoop(param, algRes);
+        if (param.isInplacePreSync == true) {
+            /*当重执行场景，UserInMem > CCLBuffer时，需要在reduce scatter算子前增加一个PreSync函数，提升重执行成功概率*/
+            ExecMem execMem;
+            execMem.count = param.DataDes.count;
+            execMem.inputPtr = param.inputPtr;
+            execMem.outputPtr = param.outputPtr;
+            execMem.inputMem = algRes.cclInputMem;
+            execMem.outputMem = algRes.cclOutputMem;
+            execMem.scratchMem = algRes.scratchMem;
+            ret = InplaceOpSync(param, execMem);
+        } else {
+            ret = RunLoop(param, algRes);
+        }
     }
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollReduceScatterExecutor][Orchestrate]errNo[0x%016llx]excutor kernel run failed",
@@ -154,6 +166,16 @@ HcclResult CollReduceScatterExecutor::RunLoop(OpParam &param, AlgResourceRespons
 
         inputOffset = curSize;
         outputOffset = curSize;
+    }
+    if (param.isPostSync == true) {
+        ExecMem execMem;
+        execMem.count = param.DataDes.count;
+        execMem.inputPtr = param.inputPtr;
+        execMem.outputPtr = param.outputPtr;
+        execMem.inputMem = algRes.cclInputMem;
+        execMem.outputMem = algRes.cclOutputMem;
+        execMem.scratchMem = algRes.scratchMem;
+        CHK_RET(InplaceOpSync(param, execMem));
     }
     return HCCL_SUCCESS;
 }

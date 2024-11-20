@@ -223,8 +223,8 @@ HcclResult TopoMatcher::SetIsUsedRdma(const CommParaInfo &commParaInfo,
 {
     bool isUsedRdma = false;
     CHK_RET(GetIsUsedRdma(commParaInfo, isUsedRdma));
-    isUsedRdma = (GetExternalInputEnableRdmaSdmaConcurrent() && topoInfo_.deviceType == DevType::DEV_TYPE_910_93) ?
-        commParaInfo.forceRdma : isUsedRdma;
+    isUsedRdma = (GetExternalInputEnableRdmaSdmaConcurrent() && topoInfo_.deviceType == DevType::DEV_TYPE_910_93
+        && (commParaInfo.commPlane != COMM_LEVEL2)) ? commParaInfo.forceRdma : isUsedRdma;
     u32 ringSize = commTransport.size();
 
     for (u32 ringIndex = 0; ringIndex < ringSize; ringIndex++) {
@@ -376,7 +376,7 @@ u32 TopoMatcher::GetSubRootUserRank(const u32 userRank, const u32 rootUserRank)
 
     u32 serverIdx = INVALID_VALUE_RANKID;
     for (u32 i = 0; i < serverAndsuperPodToRank_[0].size(); i++) {
-        for (u32 j = 0; j < serverAndsuperPodToRank_[0][0].size(); j++) {
+        for (u32 j = 0; j < serverAndsuperPodToRank_[0][i].size(); j++) {
             if (serverAndsuperPodToRank_[0][i][j] == rootUserRank) {
                 serverIdx = i;
                 break;
@@ -385,7 +385,7 @@ u32 TopoMatcher::GetSubRootUserRank(const u32 userRank, const u32 rootUserRank)
     }
     u32 rankIdx = INVALID_VALUE_RANKID;
     for (u32 i = 0; i < serverAndsuperPodToRank_[0].size(); i++) {
-        for (u32 j = 0; j < serverAndsuperPodToRank_[0][0].size(); j++) {
+        for (u32 j = 0; j < serverAndsuperPodToRank_[0][i].size(); j++) {
             if (serverAndsuperPodToRank_[0][i][j] == userRank) {
                 rankIdx = j;
                 break;
@@ -407,7 +407,7 @@ u32 TopoMatcher::GetSubRootUserRankWithSuperPod(const u32 userRank, const u32 ro
 
     u32 superPodIdx = INVALID_VALUE_RANKID;
     for (u32 i = 0; i < serverAndsuperPodToRank_[1].size(); i++) {
-        for (u32 j = 0; j < serverAndsuperPodToRank_[1][0].size(); j++) {
+        for (u32 j = 0; j < serverAndsuperPodToRank_[1][i].size(); j++) {
             if (serverAndsuperPodToRank_[1][i][j] == rootUserRank) {
                 superPodIdx = i;
                 break;
@@ -416,7 +416,7 @@ u32 TopoMatcher::GetSubRootUserRankWithSuperPod(const u32 userRank, const u32 ro
     }
     u32 rankIdx = INVALID_VALUE_RANKID;
     for (u32 i = 0; i < serverAndsuperPodToRank_[1].size(); i++) {
-        for (u32 j = 0; j < serverAndsuperPodToRank_[1][0].size(); j++) {
+        for (u32 j = 0; j < serverAndsuperPodToRank_[1][i].size(); j++) {
             if (serverAndsuperPodToRank_[1][i][j] == userRank) {
                 rankIdx = j;
                 break;
@@ -438,7 +438,7 @@ u32 TopoMatcher::GetSubRootWithSuperPod(const u32 userRank, const u32 rootUserRa
 
     u32 superPodIdx = INVALID_VALUE_RANKID;
     for (u32 i = 0; i < serverAndsuperPodToRank_[1].size(); i++) {
-        for (u32 j = 0; j < serverAndsuperPodToRank_[1][0].size(); j++) {
+        for (u32 j = 0; j < serverAndsuperPodToRank_[1][i].size(); j++) {
             if (serverAndsuperPodToRank_[1][i][j] == userRank) {
                 superPodIdx = i;
                 break;
@@ -447,7 +447,7 @@ u32 TopoMatcher::GetSubRootWithSuperPod(const u32 userRank, const u32 rootUserRa
     }
     u32 rankIdx = INVALID_VALUE_RANKID;
     for (u32 i = 0; i < serverAndsuperPodToRank_[1].size(); i++) {
-        for (u32 j = 0; j < serverAndsuperPodToRank_[1][0].size(); j++) {
+        for (u32 j = 0; j < serverAndsuperPodToRank_[1][i].size(); j++) {
             if (serverAndsuperPodToRank_[1][i][j] == rootUserRank) {
                 rankIdx = j;
                 break;
@@ -466,8 +466,10 @@ HcclResult TopoMatcher::GetLocalSuperPodRankSize(const u32 userRank, u32& devNum
 {
     u32 superPodIdx = INVALID_VALUE_RANKID;
     for (u32 i = 0; i < serverAndsuperPodToRank_[1].size(); i++) {
-        for (u32 j = 0; j < serverAndsuperPodToRank_[1][0].size(); j++) {
-            if (serverAndsuperPodToRank_[1][i][j] == userRank) {
+        std::vector<u32> userRankInSuperPod(serverAndsuperPodToRank_[1][i]);
+        std::sort(userRankInSuperPod.begin(), userRankInSuperPod.end());
+        for (u32 j = 0; j < userRankInSuperPod.size(); j++) {
+            if (userRankInSuperPod[j] == userRank) {
                 superPodIdx = i;
                 rankIdxInPod = j;
                 break;

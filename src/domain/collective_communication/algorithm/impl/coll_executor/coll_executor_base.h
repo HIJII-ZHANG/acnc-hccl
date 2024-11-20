@@ -38,6 +38,10 @@ public:
 
     static HcclResult RunTemplate(const std::unique_ptr<ExecutorBase> &executor, const SubCommInfo &commInfo);
 
+    //batchsendrecv retry使用
+    virtual HcclResult CreatePairWiseList(HcclSendRecvItem *sendRecvInfo, u32 itemNum);
+    virtual HcclResult GetPairWiseList(std::vector<std::vector<HcclSendRecvItem*>> &sendRecvPairList);
+
 protected:
     const HcclDispatcher dispatcher_;
     u64 inCCLbufferSize_{0}; // CCLIN大小，用于计算scratch

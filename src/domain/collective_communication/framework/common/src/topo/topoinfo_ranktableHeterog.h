@@ -42,9 +42,13 @@ private:
     HcclResult CheckNicDeployConsistence(RankTable_t &clusterInfo) const;
     HcclResult GetSingleRank(const nlohmann::json &ranksObj, u32 objIndex,
         RankTable_t &clusterInfo, std::string &serverId, u32 &serverIdx, HcclIpAddress &nodeIp);
+    HcclResult GetSingleRank91093(const nlohmann::json &ranksObj, u32 objIndex,
+        RankTable_t &clusterInfo, std::string &serverId, u32 &serverIdx, HcclIpAddress &nodeIp);
     HcclResult CheckMode(std::string &mode) const;
+    HcclResult CheckHeterogSubVersion(std::string &subVersion) const;
     HcclResult GetHostPort(const u32 &localRank, u32 &hostPort);
 
+    bool is91093_{ false };
     DevType deviceType_;
     std::map<u32, u32> hostPortMap_;
 };

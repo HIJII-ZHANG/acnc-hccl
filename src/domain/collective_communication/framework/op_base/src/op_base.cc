@@ -113,6 +113,9 @@ HcclOpInfoCtx &GetHcclOpInfoCtx(void)
 HcclResult GetDeviceComm(uint32_t ndev, const HcclRootInfo &rootHandle, const s32 rank, const s32 logicDeviceId,
     HcclComm &comm)
 {
+    //给当前线程添加名字
+    SetThreadName("Hccl_GetDeviceComm");
+
     CHK_PRT_RET(hrtSetDevice(logicDeviceId) != HCCL_SUCCESS,
         HCCL_ERROR("[GetDeviceComm] set fail logicDeviceId[%d]", logicDeviceId), HCCL_E_INTERNAL);
     HcclResult ret = HcclCommInitRootInfo(ndev, &rootHandle, rank, &comm);
@@ -134,6 +137,9 @@ HcclResult HcclGetCommAll(uint32_t ndev, int32_t *devices, HcclComm *comms)
     CHK_PRT_RET(ndev <= 0, HCCL_ERROR("[HcclGetCommAll] ndev is unvalid ndev[%u]", ndev), HCCL_E_PARA);
     CHK_PTR_NULL(comms);
     CHK_PTR_NULL(devices);
+
+    //给当前线程添加名字
+    SetThreadName("Hccl_HcclGetCommAll");
 
     CHK_PRT_RET(hrtSetDevice(devices[0]) != HCCL_SUCCESS,
         HCCL_ERROR("[HcclGetCommAll] set fail devices[0][%d]", devices[0]), HCCL_E_INTERNAL);
@@ -490,7 +496,7 @@ HcclResult HcclCreateSubCommConfigInner(hccl::hcclComm *globalComm, uint32_t ran
         return ret;
     }
 
-    HCCL_INFO("%s success, sub commm identifier[%s], rankNum[%u], rank[%u], server[%s], device[%d]",
+    HCCL_RUN_INFO("%s success, sub commm identifier[%s], rankNum[%u], rank[%u], server[%s], device[%d]",
         __func__, commIdentifier.c_str(), subRankTable.rankNum, subCommRankId,
         subParams.serverId.c_str(), subParams.logicDevId);
     return HCCL_SUCCESS;
@@ -2350,6 +2356,9 @@ HcclResult RunGather(u64 *sendCounts, u64 *sdispls, void *sendDevBuf, GatherPara
  */
 void GatherMemCopyThread(void *baseAddr, u64 offset, std::vector<u64> &addrInfo, OpBaseMemPara memCpyPara)
 {
+    //给当前线程添加名字
+    SetThreadName("Hccl_GatherMemCopy");
+
     void *addr = nullptr;
     const u32 NUM_TWO = 2;
     u64 length = 0;

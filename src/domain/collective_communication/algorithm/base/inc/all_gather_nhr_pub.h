@@ -32,7 +32,9 @@ protected:
 private:
     HcclResult RunAllGather(u32 rank, u32 rankSize, const std::vector<Slice> &outputSlices,
         const std::vector<LINK> &links);
-
+    HcclResult SdmaRx(const LINK &linkLeft, const LINK &linkRight, std::vector<Slice> &rxSlices);
+    HcclResult RdmaTxRx(const LINK &linkLeft, const LINK &linkRight, InterServerAlgoStep &stepInfo,
+        std::vector<Slice> &txSlices, std::vector<Slice> &rxSlices);
     HcclResult Tx(const LINK &link, std::vector<Slice> &txSlices);
     HcclResult Rx(const LINK &link, std::vector<Slice> &rxSlices);
 

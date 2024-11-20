@@ -54,7 +54,19 @@ HcclResult CollAllReduceExecutor::Orchestrate(OpParam& param, AlgResourceRespons
     } else if ((param.inputPtr == algRes.cclInputMem.ptr()) && (param.outputPtr == algRes.cclOutputMem.ptr())) {
         ret = AvoidSubgraphLoop(param, algRes);
     } else {
-        ret = RunLoop(param, algRes);
+        if (param.isInplacePreSync == true) {
+            /*当重执行场景，UserInMem > CCLBuffer时，需要在allreduce算子前增加一个PreSync函数，提升重执行成功概率*/
+            ExecMem execMem;
+            execMem.count = param.DataDes.count;
+            execMem.inputPtr = param.inputPtr;
+            execMem.outputPtr = param.outputPtr;
+            execMem.inputMem = algRes.cclInputMem;
+            execMem.outputMem = algRes.cclOutputMem;
+            execMem.scratchMem = algRes.scratchMem;
+            ret = InplaceOpSync(param, execMem);
+        } else {
+            ret = RunLoop(param, algRes);
+        }
     }
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAllReduceExecutor][Orchestrate]errNo[0x%016llx]all reudce excutor kernel run failed",
@@ -280,6 +292,7 @@ HcclResult CollAllReduceExecutor::AvoidSubgraphLoop(OpParam &param, AlgResourceR
             param.DataDes.count * unitSize <= HCCL_SMALL_COUNT_128_KB, 1, hugeData, CopyPattern::ZCOPY, 1,
             false, true, false, isDeterministic);
     CHK_RET(InitTask(dispatcher_, param.stream, opMeta.isEnableCache, opMeta.GetCacheKey()));
+
     DeviceMem src(param.inputPtr, 0);
     DeviceMem dst(algRes.cclInputMem.ptr(), 0);
     CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dst, src, param.stream));

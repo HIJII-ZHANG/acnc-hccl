@@ -19,18 +19,29 @@ IHcclOneSidedService::IHcclOneSidedService(unique_ptr<HcclSocketManager> &socket
 {
 }
 
-HcclResult IHcclOneSidedService::Config(const HcclNetDevCtx &netDevCtx, const HcclDispatcher &dispatcher,
+HcclResult IHcclOneSidedService::Config(const HcclDispatcher &dispatcher,
     const HcclRankLinkInfo &localRankInfo, const RankTable_t *rankTable)
 {
-    CHK_PTR_NULL(netDevCtx);
     CHK_PTR_NULL(dispatcher);
     CHK_PTR_NULL(rankTable);
 
-    netDevCtx_ = netDevCtx;
     dispatcher_ = dispatcher;
     localRankInfo_ = localRankInfo;
     rankTable_ = rankTable;
 
+    return HCCL_SUCCESS;
+}
+
+HcclResult IHcclOneSidedService::SetNetDevCtx(const HcclNetDevCtx &netDevCtx)
+{
+    netDevCtx_ = netDevCtx;
+    CHK_PTR_NULL(netDevCtx_);
+    return HCCL_SUCCESS;
+}
+
+HcclResult IHcclOneSidedService::GetNetDevCtx(HcclNetDevCtx &netDevCtx)
+{
+    netDevCtx = netDevCtx_;
     return HCCL_SUCCESS;
 }
 

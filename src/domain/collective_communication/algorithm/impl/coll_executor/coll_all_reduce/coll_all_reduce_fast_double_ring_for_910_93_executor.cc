@@ -27,7 +27,7 @@ HcclResult CollAllReduceFastDoubleRingFor91093Executor::DoubleRingReduceScatter(
     DeviceMem inputMem, DeviceMem outputMem, const u64 count, const HcclDataType dataType,
     const HcclReduceOp reductionOp, const std::vector<std::vector<Slice>> multRingsSliceZero, Stream stream,
     s32 profStage, const u64 baseOffset, const HcomCollOpInfo *opInfo,
-    const std::vector<std::vector<Slice>> multRingsUserMemSlice)
+    const std::vector<std::vector<Slice>> multRingsUserMemSlice, const bool retryEnable)
 {
     (void)tag;
     HCCL_INFO("[CollAllReduceFastDoubleRingFor91093Executor][DoubleRingReduceScatter] DoubleRingReduceScatter starts");
@@ -47,7 +47,7 @@ HcclResult CollAllReduceFastDoubleRingFor91093Executor::DoubleRingReduceScatter(
         multiRingsOrder, multRingsUserMemSlice, userMemInputSlicesOfDoubleRing));
     // 生成两个ring上的rankOrder
     std::vector<std::vector<u32>> rankOrders;
-    CollectMultiRingsRankOrder(ringNum, multiRingsOrder, rankOrders);
+    CHK_RET(CollectMultiRingsRankOrder(ringNum, multiRingsOrder, rankOrders));
     // 初始化executor
     std::unique_ptr<ExecutorBase> executor;
     executor.reset(new (std::nothrow) AlignedReduceScatterDoubleRingWithSerialLocalCopy(dispatcher_,
@@ -55,7 +55,7 @@ HcclResult CollAllReduceFastDoubleRingFor91093Executor::DoubleRingReduceScatter(
         algResResp_->notifiesS2M, rankOrders, userMemInputSlicesOfDoubleRing));
     CHK_SMART_PTR_NULL(executor);
     ret = executor->Prepare(inputMem, inputMem, outputMem, count, dataType, stream,
-        multRingsSliceZero, reductionOp, OUTER_BRIDGE_RANK_ID, baseOffset);
+        multRingsSliceZero, reductionOp, OUTER_BRIDGE_RANK_ID, baseOffset, retryEnable);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAllReduceFastDoubleRingFor91093Executor][DoubleRingReduceScatter] Double ring "
                    "reduce scatter failed failed,return[%d]", ret), ret);
@@ -100,7 +100,7 @@ HcclResult CollAllReduceFastDoubleRingFor91093Executor::DoubleRingAllGather(
         multiRingsOrder, multRingsUserMemSlice, userMemOutputSlicesOfDoubleRing));
     // 生成两个ring上的rankOrder
     std::vector<std::vector<u32>> rankOrders;
-    CollectMultiRingsRankOrder(ringNum, multiRingsOrder, rankOrders);
+    CHK_RET(CollectMultiRingsRankOrder(ringNum, multiRingsOrder, rankOrders));
     // 初始化executor
     std::unique_ptr<ExecutorBase> executor;
     executor.reset(new (std::nothrow) AlignedAllGatherDoubleRing(dispatcher_,
@@ -138,10 +138,10 @@ HcclResult CollAllReduceFastDoubleRingFor91093Executor::RunIntraSeverReduceScatt
     const u64 count, const HcclDataType &dataType, const HcclReduceOp &reductionOp,
     const std::vector<std::vector<Slice>> &multRingsSliceZero, const Stream &stream, s32 profStage,
     const u64 baseOffset, const HcomCollOpInfo *opInfo,
-    const std::vector<std::vector<Slice>> &multRingsUserMemSlice)
+    const std::vector<std::vector<Slice>> &multRingsUserMemSlice, const bool retryEnable)
 {
     CHK_RET(DoubleRingReduceScatter(tag, inputMem, outputMem, count, dataType, reductionOp,
-        multRingsSliceZero, stream, profStage, baseOffset, opInfo, multRingsUserMemSlice));
+        multRingsSliceZero, stream, profStage, baseOffset, opInfo, multRingsUserMemSlice, retryEnable));
     return HCCL_SUCCESS;
 }
 

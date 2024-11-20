@@ -112,7 +112,7 @@ AlgConfigurator::~AlgConfigurator() {}
 
 HcclResult AlgConfigurator::Init(bool isHeterogComm)
 {
-    if (!isHeterogComm && algoAttr_.commWorkMode != WorkMode::HCCL_MODE_AI_CPU) {
+    if (!isHeterogComm) {
         // 获取算法类型
         CHK_RET(SelectAlgType(topoAttr_.moduleNum, topoAttr_.deviceType, algType_));
         // 获取拓扑类型，根据算法类型转化
@@ -151,7 +151,9 @@ HcclResult AlgConfigurator::SelectCurrOpAlgType(
     if (Is310P3Common(algoAttr_.isHaveCpuRank, topoAttr_.deviceType)) {
         algType[opType] = AlgType::ALG_DEFAULT;
     } else if ((topoAttr_.multiModuleDiffDeviceNumMode ||
-               (topoAttr_.multiSuperPodDiffServerNumMode && !(opType == HcclCMDType::HCCL_CMD_ALLREDUCE && isConfigAHC))) &&
+               (topoAttr_.multiSuperPodDiffServerNumMode &&
+               !((opType == HcclCMDType::HCCL_CMD_ALLREDUCE || opType == HcclCMDType::HCCL_CMD_ALL)
+               && isConfigAHC))) &&
                !isConfigNULL) { // 多server不同卡模式，设置为单层拓扑类型
         algType[opType] = AlgType::ALG_DEFAULT;
         isAlgoLevel1Default_[opType] = false;

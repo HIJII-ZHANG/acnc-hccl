@@ -38,6 +38,7 @@ TopoinfoRanktableConcise::TopoinfoRanktableConcise(const std::string &rankTableM
 
 TopoinfoRanktableConcise::~TopoinfoRanktableConcise()
 {
+    devIp2PhyIdMap_.clear();
 }
 
 HcclResult TopoinfoRanktableConcise::Init()
@@ -198,12 +199,12 @@ HcclResult TopoinfoRanktableConcise::GetServerList(const nlohmann::json &obj, Ra
 {
     clusterInfo.serverList.clear();
     nlohmann::json serverList;
-    CHK_RET(GetJsonProperty(obj, "server_list", serverList));
+    CHK_RET(GetJsonProperty(obj, "server_list", serverList, false));
     HCCL_DEBUG("[%s.json] -> server_list: size:[%zu]", fileName_.c_str(), serverList.size());
 
     // 获取serverCount并校验
     std::string serverCount;
-    HcclResult ret = GetJsonProperty(obj, "server_count", serverCount);
+    HcclResult ret = GetJsonProperty(obj, "server_count", serverCount, true);
     if (ret == HCCL_SUCCESS) {
         HCCL_DEBUG("[%s.json] -> group_count: [%s]", fileName_.c_str(), serverCount.c_str());
         CHK_RET(SalStrToULong(serverCount, HCCL_BASE_DECIMAL, clusterInfo.serverNum));
@@ -249,7 +250,7 @@ HcclResult TopoinfoRanktableConcise::GetSingleServer(const nlohmann::json &serve
 {
     HcclResult ret;
     std::string serverId;
-    CHK_RET(GetJsonArrayMemberProperty(serverListObj, objIndex, "server_id", serverId));
+    CHK_RET(GetJsonArrayMemberProperty(serverListObj, objIndex, "server_id", serverId, false));
     if (serverId.empty()) {
         HCCL_ERROR("[Get][JsonArrayMemberProperty]errNo[0x%016llx] serverId[%s] is empty",
             HCOM_ERROR_CODE(HCCL_E_PARA), serverId.c_str());
@@ -265,7 +266,7 @@ HcclResult TopoinfoRanktableConcise::GetSingleServer(const nlohmann::json &serve
     HCCL_DEBUG("server id[%u]:[%s], serverIdx[%u]", objIndex, serverId.c_str(), serverIdx);
     std::string hostNicIp;
     HcclIpAddress hostIp;
-    ret = GetJsonArrayMemberProperty(serverListObj, objIndex, "host_ip", hostNicIp);
+    ret = GetJsonArrayMemberProperty(serverListObj, objIndex, "host_ip", hostNicIp, true);
     CHK_PRT_RET(ret != HCCL_SUCCESS && ret != HCCL_E_NOT_FOUND,
         HCCL_ERROR("[Get][SingleServer]get host ip error"), ret);
     HCCL_DEBUG("[%s.json] -> host_ip: [%s]. ret[%u]", fileName_.c_str(), hostNicIp.c_str(), ret);
@@ -287,7 +288,7 @@ HcclResult TopoinfoRanktableConcise::GetDeviceList(const nlohmann::json &serverL
     HCCL_DEBUG("Get GetDeviceList[%u]: serverId[%s]", objIndex, serverId.c_str());
 
     nlohmann::json deviceList;
-    CHK_RET(GetJsonArrayMemberProperty(serverListObj, objIndex, "device", deviceList));
+    CHK_RET(GetJsonArrayMemberProperty(serverListObj, objIndex, "device", deviceList, false));
 
     HCCL_DEBUG("[%s.json] -> device_list: size:%zu", fileName_.c_str(), deviceList.size());
 
@@ -312,6 +313,7 @@ HcclResult TopoinfoRanktableConcise::GetDeviceList(const nlohmann::json &serverL
                 clusterInfo.rankList[index].deviceInfo.deviceIp.size(), checkDeviceIpSize);
             return HCCL_E_PARA;
         }
+        CHK_RET(VerifyBackupDeviceIp(clusterInfo.rankList[index], index));
     }
 
     return HCCL_SUCCESS;
@@ -322,8 +324,8 @@ HcclResult TopoinfoRanktableConcise::GetSingleDevice(const nlohmann::json &devic
 {
     // 获取rank_id
     std::string rankId;
-    CHK_RET(GetJsonArrayMemberProperty(deviceListObj, objIndex, "rank_id", rankId));
-    HCCL_DEBUG("[%s.json] -> rankId: [%s]", fileName_.c_str(), rankId.c_str());
+    CHK_RET(GetJsonArrayMemberProperty(deviceListObj, objIndex, "rank_id", rankId, false));
+    HCCL_DEBUG("[%s.json] -> rank_id: [%s]", fileName_.c_str(), rankId.c_str());
 
     // 获取device type
     DevType deviceType = DevType::DEV_TYPE_COUNT;
@@ -331,7 +333,7 @@ HcclResult TopoinfoRanktableConcise::GetSingleDevice(const nlohmann::json &devic
 
     // 获取device_id
     std::string strDevid;
-    CHK_RET(GetJsonArrayMemberProperty(deviceListObj, objIndex, "device_id", strDevid));
+    CHK_RET(GetJsonArrayMemberProperty(deviceListObj, objIndex, "device_id", strDevid, false));
 
     u32 devicePhyId = 0;
     CHK_RET(SalStrToULong(strDevid, HCCL_BASE_DECIMAL, devicePhyId));
@@ -350,7 +352,7 @@ HcclResult TopoinfoRanktableConcise::GetSingleDevice(const nlohmann::json &devic
         return HCCL_E_PARA;
     }
     HCCL_DEBUG("[%s.json] -> device_id: [%s]", fileName_.c_str(), strDevid.c_str());
-    
+
     RankInfo_t rankinfo;
     rankinfo.serverId = serverId;
     rankinfo.serverIdx = serverIdx;
@@ -358,6 +360,7 @@ HcclResult TopoinfoRanktableConcise::GetSingleDevice(const nlohmann::json &devic
     rankinfo.deviceInfo.devicePhyId = devicePhyId;
 
     CHK_RET(GetSingleDeviceIp(deviceListObj, objIndex, clusterInfo, rankinfo, rankinfo.hostIp.IsInvalid()));
+    CHK_RET(GetSingleBackupDeviceIp(deviceListObj, objIndex, rankinfo));
 
     if (SalStrToULong(rankId, HCCL_BASE_DECIMAL, rankinfo.rankId) != HCCL_SUCCESS) {
         RPT_INPUT_ERR(true, "EI0004", std::vector<std::string>({ "error_reason", "ranktable_path" }),
@@ -408,7 +411,7 @@ HcclResult TopoinfoRanktableConcise::GetSingleDeviceIp(const nlohmann::json &dev
 {
     // 获取device_ip （可能有多个）
     std::string deviceIp;
-    HcclResult ret = GetJsonArrayMemberProperty(deviceListObj, objIndex, "device_ip", deviceIp);
+    HcclResult ret = GetJsonArrayMemberProperty(deviceListObj, objIndex, "device_ip", deviceIp, true);
     // 多机和走roce网卡ranktable必须有“device_ip”字段，单机可以没有
     if (clusterInfo.serverNum > 1 || (GetExternalInputIntraRoceSwitch() == 1)) {
         // 如果没有配置HostIp，那么deviceIp必须有效，否则出错
@@ -441,11 +444,92 @@ HcclResult TopoinfoRanktableConcise::GetSingleDeviceIp(const nlohmann::json &dev
             HcclIpAddress ipAddr;
             CHK_RET(ConvertIpAddress(strDeviceIp[index], ipAddr));
             rankinfo.deviceInfo.deviceIp.push_back(ipAddr);
+            devIp2PhyIdMap_.emplace(ipAddr.GetReadableIP(), rankinfo.deviceInfo.devicePhyId);
         }
     } else {
         HcclIpAddress invalidAddr;
         rankinfo.deviceInfo.deviceIp.push_back(invalidAddr);
         HCCL_WARNING("objIndex[%u],'device_ip' is not set", objIndex);
+    }
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoinfoRanktableConcise::GetSingleBackupDeviceIp(const nlohmann::json &deviceListObj, u32 objIndex,
+    RankInfo_t &rankinfo)
+{
+    if (params_.deviceType != DevType::DEV_TYPE_910_93 || !GetExternalInputInterSuperPodRetryEnable()) {
+        return HCCL_SUCCESS;
+    }
+    // 获取backup_device_ip（可能有多个）
+    std::string backupDeviceIp;
+    HcclResult ret = GetJsonArrayMemberProperty(deviceListObj, objIndex, "backup_device_ip", backupDeviceIp);
+    // backup_device_ip字段未配置时通过warning日志提示
+    if (ret == HCCL_E_NOT_FOUND) {
+        HcclIpAddress invalidAddr;
+        rankinfo.deviceInfo.backupDeviceIp.push_back(invalidAddr);
+        HCCL_WARNING("[Get][SingleDeviceIp]'backup_device_ip' in ranktable is not set!");
+        return HCCL_SUCCESS;
+    }
+    HCCL_DEBUG("[%s.json] -> backup_device_ip: [%s]", fileName_.c_str(), backupDeviceIp.c_str());
+
+    // 处理backup_device_ip字符串
+    std::vector<std::string> strBackupDeviceIp;
+    if (backupDeviceIp != "") {
+        CHK_RET(SplitString(backupDeviceIp, ",", strBackupDeviceIp));
+
+        CHK_PRT_RET(strBackupDeviceIp.size() == 0,
+            HCCL_ERROR("[Get][SingleBackupDeviceIp]in device: deviceip size is zero"),
+            HCCL_E_PARA);
+        for (u32 index = 0; index < strBackupDeviceIp.size(); index++) {
+            CHK_RET(CheckUniqueAndInsertPool(JsonUniqueInfoType::UNIQUE_INFO_TYPE_BACKUP_DEVICE_IP,
+                strBackupDeviceIp[index], JsonCheckOpType::CHECK_OP_TYPE_INSERT));
+            HcclIpAddress ipAddr;
+            CHK_RET(ConvertIpAddress(strBackupDeviceIp[index], ipAddr));
+            rankinfo.deviceInfo.backupDeviceIp.push_back(ipAddr);
+        }
+        HCCL_INFO("[TopoinfoRanktableConcise][GetSingleBackupDeviceIp]devicePhyId[%u], backupDeviceIp[0]:[%s]",
+            rankinfo.deviceInfo.devicePhyId, rankinfo.deviceInfo.backupDeviceIp[0].GetReadableIP());
+    } else {
+        HcclIpAddress invalidAddr;
+        rankinfo.deviceInfo.backupDeviceIp.push_back(invalidAddr);
+        HCCL_WARNING("objIndex[%u],'bakcup_device_ip' is not set", objIndex);
+    }
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoinfoRanktableConcise::VerifyBackupDeviceIp(RankInfo_t &rankInfo, u32 devIndex)
+{
+    if (params_.deviceType != DevType::DEV_TYPE_910_93 || !GetExternalInputInterSuperPodRetryEnable()) {
+        return HCCL_SUCCESS;
+    }
+
+    for (auto &backupDevIp : rankInfo.deviceInfo.backupDeviceIp) {
+        if (backupDevIp.IsInvalid()) {
+            // 无效备用IP，无需校验
+            continue;
+        }
+        string backupDevIpStr = backupDevIp.GetReadableIP();
+        CHK_PRT_RET(devIp2PhyIdMap_.find(backupDevIpStr) == devIp2PhyIdMap_.end(),
+            HCCL_ERROR("[Verify][BackupDeviceIp]Unknown backup devIp[%s] for device[%u]. "
+                "Fail to find this backup device in communicator.", backupDevIpStr.c_str(), devIndex),
+            HCCL_E_PARA);
+
+        s32 backupDevPhyId = devIp2PhyIdMap_[backupDevIpStr];
+        CHK_PRT_RET(backupDevPhyId == rankInfo.deviceInfo.devicePhyId,
+            HCCL_ERROR("[Verify][BackupDeviceIp]"
+                "PhyId[%d] for backup devIp[%s] is the same with self device[%u] phyId[%d]. "
+                "Please do not use self ip as backup ip!",
+                backupDevPhyId, backupDevIpStr.c_str(), devIndex, rankInfo.deviceInfo.devicePhyId),
+            HCCL_E_PARA);
+
+        LinkTypeInServer linkType = LinkTypeInServer::RESERVED_LINK_TYPE;
+        CHK_RET(hrtGetPairDeviceLinkType(rankInfo.deviceInfo.devicePhyId, backupDevPhyId, linkType));
+        CHK_PRT_RET(linkType != LinkTypeInServer::SIO_TYPE,
+            HCCL_ERROR("[Verify][BackupDeviceIp]errNo[0x%016llx], device[%u], "
+                "link between device phyId[%d] and backup device phyId[%d] is not sio link, backup device ip[%s]. "
+                "Please check backup ip validation and whether it is on a pair device!",
+                HCOM_ERROR_CODE(HCCL_E_PARA), devIndex, rankInfo.deviceInfo.devicePhyId,
+                backupDevPhyId, backupDevIpStr.c_str()), HCCL_E_PARA);
     }
     return HCCL_SUCCESS;
 }
@@ -456,7 +540,7 @@ HcclResult TopoinfoRanktableConcise::GetSingleSuperDeviceId(const nlohmann::json
     // 获取super_device_id
     HcclResult ret;
     std::string strSuperDeviceId;
-    ret = GetJsonArrayMemberProperty(deviceListObj, objIndex, "super_device_id", strSuperDeviceId);
+    ret = GetJsonArrayMemberProperty(deviceListObj, objIndex, "super_device_id", strSuperDeviceId, true);
 
     CHK_PRT_RET(ret == HCCL_E_NOT_FOUND,
         HCCL_WARNING("[Get][SingleSuperDeviceId]'super_device_id' is not found"), HCCL_SUCCESS);
@@ -471,7 +555,7 @@ HcclResult TopoinfoRanktableConcise::GetSingleSuperDeviceId(const nlohmann::json
             HCOM_ERROR_CODE(HCCL_E_PARA), strSuperDeviceId.c_str());
         return ret;
     }
- 
+
     rankinfo.superDeviceId = superDeviceId;
     HCCL_DEBUG("[%s.json] -> super_device_id: [%s]", fileName_.c_str(), strSuperDeviceId.c_str());
     return HCCL_SUCCESS;
@@ -493,7 +577,7 @@ HcclResult TopoinfoRanktableConcise::GetSuperPodList(const nlohmann::json &obj, 
 
     HcclResult ret;
     nlohmann::json superPodList;
-    ret = GetJsonProperty(obj, "super_pod_list", superPodList);
+    ret = GetJsonProperty(obj, "super_pod_list", superPodList, true);
     CHK_PRT_RET(ret == HCCL_E_NOT_FOUND,
         HCCL_WARNING("[Get][SuperPodList]'super_pod_list' is not found"), HCCL_SUCCESS);
     CHK_PRT_RET(ret != HCCL_SUCCESS && ret != HCCL_E_NOT_FOUND,
@@ -514,7 +598,7 @@ HcclResult TopoinfoRanktableConcise::GetSingleSuperPod(const nlohmann::json &sup
 {
     HcclResult ret = HCCL_SUCCESS;
     std::string superPodId;
-    ret = GetJsonArrayMemberProperty(superPodList, objIndex, "super_pod_id", superPodId);
+    ret = GetJsonArrayMemberProperty(superPodList, objIndex, "super_pod_id", superPodId, true);
     if (ret != HCCL_SUCCESS || superPodId.empty()) {
         RPT_INPUT_ERR(true, "EI0004", std::vector<std::string>({ "error_reason", "ranktable_path" }),
             std::vector<std::string>({ "the 'super_pod_id' in the ranktable is invalid or empty",
@@ -543,7 +627,7 @@ HcclResult TopoinfoRanktableConcise::GetSuperPodServerList(const nlohmann::json 
     HCCL_DEBUG("GetSuperPodServerList[%u]: superPodId[%s]", objIndex, superPodId.c_str());
 
     nlohmann::json superPodServerList;
-    CHK_RET(GetJsonArrayMemberProperty(superPodList, objIndex, "server_list", superPodServerList));
+    CHK_RET(GetJsonArrayMemberProperty(superPodList, objIndex, "server_list", superPodServerList, false));
     for (u32 index = 0; index < superPodServerList.size(); index++) {
         // get single super pod server info
         CHK_RET(GetSingleSuperPodSever(superPodServerList, index, clusterInfo, superPodId));
@@ -558,7 +642,7 @@ HcclResult TopoinfoRanktableConcise::GetSingleSuperPodSever(const nlohmann::json
     HcclResult ret = HCCL_SUCCESS;
     do {
         // 获取server_id
-        ret = GetJsonArrayMemberProperty(superPodServerList, objIndex, "server_id", serverId);
+        ret = GetJsonArrayMemberProperty(superPodServerList, objIndex, "server_id", serverId, true);
         CHK_PRT_BREAK(ret != HCCL_SUCCESS,
             HCCL_ERROR("[Get][SingleSuperPodSever]errNo[0x%016llx]server_id is not found or invalid",
             HCCL_ERROR_CODE(ret)),);
@@ -624,7 +708,7 @@ HcclResult TopoinfoRanktableConcise::CheckSuperPodInfo(RankTable_t &clusterInfo)
             HCCL_ERROR("[Check][SuperPodInfo]superDeviceId[0x%x] is invalid in rankId[%u], "
             "the configuration may be missing, please check the ranktable config!",
             rankInfo.superDeviceId, rankInfo.rankId), HCCL_E_PARA);
-        
+
         auto iter = superPodSdidMap.find(rankInfo.superPodId);
         if (iter == superPodSdidMap.end()) {
             std::set<u32> superDeviceIdSet;
@@ -642,18 +726,9 @@ HcclResult TopoinfoRanktableConcise::CheckSuperPodInfo(RankTable_t &clusterInfo)
         }
     }
 
-    u32 serverNumPerPod = 0;
     u32 serverNumTotal = 0;
     for (auto it = superPodMap.begin(); it != superPodMap.end(); ++it) {
-        if (it == superPodMap.begin()) {
-            serverNumPerPod = it->second.size();
-        }
-        // 校验每个超节点的server数相等
-        CHK_PRT_RET(serverNumPerPod != it->second.size(),
-            HCCL_ERROR("[Get][SuperPodList]serverNum[%u] in superPodId[%s] is not equal to serverNum[%u] "\
-            "in superPodId[%s]", serverNumPerPod, it->first.c_str(), it->second.size(),
-            superPodMap.begin()->first.c_str()), HCCL_E_PARA);
-        serverNumTotal += serverNumPerPod;
+        serverNumTotal += it->second.size();
     }
 
     // 校验super_pod_list和原有server_list的server数量一致

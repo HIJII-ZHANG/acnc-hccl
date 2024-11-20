@@ -53,6 +53,7 @@ enum class JsonUniqueInfoType {
     UNIQUE_INFO_TYPE_POD_NAME = 4,
     UNIQUE_INFO_TYPE_ETH_NAME = 5,
     UNIQUE_INFO_TYPE_SUPER_POD_ID = 6,
+    UNIQUE_INFO_TYPE_BACKUP_DEVICE_IP = 7,
     UNIQUE_INFO_NUM
 };
 
@@ -98,16 +99,16 @@ protected:
     HcclResult LoadRankTableString(const std::string &string);
     HcclResult LoadConfigString(const std::string &string);
     /* 访问json信息的一个名为prop_name的属性，参数返回这个属性的值prop_value，属性值重载了string和json类型 */
-    HcclResult GetJsonProperty(const nlohmann::json &obj, const char *propName, std::string &propValue) const;
-    HcclResult GetJsonProperty(const nlohmann::json &obj, const char *propName, nlohmann::json &propValue) const;
+    HcclResult GetJsonProperty(const nlohmann::json &obj, const char *propName, std::string &propValue, bool optionalProp = true) const;
+    HcclResult GetJsonProperty(const nlohmann::json &obj, const char *propName, nlohmann::json &propValue, bool optionalProp = true) const;
     // json数组中索引为index的一个名为prop_name的属性
     // 数返回这个属性的值prop_value，属性值重载了string和json类型
     HcclResult GetJsonArrayMemberProperty(const nlohmann::json &obj, const u32 index, const char *propName,
-                                                std::string &propValue) const;
+                                                std::string &propValue, bool optionalProp = true) const;
     HcclResult GetJsonArrayMemberProperty(const nlohmann::json &obj, const u32 index, const char *propName,
-                                                nlohmann::json &propValue) const;
+                                                nlohmann::json &propValue, bool optionalProp = true) const;
     HcclResult GetJsonArrayMemberProperty(const nlohmann::json &obj, const u32 index, const char *propName,
-                                                u32 &propValue);
+                                                u32 &propValue, bool optionalProp = true);
 
     HcclResult CheckUniquePara(const JsonUniqueInfoType &type, const std::string &value, std::string &strType) const;
     HcclResult CheckUniqueAndInsertPool(const JsonUniqueInfoType &type, const std::string &value,

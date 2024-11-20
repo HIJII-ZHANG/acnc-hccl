@@ -93,6 +93,15 @@ HcclResult HcclCommunicatorAttrs::GetNicInfo(const NICDeployment &nicDeploy, con
         CHK_PRT_RET(curRankInfo.deviceInfo.deviceIp.size() == 0,
             HCCL_ERROR("[Get][NicInfo]rankindex[%u] invalid,deviceIp is zero", curRankIndex), HCCL_E_PARA);
         rankInfo.nicIp.push_back(curRankInfo.deviceInfo.deviceIp[0]);
+        if (curRankInfo.deviceInfo.backupDeviceIp.size() == 0) {
+            HcclIpAddress invalidAddr;
+            rankInfo.backupNicIp.push_back(invalidAddr);
+        } else {
+            rankInfo.backupNicIp.push_back(curRankInfo.deviceInfo.backupDeviceIp[0]);
+        }
+        HCCL_INFO("[Get][NicInfo]serverId[%s], serverIdx[%u], rankIndex[%u], nicIp[%s], backupNicIp[%s]",
+            rankInfo.serverId.c_str(), rankInfo.serverIdx, curRankIndex,
+            rankInfo.nicIp[0].GetReadableIP(), rankInfo.backupNicIp[0].GetReadableIP());
     }
 
     return HCCL_SUCCESS;
@@ -133,6 +142,7 @@ HcclResult HcclCommunicatorAttrs::SetServerId(const RankTable_t &rankTable)
     }
     return HCCL_SUCCESS;
 }
+
 HcclResult HcclCommunicatorAttrs::SetServerNum(const std::vector<RankInfo_t> &ranks)
 {
     std::vector<std::string> serverIds;
@@ -519,6 +529,8 @@ HcclResult HcclCommunicatorAttrs::SetRankInfoList(const RankTable_t &rankTable)
             hbRankInfo.nicIp.assign(rankInfo.nicIp.begin(), rankInfo.nicIp.end());
             hbRankInfo.nicDeploy = rankInfo.nicDeploy;
             hbRankInfo.useSuperPodMode = useSuperPodMode_;
+            hbRankInfo.superDeviceId = rankInfo.superDeviceId;
+            hbRankInfo.superPodId = rankInfo.superPodId;
             hbRankInfoList_.push_back(hbRankInfo);
         }
     }
@@ -615,6 +627,7 @@ HcclResult HcclCommunicatorAttrs::SortRankInfoList()
 HcclResult HcclCommunicatorAttrs::SethbRankInfo(const std::vector<RankInfo> &rankList, 
     WorldGroupInfo &groupCommonData)
 {
+    // 记录serverId
     serverId_ = groupCommonData.serverId;
     useSuperPodMode_ = groupCommonData.useSuperPodMode;
 
@@ -630,6 +643,8 @@ HcclResult HcclCommunicatorAttrs::SethbRankInfo(const std::vector<RankInfo> &ran
         hbRankInfo.nicIp.assign(rankInfo.nicIp.begin(), rankInfo.nicIp.end());
         hbRankInfo.nicDeploy = rankInfo.nicDeploy;
         hbRankInfo.useSuperPodMode = useSuperPodMode_;
+        hbRankInfo.superDeviceId = rankInfo.superDeviceId;
+        hbRankInfo.superPodId = rankInfo.superPodId;
         hbRankInfoList_.push_back(hbRankInfo);
     }
     return HCCL_SUCCESS;
@@ -715,8 +730,7 @@ bool HcclCommunicatorAttrs::Check2N(u32 num) const
     }
 }
 
-HcclResult HcclCommunicatorAttrs::UpdateNicList()
-{
+HcclResult HcclCommunicatorAttrs::UpdateNicList(){
     std::vector<u32> subCommNicList;
     for (u32 i = 0; i < rankInfoList_.size(); i++) {
         if (rankInfoList_[i].serverId == serverId_ &&
@@ -746,6 +760,7 @@ HcclResult HcclCommunicatorAttrs::SetLocalRankInfo()
         if (rankInfoList_[i].userRank == userRank_) {
             devicePhyId_ = rankInfoList_[i].devicePhyId;
             devIpAddr_ = rankInfoList_[i].nicIp;
+            devBackupIpAddr_ = rankInfoList_[i].backupNicIp;
             hostIp_ = rankInfoList_[i].hostIp;
             hostPort_ = rankInfoList_[i].hostPort;
             localRank_ = rankInfoList_[i].localRank;
@@ -771,6 +786,7 @@ HcclResult HcclCommunicatorAttrs::SetLocalRankInfoSubGroup(const std::vector<Ran
     for (u32 i = 0; i < rankInfoList_.size(); i++) {
         if (rankInfoList_[i].userRank == userRank_) {
             devIpAddr_ = rankInfoList_[i].nicIp;
+            devBackupIpAddr_ = rankInfoList_[i].backupNicIp;
             devicePhyId_ = rankInfoList_[i].devicePhyId;
             superPodId_ = rankInfoList_[i].superPodId;
             superDeviceId_ = rankInfoList_[i].superDeviceId;
@@ -892,7 +908,7 @@ HcclResult HcclCommunicatorAttrs::CalAndSetMeshAggRankSize()
 HcclResult HcclCommunicatorAttrs::InitRankInfoSubGroup(const std::vector<RankInfo> &rankList,
     WorldGroupInfo &groupCommonData)
 {
-    // 记录serverId
+    //填充心跳信息
     SethbRankInfo(rankList,groupCommonData);
     // 获取server内平均device数
     CHK_RET(SetInnerServerAverageDevice(rankList));
@@ -1192,6 +1208,11 @@ std::vector<HbRankInfo> HcclCommunicatorAttrs::GethbRankInfoList()
 std::vector<HcclIpAddress> HcclCommunicatorAttrs::GetDevIpAddr()
 {
     return devIpAddr_;
+}
+
+std::vector<HcclIpAddress> HcclCommunicatorAttrs::GetDevBackupIpAddr()
+{
+    return devBackupIpAddr_;
 }
 
 u32 HcclCommunicatorAttrs::GetDevicePhyId()

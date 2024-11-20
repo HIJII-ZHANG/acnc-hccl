@@ -521,7 +521,10 @@ TransportType TransportManager::GetTransportType(const u32 dstRank, bool isUsedR
             }
         }
     } else { // server间
-        if (GetExternalInputHcclIsTcpMode()) {
+        if ((!isUsedRdma) && IsSupportInterHccs(dstRank)) {
+            // 超节点内节点间走HCCS通信
+            transportType = TransportType::TRANS_TYPE_P2P;
+        } else if (GetExternalInputHcclIsTcpMode()) {
             transportType = TransportType::TRANS_TYPE_HOST_TCP;
         } else if ((static_cast<DevType>(rankInfoList_[dstRank].deviceType) == DevType::DEV_TYPE_310P3) ||
             (static_cast<DevType>(rankInfoList_[dstRank].deviceType) == DevType::DEV_TYPE_310P1)) {
@@ -536,7 +539,8 @@ TransportType TransportManager::GetTransportType(const u32 dstRank, bool isUsedR
         }
     }
 
-    HCCL_INFO("SetTransportType: srcRank[%u], dstRank[%u], transport_type[%d]", userRank_, dstRank, transportType);
+    HCCL_INFO("GetTransportType: srcRank[%u], dstRank[%u], transport_type[%d]",
+        userRank_, dstRank, transportType);
     return transportType;
 }
 
@@ -605,7 +609,7 @@ bool TransportManager::IsSupportInterHccs(const u32 dstRank)
     bool isInterHccs = isInterHccsDisable == false && useSuperPodMode_ == true &&
                        curSuperPodId.empty() == false && curSuperPodId == dstSuperPodId;
 
-    HCCL_INFO("[IsSupportInterHccs]rank[%u], superPodId[%s], dstRank[%u], dstSuperPodId[%s], useSuperPodMode[%d], "\
+    HCCL_INFO("[IsSupportInterHccs] rank[%u], superPodId[%s], dstRank[%u], dstSuperPodId[%s], useSuperPodMode[%d], "\
         "isInterHccsDisable[%d], isInterHccs[%d]", userRank_, curSuperPodId.c_str(), dstRank, dstSuperPodId.c_str(),
         useSuperPodMode_, isInterHccsDisable, isInterHccs);
     return isInterHccs;

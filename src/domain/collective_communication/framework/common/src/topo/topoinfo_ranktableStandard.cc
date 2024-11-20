@@ -145,7 +145,7 @@ HcclResult TopoinfoRanktableStandard::GetHcomInfo(hccl::HcclCommParams &params, 
 {
     // para_plane_location
     std::string paraPlaneLocation;
-    CHK_RET(GetJsonProperty(fileContent_, "para_plane_nic_location", paraPlaneLocation));
+    CHK_RET(GetJsonProperty(fileContent_, "para_plane_nic_location", paraPlaneLocation, false));
 
     HCCL_DEBUG("%s.json -> para_plane_location: %s", fileName_.c_str(), paraPlaneLocation.c_str());
 
@@ -165,7 +165,7 @@ HcclResult TopoinfoRanktableStandard::GetHcomInfo(hccl::HcclCommParams &params, 
         NICDeployment::NIC_DEPLOYMENT_RESERVED);
     // group_count
     std::string groupCount;
-    CHK_RET(GetJsonProperty(fileContent_, "group_count", groupCount));
+    CHK_RET(GetJsonProperty(fileContent_, "group_count", groupCount, false));
 
     HCCL_DEBUG("%s.json -> group_count: %s", fileName_.c_str(), groupCount.c_str());
     CHK_RET(SalStrToULong(groupCount, HCCL_BASE_DECIMAL, rankTable.groupNum));
@@ -190,7 +190,7 @@ HcclResult TopoinfoRanktableStandard::GetServerList(const nlohmann::json &obj, u
     HCCL_DEBUG("get serverList[%u]", objIndex);
     rankTable.serverList.clear();
     nlohmann::json serverList;
-    CHK_RET(GetJsonArrayMemberProperty(obj, objIndex, "server_list", serverList));
+    CHK_RET(GetJsonArrayMemberProperty(obj, objIndex, "server_list", serverList, false));
 
     HCCL_DEBUG("%s.json -> server_list[%u]: size:%zu", fileName_.c_str(), objIndex, serverList.size());
     if (serverList.size() == 0) {
@@ -216,7 +216,7 @@ HcclResult TopoinfoRanktableStandard::GetSingleServer(const nlohmann::json &serv
 {
     ServerInfo_t serverInfo;
     std::string serverId;
-    CHK_RET(GetJsonArrayMemberProperty(serverListObj, objIndex, "server_id", serverId));
+    CHK_RET(GetJsonArrayMemberProperty(serverListObj, objIndex, "server_id", serverId, false));
     
     CHK_RET(CheckUniqueAndInsertPool(JsonUniqueInfoType::UNIQUE_INFO_TYPE_SERVER_ID, serverId,
         JsonCheckOpType::CHECK_OP_TYPE_INSERT));
@@ -224,7 +224,7 @@ HcclResult TopoinfoRanktableStandard::GetSingleServer(const nlohmann::json &serv
     serverInfo.serverId = serverId;
     // 解析内层-参数平面的网卡信息
     nlohmann::json paraPlaneInfo;
-    CHK_RET(GetJsonArrayMemberProperty(serverListObj, objIndex, "para_plane_info", paraPlaneInfo));
+    CHK_RET(GetJsonArrayMemberProperty(serverListObj, objIndex, "para_plane_info", paraPlaneInfo, false));
     // server list中的网卡个数应该与ranktable中的网卡个数一致
     if (paraPlaneInfo.size() != rankTable.nicNum) {
         HCCL_ERROR("[Get][SingleServer]errNo[0x%016llx] paraPlaneInfo[%u] size[%zu] neq nicNum[%u]",
@@ -268,7 +268,7 @@ HcclResult TopoinfoRanktableStandard::GetCloudHcomInfo(hccl::HcclCommParams &par
     HCCL_DEBUG("get cloud hcom info: identify[%s]", identify.c_str());
     // group_count
     std::string groupCount;
-    CHK_RET(GetJsonProperty(fileContent_, "group_count", groupCount));
+    CHK_RET(GetJsonProperty(fileContent_, "group_count", groupCount, false));
     HCCL_DEBUG("%s.json -> group_count: %s", fileName_.c_str(), groupCount.c_str());
 
     CHK_RET(SalStrToULong(groupCount, HCCL_BASE_DECIMAL, rankTable.groupNum));
@@ -348,9 +348,9 @@ HcclResult TopoinfoRanktableStandard::GetSingleGroupDeviceCount(nlohmann::json &
     std::string strDeviceNum;
 
     if (!cloudFlag_) {
-        CHK_RET(GetJsonArrayMemberProperty(obj, objIndex, "device_num", strDeviceNum));
+        CHK_RET(GetJsonArrayMemberProperty(obj, objIndex, "device_num", strDeviceNum, false));
     } else {
-        CHK_RET(GetJsonArrayMemberProperty(obj, objIndex, "device_count", strDeviceNum));
+        CHK_RET(GetJsonArrayMemberProperty(obj, objIndex, "device_count", strDeviceNum, false));
     }
     HCCL_DEBUG("%s.json -> device_num: %s", fileName_.c_str(), strDeviceNum.c_str());
     CHK_RET(SalStrToULong(strDeviceNum, HCCL_BASE_DECIMAL, deviceNum));
@@ -373,7 +373,7 @@ HcclResult TopoinfoRanktableStandard::GetLabSingleGroup(nlohmann::json &obj, u32
 
     // server_num
     std::string serverNum;
-    CHK_RET(GetJsonArrayMemberProperty(obj, objIndex, "server_num", serverNum));
+    CHK_RET(GetJsonArrayMemberProperty(obj, objIndex, "server_num", serverNum, false));
     HCCL_DEBUG("%s.json -> server_num: %s", fileName_.c_str(), serverNum.c_str());
 
     CHK_RET(SalStrToULong(serverNum, HCCL_BASE_DECIMAL, uServerNum));
@@ -405,7 +405,7 @@ HcclResult TopoinfoRanktableStandard::GetGroupList(hccl::HcclCommParams &params,
 {
     rankTable.rankList.clear();
     nlohmann::json groupList;
-    CHK_RET(GetJsonProperty(fileContent_, "group_list", groupList));
+    CHK_RET(GetJsonProperty(fileContent_, "group_list", groupList, false));
 
     HCCL_DEBUG("group_list.size[%zu] groupNum[%u]", groupList.size(), rankTable.groupNum);
     CHK_PRT_RET(groupList.size() != rankTable.groupNum, HCCL_ERROR("[Get][GroupList]errNo[0x%016llx] "\
@@ -418,7 +418,7 @@ HcclResult TopoinfoRanktableStandard::GetGroupList(hccl::HcclCommParams &params,
     for (u32 index = 0; index < groupList.size(); index++) {
         // group_name
         std::string groupName;
-        CHK_RET(GetJsonArrayMemberProperty(groupList, index, "group_name", groupName));
+        CHK_RET(GetJsonArrayMemberProperty(groupList, index, "group_name", groupName, false));
 
         CHK_RET(CheckUniqueAndInsertPool(JsonUniqueInfoType::UNIQUE_INFO_TYPE_GROUP_NAME, groupName,
             JsonCheckOpType::CHECK_OP_TYPE_INSERT));
@@ -426,7 +426,7 @@ HcclResult TopoinfoRanktableStandard::GetGroupList(hccl::HcclCommParams &params,
 
         // instance_count
         std::string instanceCount;
-        CHK_RET(GetJsonArrayMemberProperty(groupList, index, "instance_count", instanceCount));
+        CHK_RET(GetJsonArrayMemberProperty(groupList, index, "instance_count", instanceCount, false));
         HCCL_DEBUG("%s.json -> rank_count: %s", fileName_.c_str(), instanceCount.c_str());
 
         u32 instanceNum = 0;
@@ -445,7 +445,7 @@ HcclResult TopoinfoRanktableStandard::GetGroupList(hccl::HcclCommParams &params,
         }
 
         nlohmann::json instanceList;
-        CHK_RET(GetJsonArrayMemberProperty(groupList, index, "instance_list", instanceList));
+        CHK_RET(GetJsonArrayMemberProperty(groupList, index, "instance_list", instanceList, false));
 
         CHK_RET(GetInstanceList(instanceList, params, rankTable, instanceNum, deviceNum));
     }
@@ -462,7 +462,7 @@ HcclResult TopoinfoRanktableStandard::GetInstanceList(nlohmann::json &instanceLi
 
     for (u32 podIndex = 0; podIndex < instanceList.size(); podIndex++) {
         std::string serverId;
-        CHK_RET(GetJsonArrayMemberProperty(instanceList, podIndex, "server_id", serverId));
+        CHK_RET(GetJsonArrayMemberProperty(instanceList, podIndex, "server_id", serverId, false));
         HCCL_DEBUG("%s.json -> server_id: %s", fileName_.c_str(), serverId.c_str());
         if ((!cloudFlag_) && (static_cast<u32>(rankTable.nicDeploy) == 0)) {
             CHK_RET(CheckUniqueAndInsertPool(JsonUniqueInfoType::UNIQUE_INFO_TYPE_SERVER_ID, serverId,
@@ -474,7 +474,7 @@ HcclResult TopoinfoRanktableStandard::GetInstanceList(nlohmann::json &instanceLi
         HCCL_DEBUG("instance id[%u]:[%s], serverIdx[%u]", podIndex, serverId.c_str(), serverIdx);
 
         nlohmann::json deviceList;
-        CHK_RET(GetJsonArrayMemberProperty(instanceList, podIndex, "devices", deviceList));
+        CHK_RET(GetJsonArrayMemberProperty(instanceList, podIndex, "devices", deviceList, false));
         if (cloudFlag_) {
             CHK_RET(GetCloudDevList(instanceList, podIndex, deviceList, serverId, serverIdx));
         } else {
@@ -498,14 +498,14 @@ HcclResult TopoinfoRanktableStandard::GetCloudDevList(nlohmann::json &instanceLi
     nlohmann::json &deviceList, std::string &serverId, u32 &serverIdx)
 {
     std::string podName;
-    CHK_RET(GetJsonArrayMemberProperty(instanceList, podIndex, "pod_name", podName));
+    CHK_RET(GetJsonArrayMemberProperty(instanceList, podIndex, "pod_name", podName, false));
     HCCL_DEBUG("%s.json -> pod_name: %s", fileName_.c_str(), podName.c_str());
     
     CHK_RET(CheckUniqueAndInsertPool(JsonUniqueInfoType::UNIQUE_INFO_TYPE_POD_NAME, podName,
         JsonCheckOpType::CHECK_OP_TYPE_INSERT));
     for (u32 deviceIndex = 0; deviceIndex < deviceList.size(); deviceIndex++) {
         std::string strDevid;
-        CHK_RET(GetJsonArrayMemberProperty(deviceList, deviceIndex, "device_id", strDevid));
+        CHK_RET(GetJsonArrayMemberProperty(deviceList, deviceIndex, "device_id", strDevid, false));
 
         u32 devicePhyId = 0;
         CHK_RET(SalStrToULong(strDevid, HCCL_BASE_DECIMAL, devicePhyId));
@@ -521,7 +521,7 @@ HcclResult TopoinfoRanktableStandard::GetCloudDevList(nlohmann::json &instanceLi
         HcclIpAddress ipAddr;
         if (instanceList.size() > 1) {
             std::string deviceIp;
-            CHK_RET(GetJsonArrayMemberProperty(deviceList, deviceIndex, "device_ip", deviceIp));
+            CHK_RET(GetJsonArrayMemberProperty(deviceList, deviceIndex, "device_ip", deviceIp, false));
             HCCL_DEBUG("%s.json -> device_ip: %s", fileName_.c_str(), deviceIp.c_str());
             if (!deviceIp.empty()) {
                 CHK_RET(CheckUniqueAndInsertPool(JsonUniqueInfoType::UNIQUE_INFO_TYPE_DEVICE_IP, deviceIp,
@@ -560,11 +560,11 @@ HcclResult TopoinfoRanktableStandard::GetDevList(nlohmann::json &instanceList, u
     std::string &serverId, u32 &serverIdx)
 {
     std::string rankId;
-    CHK_RET(GetJsonArrayMemberProperty(instanceList, podIndex, "rank_id", rankId));
+    CHK_RET(GetJsonArrayMemberProperty(instanceList, podIndex, "rank_id", rankId, false));
     HCCL_DEBUG("%s.json -> rankId: %s", fileName_.c_str(), rankId.c_str());
     for (u32 deviceIndex = 0; deviceIndex < deviceList.size(); deviceIndex++) {
         std::string strDevid;
-        CHK_RET(GetJsonArrayMemberProperty(deviceList, deviceIndex, "device_id", strDevid));
+        CHK_RET(GetJsonArrayMemberProperty(deviceList, deviceIndex, "device_id", strDevid, false));
 
         u32 devicePhyId = 0;
         CHK_RET(SalStrToULong(strDevid, HCCL_BASE_DECIMAL, devicePhyId));
@@ -585,7 +585,7 @@ HcclResult TopoinfoRanktableStandard::GetDevList(nlohmann::json &instanceList, u
         if (rankTable.nicDeploy == NICDeployment::NIC_DEPLOYMENT_DEVICE &&
             (rankTable.serverNum > 0)) {
             std::string deviceIp;
-            CHK_RET(GetJsonArrayMemberProperty(deviceList, deviceIndex, "device_ip", deviceIp));
+            CHK_RET(GetJsonArrayMemberProperty(deviceList, deviceIndex, "device_ip", deviceIp, false));
             HCCL_DEBUG("%s.json -> device_ip: %s", fileName_.c_str(), deviceIp.c_str());
             if (deviceIp.compare("") != 0) {
                 CHK_RET(CheckUniqueAndInsertPool(JsonUniqueInfoType::UNIQUE_INFO_TYPE_DEVICE_IP, deviceIp,

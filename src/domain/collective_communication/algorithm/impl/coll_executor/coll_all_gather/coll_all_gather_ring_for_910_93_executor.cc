@@ -24,6 +24,11 @@ HcclResult CollAllGatherRingFor91093Executor::CalcStreamNum(u32& streamNum)
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
         totalStreamNum *= STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
     }
+    if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB && 
+        GetExternalInputEnableRdmaSdmaConcurrent()) {
+        totalStreamNum += (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) ? OUTER_PLANE_NUM_IN_NPRING_DOUBLE :
+        OUTER_PLANE_NUM_IN_NPRING_SINGLE;
+    }
     streamNum = totalStreamNum - 1;
     HCCL_INFO("[CollAllGatherRingFor91093Executor][CalcStreamNum] tag[%s] streamNum_[%u]",
         tag_.c_str(), streamNum);
@@ -100,7 +105,7 @@ HcclResult CollAllGatherRingFor91093Executor::RunIntraSeverAllGather(
 HcclResult CollAllGatherRingFor91093Executor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
     HCCL_INFO("[CollAllGatherRingFor91093Executor][KernelRun] The AllGatherDoubleRingExecutor starts.");
-
+    CHK_RET(ActiveSlaveStreams(param.stream));
     u32 perDataSize = 0;
     CHK_RET(SalGetDataTypeSize(param.DataDes.dataType, perDataSize));
     CHK_PRT_RET(perDataSize == 0,
@@ -266,7 +271,6 @@ HcclResult CollAllGatherRingFor91093Executor::KernelRun(const OpParam &param, Ex
             multRingsUserMemSlice.push_back(userMemSlice);
         }
     }
-    CHK_RET(ActiveSlaveStreams(param.stream));
     if (DMAReduceFlag_ && (level1RankSize > 1 || level2RankSize > 1)) {
         // allgather输入放在CCL buffer上，通过设置nullptr指示要从CCL buffer获取输入
         opInfo.inputAddr = nullptr;

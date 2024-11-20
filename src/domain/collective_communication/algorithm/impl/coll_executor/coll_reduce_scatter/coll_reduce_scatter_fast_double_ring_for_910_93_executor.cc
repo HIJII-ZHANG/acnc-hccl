@@ -21,7 +21,7 @@ HcclResult CollReduceScatterFastDoubleRingFor91093Executor::DoubleRingReduceScat
     const u64 count, const HcclDataType dataType, const HcclReduceOp reductionOp,
     const std::vector<std::vector<Slice> > multRingsSliceZero, Stream stream, s32 profStage,
     const u64 baseOffset, const HcomCollOpInfo *opInfo,
-    const std::vector<std::vector<Slice>> multRingsUserMemSlice)
+    const std::vector<std::vector<Slice>> multRingsUserMemSlice, const bool retryEnable)
 {
     (void)tag;
     HCCL_INFO("[CollReduceScatterFastDoubleRingFor91093Executor][DoubleRingReduceScatter] DoubleRingReduceScatter starts");
@@ -54,7 +54,7 @@ HcclResult CollReduceScatterFastDoubleRingFor91093Executor::DoubleRingReduceScat
         algResResp_->notifiesM2S, algResResp_->notifiesS2M, rankOrders, userMemInputSlicesOfDoubleRing));
     CHK_SMART_PTR_NULL(executor);
     ret = executor->Prepare(inputMem, inputMem, outputMem, count, dataType, stream, multRingsSliceZero,
-        reductionOp, OUTER_BRIDGE_RANK_ID, baseOffset);
+        reductionOp, OUTER_BRIDGE_RANK_ID, baseOffset, retryEnable);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollReduceScatterFastDoubleRingFor91093Executor][DoubleRingReduceScatter] Double ring reduce scatter failed"
         "failed,return[%d]", ret), ret);

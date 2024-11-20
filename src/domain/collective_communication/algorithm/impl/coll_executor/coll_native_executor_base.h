@@ -19,6 +19,7 @@
 #include "rank_consistent.h"
 
 namespace hccl {
+constexpr u64 HCCL_INPLACE_MEMCOPY_SIZE = 1048576; // 1M数据量 = 1048576B数据量
 
 struct ExecMem {
     u64 count = 0;
@@ -80,6 +81,9 @@ protected:
 
     HcclResult GetRankByUserRank(CommPlane levelIndex, u32 subLevelIndex, u32 userRank, u32 &rank);
     HcclResult GetUserRankByRank(CommPlane levelIndex, u32 subLevelIndex, u32 rank, u32 &userRank);
+    HcclResult SendRecvSignalOnLinks(OpParam &param, ExecMem &execMem, std::vector<LINK> links);
+    bool OpSyncCheckCommSize(const CommPlane levelIndex, const u32 expectedSize);
+    HcclResult InplaceOpSync(OpParam &param, ExecMem &execMem);
 
     /* ---------------以下为 protected 成员变量定义领域-------------------------- */
     std::string tag_;

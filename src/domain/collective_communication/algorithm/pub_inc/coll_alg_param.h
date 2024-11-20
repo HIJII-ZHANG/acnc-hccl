@@ -105,6 +105,13 @@ struct AlgResourceResponse {
     std::vector<std::shared_ptr<ThreadManage>> threadManage;
 };
 
+enum class BatchSendRecvCurMode {
+    SEND = 0,
+    RECV = 1,
+    SEND_RECV = 2,
+    SEND_RECV_RESERVED
+};
+
 struct OpParam {
     std::string tag = "";
     Stream stream;
@@ -137,13 +144,18 @@ struct OpParam {
         struct {
             HcclSendRecvItem* sendRecvItemsPtr;
             u32 itemNum;
+            u32 curIterNum;
+            BatchSendRecvCurMode curMode;
         } BatchSendRecvDataDes;
     };
     HcclCMDType opType = HcclCMDType::HCCL_CMD_INVALID;
     bool inplaceSupportRetry = false;
+    bool retryEnable = false;
     u8 isInplaceStatus = 0;
     u8 inPlaceSupportRetryStatus = 0;
+    bool isInplacePreSync = false;
+    bool isPostSync = false;
+    u32 index = 0;
 };
-
 }   // namespace hccl
 #endif

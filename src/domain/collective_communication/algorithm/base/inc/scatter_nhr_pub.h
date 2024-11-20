@@ -33,6 +33,11 @@ public:
 protected:
 private:
     void PrepareSlicesData(const u32 unitSize, const u64 totalCount, const u32 rankSize) const;
+    HcclResult SdmaRx(LINK &linkLeft, LINK &linkRight, InterServerAlgoStep &stepInfo,
+        const std::vector<LINK> &links);
+    HcclResult RdmaTxRx(LINK &linkLeft, LINK &linkRight, InterServerAlgoStep &stepInfo,
+        const std::vector<LINK> &links);
+    HcclResult RdmaTxRx();
     HcclResult RunScatterNHR(const std::vector<std::shared_ptr<Transport> > &links);
     HcclResult Tx(const LINK &link, std::vector<Slice> &txSlices);
     HcclResult Rx(const LINK &link, std::vector<Slice> &rxSlices);

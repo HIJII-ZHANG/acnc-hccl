@@ -130,6 +130,7 @@ HcclResult CommFactory::CheckCommPara(const std::string &tag, const DeviceMem &i
             break;
         }
         case CommType::COMM_TAG_STAR:
+            break;
         case CommType::COMM_TAG_WHOLE_NHR:
         case CommType::COMM_TAG_WHOLE_NHR_V1:
         case CommType::COMM_TAG_WHOLE_AHC:
@@ -148,51 +149,6 @@ HcclResult CommFactory::CheckCommPara(const std::string &tag, const DeviceMem &i
         HCCL_ERROR("[Check][CommPara]tag[%s], deviceType[%d], commPlane[%d] and commType[%d] is not support",
             tag.c_str(), deviceType_, commParaInfo.commPlane, commParaInfo.commType), HCCL_E_PARA);
 
-    return HCCL_SUCCESS;
-}
-
-HcclResult CommFactory::GetIsUsedRdma(const CommParaInfo &commParaInfo, bool &isUsedRdma)
-{
-    std::vector<std::vector<RankInfo> > commP2PPlaneVec;
-    if (commParaInfo.commType == CommType::COMM_TAG_P2P) {
-        // P2P只需要判断两张卡之间的连接关系
-        bool invalidcheck = (rankVector_.size() <= userRank_) || (rankVector_.size() <= commParaInfo.peerUserRank);
-        CHK_PRT_RET(invalidcheck, HCCL_ERROR("[GetIsUsedRdma]dstUserRank[%u] or userRank[%u] is bigger than "\
-            "rankVector size[%u]", commParaInfo.peerUserRank, userRank_, rankVector_.size()), HCCL_E_PARA);
-
-        std::vector<RankInfo> commP2PRankVec;
-        commP2PRankVec.push_back(rankVector_[userRank_]);
-        commP2PRankVec.push_back(rankVector_[commParaInfo.peerUserRank]);
-        commP2PPlaneVec.push_back(commP2PRankVec);
-    }
-
-    std::vector<std::vector<RankInfo> > &commPlaneVec = (commParaInfo.commType == CommType::COMM_TAG_P2P) ?
-        commP2PPlaneVec : CommPlaneVector_[commParaInfo.commPlane];
-
-    bool isInterSuperPod = false;
-    bool isInterServer = false;
-    bool isConnectedWithPcie = false;
-    for (const std::vector<RankInfo> &commPlane : commPlaneVec) {
-        for (const RankInfo &dstRank : commPlane) {
-            if (rankData_.superPodId != dstRank.superPodId) { // 跨超节点场景
-                isInterSuperPod = true;
-            } else if (rankData_.serverIdx != dstRank.serverIdx) { // 不跨超节点, 跨server场景
-                isInterServer = true;
-            } else { // 同server, PCIE互连场景
-                auto it = deviceLinkTypeMap_.find(dstRank.devicePhyId);
-                CHK_PRT_RET(it == deviceLinkTypeMap_.end(),
-                    HCCL_ERROR("can't find devicePhyId[%d] in deviceLinkTypeMap_", dstRank.devicePhyId),
-                    HCCL_E_NOT_FOUND);
-                isConnectedWithPcie |= (it->second == LinkTypeInServer::PXI_TYPE);
-            }
-        }
-    }
-    // 使能RDMA的场景: 1.跨超节点  2.跨server且不使能HCCS  3.PCIE连接且使能RDMA开关
-    isUsedRdma = (isInterSuperPod) ||
-                 (isInterServer && !isUsedInterHccsMode_) || (isConnectedWithPcie && isUsedRdmaOuter_);
-    HCCL_INFO("[GetIsUsedRdma]isUsedRdma[%d], isInterSuperPod[%d], isInterServer[%d], isUsedInterHccsMode_[%d], "\
-        "isConnectedWithPcie[%d], isUsedRdmaOuter_[%d]", isUsedRdma, isInterSuperPod, isInterServer,
-        isUsedInterHccsMode_, isConnectedWithPcie, isUsedRdmaOuter_);
     return HCCL_SUCCESS;
 }
 
@@ -290,6 +246,51 @@ HcclResult CommFactory::CreateCommPlane(const std::string &tag, const DeviceMem 
 
     HCCL_INFO("complete commPlane[%d] commType[%d] creation, Time:%lld us",
         commParaInfo.commPlane, commParaInfo.commType, DURATION_US(TIME_NOW() - startut));
+    return HCCL_SUCCESS;
+}
+
+HcclResult CommFactory::GetIsUsedRdma(const CommParaInfo &commParaInfo, bool &isUsedRdma)
+{
+    std::vector<std::vector<RankInfo> > commP2PPlaneVec;
+    if (commParaInfo.commType == CommType::COMM_TAG_P2P) {
+        // P2P只需要判断两张卡之间的连接关系
+        bool invalidcheck = (rankVector_.size() <= userRank_) || (rankVector_.size() <= commParaInfo.peerUserRank);
+        CHK_PRT_RET(invalidcheck, HCCL_ERROR("[GetIsUsedRdma]dstUserRank[%u] or userRank[%u] is bigger than "\
+            "rankVector size[%u]", commParaInfo.peerUserRank, userRank_, rankVector_.size()), HCCL_E_PARA);
+
+        std::vector<RankInfo> commP2PRankVec;
+        commP2PRankVec.push_back(rankVector_[userRank_]);
+        commP2PRankVec.push_back(rankVector_[commParaInfo.peerUserRank]);
+        commP2PPlaneVec.push_back(commP2PRankVec);
+    }
+
+    std::vector<std::vector<RankInfo> > &commPlaneVec = (commParaInfo.commType == CommType::COMM_TAG_P2P) ?
+        commP2PPlaneVec : CommPlaneVector_[commParaInfo.commPlane];
+
+    bool isInterSuperPod = false;
+    bool isInterServer = false;
+    bool isConnectedWithPcie = false;
+    for (const std::vector<RankInfo> &commPlane : commPlaneVec) {
+        for (const RankInfo &dstRank : commPlane) {
+            if (rankData_.superPodId != dstRank.superPodId) { // 跨超节点场景
+                isInterSuperPod = true;
+            } else if (rankData_.serverIdx != dstRank.serverIdx) { // 不跨超节点, 跨server场景
+                isInterServer = true;
+            } else { // 同server, PCIE互连场景
+                auto it = deviceLinkTypeMap_.find(dstRank.devicePhyId);
+                CHK_PRT_RET(it == deviceLinkTypeMap_.end(),
+                    HCCL_ERROR("can't find devicePhyId[%d] in deviceLinkTypeMap_", dstRank.devicePhyId),
+                    HCCL_E_NOT_FOUND);
+                isConnectedWithPcie |= (it->second == LinkTypeInServer::PXI_TYPE);
+            }
+        }
+    }
+    // 使能RDMA的场景: 1.跨超节点  2.跨server且不使能HCCS  3.PCIE连接且使能RDMA开关
+    isUsedRdma = (isInterSuperPod) ||
+                 (isInterServer && !isUsedInterHccsMode_) || (isConnectedWithPcie && isUsedRdmaOuter_);
+    HCCL_INFO("[GetIsUsedRdma]isUsedRdma[%d], isInterSuperPod[%d], isInterServer[%d], isUsedInterHccsMode_[%d], "\
+        "isConnectedWithPcie[%d], isUsedRdmaOuter_[%d]", isUsedRdma, isInterSuperPod, isInterServer,
+        isUsedInterHccsMode_, isConnectedWithPcie, isUsedRdmaOuter_);
     return HCCL_SUCCESS;
 }
 

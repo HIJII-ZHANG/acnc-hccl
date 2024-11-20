@@ -228,4 +228,4 @@ using HcclOpMetaInfo = struct HcclOpMetaInfoDef {
     }
 };
 }
-#endif // !FFTS_COMMON_H
+#endif // FFTS_COMMON_PUB_H

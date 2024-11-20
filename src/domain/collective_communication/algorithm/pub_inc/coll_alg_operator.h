@@ -54,9 +54,9 @@ public:
     bool ExecutorOnlySupportDMAReduce(const std::string& algName);
     bool ExecutorCanSupportDMAReduce(const std::string& algName);
     bool ExecutorNoSupportDMAReduce(const std::string& algName);
+    bool ExecutorSupportInPlace(OpParam &param, std::string& algName, u8 &inPlaceSupportRetryStatus);
     bool FitRetryConditionforInPlaceOp(const HcclCMDType &opType, OpParam &param, std::string& algName,
         u8 &inPlaceSupportRetryStatus);
-    bool IsHcclOpInplace(const HcclCMDType &opType, OpParam &param, u8 &isInplaceStatus);
     bool SupportRetryWithInplaceCheck(
         const HcclCMDType &opType, OpParam &param, std::string& algName, u8 &isInplaceStatus,
         u8 &inPlaceSupportRetryStatus);

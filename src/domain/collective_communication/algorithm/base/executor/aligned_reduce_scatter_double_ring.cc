@@ -50,11 +50,6 @@ HcclResult AlignedReduceScatterDoubleRing::RunAsync(const u32 rank, const u32 ra
     // 运行reduce-scatter, ring算法
     CHK_RET(RunReduceScatter(rank, rankSize));
 
-    if (barrierSwitchOn_) {
-        // 执行barrier，保证数据收发完成
-        CHK_RET(ExecuteBarrier(leftLink_, rightLink_));
-    }
-
     HCCL_INFO("AlignedReduceScatterDoubleRing finished: rank[%u] end", rank);
     return HCCL_SUCCESS;
 }
@@ -204,16 +199,16 @@ HcclResult AlignedReduceScatterDoubleRing::PrepareInitSlices(const u32 rankSize,
 {
     // 第-1步，片内将部分数据从userIn搬到cclIn
     const Slice &srcInitSlice0 = userMemInputSlicesOfDoubleRing_[ringIndex][initSlice0Idx * discontinuousSliceSize + discontinuousSliceIdx];
-    srcSubInit
+    srcInit
         = DeviceMem::create(static_cast<u8 *>(opInfo_->inputAddr) + srcInitSlice0.offset, srcInitSlice0.size);
     const Slice &dstInitSlice0 = multRingsSlices_[ringIndex][initSlice0Idx * discontinuousSliceSize + discontinuousSliceIdx];
-    dstSubInit    = inputMem_.range(dstInitSlice0.offset, dstInitSlice0.size);
+    dstInit    = inputMem_.range(dstInitSlice0.offset, dstInitSlice0.size);
 
     const Slice &srcInitSlice1 = userMemInputSlicesOfDoubleRing_[ringIndex][initSlice1Idx * discontinuousSliceSize + discontinuousSliceIdx];
-    srcInit
+    srcSubInit
         = DeviceMem::create(static_cast<u8 *>(opInfo_->inputAddr) + srcInitSlice1.offset, srcInitSlice1.size);
     const Slice &dstInitSlice1 = multRingsSlices_[ringIndex][initSlice1Idx * discontinuousSliceSize + discontinuousSliceIdx];
-    dstInit       = inputMem_.range(dstInitSlice1.offset, dstInitSlice1.size);
+    dstSubInit       = inputMem_.range(dstInitSlice1.offset, dstInitSlice1.size);
     // 第-1步并发
     if (rankSize == TWO_RANK_SIZE && opInfo_->outputAddr != nullptr) {
         HCCL_DEBUG(
@@ -254,7 +249,7 @@ HcclResult AlignedReduceScatterDoubleRing::MemcpyInitSlices(
     u64 ringIndex, DeviceMem &dstInit, DeviceMem &srcInit, DeviceMem &dstSubInit, DeviceMem &srcSubInit)
 {
     CHK_RET(MemcpyInitSlicesOnMainStreams(ringIndex, dstInit, srcInit));
-    if (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB && (!GetExternalInputEnableInplace())) {
+    if (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB && (!retryEnable_)) {
         HCCL_DEBUG("[AlignedReduceScatterDoubleRing][MemcpyInitSlices] no graph mode");
         CHK_RET(LocalNotify::Post(subStreams_[ringIndex + 1], dispatcher_, mainSignals_[ringIndex + 1], profilerInput_.stage));
         CHK_RET(LocalNotify::Wait(subStreams_[ringIndex + 1], dispatcher_, subSignals_[ringIndex + 1], profilerInput_.stage));
@@ -478,7 +473,7 @@ HcclResult AlignedReduceScatterDoubleRing::LocalMemcpy(const u32 step, const u32
     DeviceMem &localSrcMem, DeviceMem &localDstMem)
 {
     // 通过校验流数判断是单算子模式还是图模式
-    if (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB && (!GetExternalInputEnableInplace())) {
+    if (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB && (!retryEnable_)) {
         CHK_RET(LocalNotify::Post(subStreams_[ringIndex + 1], dispatcher_, mainSignals_[ringIndex + 1], profilerInput_.stage));
         CHK_RET(LocalNotify::Wait(subStreams_[ringIndex + 1], dispatcher_, subSignals_[ringIndex + 1], profilerInput_.stage));
         if (localSrcMem != localDstMem && step != rankSize - DMA_REDUCE_TWO_OFFSET) {
@@ -533,10 +528,10 @@ HcclResult AlignedReduceScatterDoubleRing::RunAllStreams(const u32 step, const u
     HCCL_DEBUG("Reduce: step[%u] ring[%u], src rank[%u] starts to send slice to dst rank[%u]",
         step, ALIGNED_SUB_RING_INDEX, subPreLink->GetRemoteRank(), subNextLink->GetRemoteRank());
 
-    CHK_RET(mainPreLink->TxAck(mainStream));
-    CHK_RET(mainNextLink->RxAck(mainStream));
-    CHK_RET(subPreLink->TxAck(subStream));
-    CHK_RET(subNextLink->RxAck(subStream));
+    CHK_RET(mainNextLink->TxAck(mainStream));
+    CHK_RET(mainPreLink->RxAck(mainStream));
+    CHK_RET(subNextLink->TxAck(subStream));
+    CHK_RET(subPreLink->RxAck(subStream));
 
     u32 sliceSize = multRingsSlices_[ALIGNED_MAIN_RING_INDEX].size() / rankSize;
     for (u32 memIdx = 0; memIdx < sliceSize; memIdx++) {
@@ -545,10 +540,10 @@ HcclResult AlignedReduceScatterDoubleRing::RunAllStreams(const u32 step, const u
         CHK_RET(LocalMemcpy(step, rankSize, ALIGNED_MAIN_RING_INDEX, mainLocalSrcMems[memIdx], mainLocalDstMems[memIdx]));
         CHK_RET(LocalMemcpy(step, rankSize, ALIGNED_SUB_RING_INDEX, subLocalSrcMems[memIdx], subLocalDstMems[memIdx]));
     }
-    CHK_RET(mainNextLink->TxDataSignal(mainStream));
-    CHK_RET(mainPreLink->RxDataSignal(mainStream));
-    CHK_RET(subNextLink->TxDataSignal(subStream));
-    CHK_RET(subPreLink->RxDataSignal(subStream));
+    CHK_RET(mainPreLink->TxDataSignal(mainStream));
+    CHK_RET(mainNextLink->RxDataSignal(mainStream));
+    CHK_RET(subPreLink->TxDataSignal(subStream));
+    CHK_RET(subNextLink->RxDataSignal(subStream));
     return HCCL_SUCCESS;
 }
 
@@ -641,7 +636,7 @@ HcclResult AlignedReduceScatterDoubleRing::GetActiveSubstreamNum(u32 &activeSubs
 {
     activeSubstreamNum = subStreams_.size();
     if (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB &&
-        GetExternalInputEnableInplace()) {
+        retryEnable_) {
         if (subStreams_.size() <= 2) {
             HCCL_ERROR("[AlignedReduceScatterDoubleRing][GetActiveSubstreamNum]subStreams_.size()[%zu] <= 2",
                 subStreams_.size());

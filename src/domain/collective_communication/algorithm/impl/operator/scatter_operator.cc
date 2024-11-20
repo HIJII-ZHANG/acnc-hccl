@@ -53,7 +53,7 @@ HcclResult ScatterOperator::SelectAlg(const std::string& tag, const OpParam& par
     }
 
     // 由于scatter只支持server间ring,nb和NHR，如果不是需要重定向到ring
-    if (!UseInterServerNHRAlgo(algType_) && !UseInterServerNBAlgo(algType_) && !UseInterServerRingAlgo(algType_)) {
+    if (!UseInterServerRingAlgo(algType_)) {
         HCCL_INFO("[ScatterOperator][Scatter] algType[%s] is not supported, reset algType=ring",
             AlgTypeToStr(algType_).c_str());
         ret = SetInterServerRingAlgo(algType_);
@@ -67,7 +67,9 @@ HcclResult ScatterOperator::SelectAlg(const std::string& tag, const OpParam& par
     bool isRingTopo = topoType_ == TopoType::TOPO_TYPE_NP_SINGLE_RING || topoType_ == TopoType::TOPO_TYPE_8P_RING ||
         topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING;
 
-    if (isMeshTopo) {
+    if (multiModuleDiffDeviceNumMode_ || multiSuperPodDiffServerNumMode_) {
+        algName = "ScatterCommExecutor";
+    } else if (isMeshTopo) {
         algName = "ScatterMeshExecutor";
     } else if (isRingTopo) {
         if (deviceType_ == DevType::DEV_TYPE_910_93) {

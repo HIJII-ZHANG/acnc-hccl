@@ -15,6 +15,7 @@
 #include "hccl_common.h"
 #include "common.h"
 #include "device_capacity.h"
+#include "coll_alg_param.h"
 
 namespace hccl {
 constexpr u64 MAX_ALLTOALL_MESH_ALGO_RANK_INTRA_MESH = 32;
@@ -24,6 +25,16 @@ constexpr u32 MIN_RING_DATA_SIZE = 64 * 1024; // Ring算法下, Server间支持�
 constexpr u64 MAX_PIPLINE_SLICE_NUM = 4; // 流水并行算法最大切分次数
 constexpr u64 MIN_PIPLINE_SLICE_NUM = 2; // 流水并行算法最小切分次数
 constexpr u64 TINY_MEM_SIZE = 2 * 1024 * 1024; // AlltoAll算子的tinyMem size
+
+constexpr u8 INPLACE_SUPPORT_RETRY_STATUS_ZERO = 0;
+constexpr u8 INPLACE_SUPPORT_RETRY_STATUS_ONE = 1;
+constexpr u8 INPLACE_SUPPORT_RETRY_STATUS_TWO = 2;
+constexpr u8 INPLACE_SUPPORT_RETRY_STATUS_THREE = 3;
+constexpr u8 INPLACE_SUPPORT_RETRY_STATUS_FOUR = 4;
+constexpr u8 INPLACE_SUPPORT_RETRY_STATUS_FIVE = 5;
+constexpr u8 INPLACE_SUPPORT_RETRY_STATUS_SIX = 6;
+constexpr u8 INPLACE_SUPPORT_RETRY_STATUS_SEVEN = 7;
+constexpr u8 INPLACE_SUPPORT_RETRY_STATUS_EIGHT = 8;
 
 AlgTypeLevel0 GetLevel0AlgType(const AlgType algType);
 AlgTypeLevel1 GetLevel1AlgType(const AlgType algType);
@@ -46,11 +57,18 @@ HcclResult SetInterServerRingAlgo(AlgType &algType);
 
 bool IsAlgTypeLevel0Mesh(AlgTypeLevel0 &originalAlgTypeLevel0);
 
-bool IsSupportDirectFullmeshFor91093(const HcclCMDType &opType, DevType deviceType, u32 superPodNum,
-    bool useSuperPodMode, u32 serverNum);
+bool IsAlltoAllvcSatisfyBufferSize(const OpParam& param, u32 userRankSize);
+bool IsSupportDirectFullmeshForAlltoallv(const OpParam& param, DevType deviceType, bool useSuperPodMode, u32 serverNum,
+    bool isSingleMeshAggregation, u32 userRankSize);
 bool FullmeshPairwiseSatisfyHighPerfAlltoallMeshCondition(DevType deviceType, u32 rankSize, bool useSuperPodMode);
 bool SatisfyIntraSuperPod(DevType deviceType, u32 rankSize, bool useSuperPodMode, u32 superPodNum = 1);
 u64 GetGlobalMaxUserInSize(const std::vector<SendRecvInfo> &allMeshAggregationSendRecvInfo);
+bool HcclOpInplaceDefaultCase(const OpParam &param, u8 &isInplaceStatus);
+bool IsInputOutputOverlap(const OpParam &param, u64 inputDataSize, u64 outputDataSize, u8 &isInplaceStatus);
+bool IsInputOutPtrNotNullPtr(const OpParam &param, u8 &isInplaceStatus);
+u32 InplaceDataUnitSize(const HcclCMDType &opType, const OpParam &param);
+bool IsHcclOpInplace(const HcclCMDType &opType, const OpParam &param, u32 userRank, u32 userRankSize,
+    u8 &isInplaceStatus);
 
 std::string AlgTypeToStr(const AlgType algType);
 bool Is310P3Common(bool isHaveCpuRank, DevType deviceType);

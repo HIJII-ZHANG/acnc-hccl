@@ -12,6 +12,7 @@
 #include "comm_base_pub.h"
 #include "transport_pub.h"
 #include "task_loader.h"
+#include "sal_pub.h"
 
 namespace hccl {
 TaskLoader::TaskLoader(const s32 deviceLogicId, const HcclDispatcher dispatcher)
@@ -200,6 +201,9 @@ HcclResult TaskLoader::ExecuteService()
 
 HcclResult TaskLoader::ThreadExecuteFn()
 {
+    //给当前线程添加名字
+    SetThreadName("Hccl_TaskLoader");
+
     threadId_ = SalGetTid();
     HCCL_INFO("[TaskLoader][ThreadExecuteFn]deviceLogicId_[%d], threadId_[%u]", deviceLogicId_, threadId_);
     CHK_RET(hrtSetDevice(deviceLogicId_));

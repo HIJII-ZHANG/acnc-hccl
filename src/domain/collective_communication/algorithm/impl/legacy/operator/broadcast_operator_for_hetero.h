@@ -8,8 +8,8 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-#ifndef BROADCAST_OPERATOR_H
-#define BROADCAST_OPERATOR_H
+#ifndef BROADCAST_OPERATOR_FOR_HETERO_H
+#define BROADCAST_OPERATOR_FOR_HETERO_H
 
 #include "coll_alg_operator.h"
 
@@ -30,4 +30,4 @@ private:
 };
 }
 
-#endif /** _BROADCAST_OPERATOR_H__ */
+#endif /* BROADCAST_OPERATOR_FOR_HETERO_H */

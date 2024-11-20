@@ -218,8 +218,8 @@ HcclResult AlltoAllOperator::SelectAlgforAlltoAll(const OpParam& param, std::str
     if (userRankSize_ == 1 && GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && !param.aicpuUnfoldMode) {
         algName = "RunAlltoAllSingleExecutor";
         return HCCL_SUCCESS ;
-    } else if (IsSupportDirectFullmeshFor91093(param.opType, deviceType_, superPodNum_, useSuperPodMode_, serverNum_) ||
-        param.aicpuUnfoldMode) {
+    } else if ((IsSupportDirectFullmeshForAlltoallv(param, deviceType_, useSuperPodMode_, serverNum_,
+        isSingleMeshAggregation_, userRankSize_) || param.aicpuUnfoldMode) && !IsDirectFullMeshNotSupportAsym()) {
         algName = "RunAlltoAllDirectFullmesh";
         HCCL_INFO("[SelectAlgforAlltoAll] all_to_all algName is [%s]", algName.c_str());
         return HCCL_SUCCESS;
@@ -261,8 +261,8 @@ HcclResult AlltoAllOperator::SelectAlg(const std::string& tag, const OpParam& pa
         HCCL_ERROR("[SelectAlgforAlltoAll][SelectAlg]tag[%s], Alltoall failed, return[%d]", tag.c_str(), ret), ret);
 
     if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-        if (IsSupportDirectFullmeshFor91093(param.opType, deviceType_, superPodNum_, useSuperPodMode_, serverNum_) ||
-            param.aicpuUnfoldMode) {
+        if ((IsSupportDirectFullmeshForAlltoallv(param, deviceType_, useSuperPodMode_, serverNum_,
+            isSingleMeshAggregation_, userRankSize_) || param.aicpuUnfoldMode) && !IsDirectFullMeshNotSupportAsym()) {
             newTag = tag + algName;
         } else {
             newTag = tag + algName + copyMode;
@@ -273,9 +273,10 @@ HcclResult AlltoAllOperator::SelectAlg(const std::string& tag, const OpParam& pa
     }
     HCCL_INFO("[SelectAlg] Alltoall newTag is [%s]", newTag.c_str());
 
-    if (!IsSatisfyAlltoAllAivCondition(param) &&
-        !IsSupportDirectFullmeshFor91093(param.opType, deviceType_, superPodNum_, useSuperPodMode_, serverNum_) &&
-        !param.aicpuUnfoldMode) {
+    if ((!IsSatisfyAlltoAllAivCondition(param) &&
+         !IsSupportDirectFullmeshForAlltoallv(param, deviceType_, useSuperPodMode_, serverNum_,
+            isSingleMeshAggregation_, userRankSize_) && !param.aicpuUnfoldMode) ||
+         IsDirectFullMeshNotSupportAsym()) {
         CHK_RET(SetExcutorExtraInfo(algName, param));
     }
     return ret;
@@ -350,8 +351,8 @@ bool AlltoAllOperator::JudgeIfNeedPreProcessAndGetParam(const OpParam& param,
     std::unique_ptr<PreProcessMetaInfo> &preMetaInfo)
 {
     if (param.opType == HcclCMDType::HCCL_CMD_ALLTOALLV && !IsSatisfyAlltoAllAivCondition(param)) {
-        if (IsSupportDirectFullmeshFor91093(param.opType, deviceType_, superPodNum_,
-            useSuperPodMode_, serverNum_) || param.aicpuUnfoldMode) {
+        if ((IsSupportDirectFullmeshForAlltoallv(param, deviceType_, useSuperPodMode_, serverNum_,
+            isSingleMeshAggregation_, userRankSize_) || param.aicpuUnfoldMode) && !IsDirectFullMeshNotSupportAsym()) {
             return false;
         }
         CHK_RET(PrepareAlltoAllAddrInfo(param.All2AllDataDes.sendCounts, param.All2AllDataDes.sdispls,
@@ -483,6 +484,11 @@ HcclResult AlltoAllOperator::GetAlltoAllStagedWorkSpaceMemSize(
 
     // 计算结果
     return HCCL_SUCCESS;
+}
+
+bool AlltoAllOperator::IsDirectFullMeshNotSupportAsym()
+{
+    return (multiModuleDiffDeviceNumMode_ || multiSuperPodDiffServerNumMode_) && (superPodNum_ > 1);
 }
 
 REGISTER_OP(HcclCMDType::HCCL_CMD_ALLTOALLV, AlltoAllV, AlltoAllOperator);

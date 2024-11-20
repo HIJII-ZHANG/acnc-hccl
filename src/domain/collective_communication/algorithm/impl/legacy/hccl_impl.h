@@ -33,6 +33,7 @@ namespace hccl {
 constexpr s32 COMM_INDEX_0 = 0;
 constexpr s32 COMM_INDEX_1 = 1;
 constexpr s32 STREAM_INDEX_0 = 0;
+constexpr s32 STREAM_INDEX_1 = 1;
 constexpr s32 COMM_SIZE_TWO = 2;
 constexpr s32 INNER_PLANE_NUM_IN_4PMESH = 4;
 constexpr s32 OUTER_PLANE_NUM_IN_NPRING_SINGLE = 1;

@@ -146,6 +146,7 @@ HcclResult CollReduceScatterCommExecutor::KernelRun(const OpParam &param, ExecMe
         CHK_SMART_PTR_NULL(executor);
         CHK_RET(executor->Prepare(execMem.inputMem, execMem.outputMem, execMem.scratchMem, execMem.count,
             param.DataDes.dataType, param.stream, param.reduceType));
+        CHK_RET(RunTemplate(executor, combinedCommInfo));
     } else if (UseInterServerNHRV1Algo(algType_)) {
         executor.reset(new (std::nothrow) ReduceScatterNHRV1(dispatcher_, reduceAttr));
         HCCL_INFO("reducescatter comm: using nhr_v1 algo inter-server.");

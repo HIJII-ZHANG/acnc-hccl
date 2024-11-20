@@ -43,6 +43,8 @@ private:
         RankTable_t &clusterInfo, std::string &serverId, u32 &serverIdx, HcclIpAddress &hostIp);
     HcclResult GetSingleDeviceIp(const nlohmann::json &deviceListObj, u32 objIndex,
         RankTable_t &clusterInfo, RankInfo_t &rankinfo, bool invalidHostIp = true);
+    HcclResult GetSingleBackupDeviceIp(const nlohmann::json &deviceListObj, u32 objIndex, RankInfo_t &rankinfo);
+    HcclResult VerifyBackupDeviceIp(RankInfo_t &rankInfo, u32 devIndex);
     HcclResult GetSingleSuperDeviceId(const nlohmann::json &deviceListObj, u32 objIndex,
         RankTable_t &clusterInfo, RankInfo_t &rankinfo);
     void DetectNicDepoly(RankTable_t &rankTable);
@@ -56,6 +58,8 @@ private:
     HcclResult GetSingleSuperPodSever(const nlohmann::json &superPodServerList, u32 objIndex,
         RankTable_t &clusterInfo, std::string superPodId);
     HcclResult CheckSuperPodInfo(RankTable_t &clusterInfo) const;
+
+    std::unordered_map<std::string, s32> devIp2PhyIdMap_;
 };
 }  // namespace hccl
 #endif  // TOPOINFO_RANKTABLEPARSER_VER1_H

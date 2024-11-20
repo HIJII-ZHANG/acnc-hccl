@@ -41,7 +41,8 @@ private:
         const u64 count, const HcclDataType &dataType, const HcclReduceOp &reductionOp,
         const std::vector<std::vector<Slice>> &multRingsSliceZero, const Stream &stream, s32 profStage,
         const u64 baseOffset = 0, const HcomCollOpInfo *opInfo = nullptr,
-        const std::vector<std::vector<Slice>> &multRingsUserMemSlice = std::vector<std::vector<Slice>>(0));
+        const std::vector<std::vector<Slice>> &multRingsUserMemSlice = std::vector<std::vector<Slice>>(0),
+        const bool retryEnable = false);
     HcclResult KernelRun(const OpParam &param, ExecMem &execMem) override;
     /* **************** 数据准备*************** */
     void FillMultiRingSlice(const ExecMem &execMem, const std::vector<std::vector<Slice>> &multiStreamSlice,

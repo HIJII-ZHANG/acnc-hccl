@@ -124,6 +124,17 @@ HcclResult CollReduceExecutor::RunLoop(OpParam &param, AlgResourceResponse &algR
         inputOffset = curSize;
         outputOffset = curSize;
     }
+    if (param.isPostSync == true) {
+        ExecMem execMem;
+        execMem.count = param.DataDes.count;
+        execMem.inputPtr = param.inputPtr;
+        execMem.outputPtr = param.outputPtr;
+        execMem.inputMem = algRes.cclInputMem;
+        execMem.outputMem = algRes.cclOutputMem;
+        execMem.scratchMem = algRes.scratchMem;
+        // post Sync
+        CHK_RET(InplaceOpSync(param, execMem));
+    }
     return HCCL_SUCCESS;
 }
 

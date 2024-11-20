@@ -20,7 +20,7 @@
 #include "workspace_resource.h"
 #include "hccl_impl_pub.h"
 #include "hccl_opbase_atrace_info_pub.h"
-#include "resource_manager/queue_notify_manager.h"
+#include "queue_notify_manager.h"
 #include "topo_matcher.h"
 #include "coll_alg_operator.h"
 #include "topo_info_extractor.h"

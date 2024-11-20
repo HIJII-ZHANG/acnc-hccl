@@ -43,14 +43,14 @@ HcclResult TopoinfoRanktableOffline::GetSingleRank(const nlohmann::json &ranksOb
 
     // 获取rank_id
     std::string rankInfoStr;
-    CHK_RET(GetJsonArrayMemberProperty(ranksObj, objIndex, "rank_id", rankInfoStr));
+    CHK_RET(GetJsonArrayMemberProperty(ranksObj, objIndex, "rank_id", rankInfoStr, false));
     if (SalStrToULong(rankInfoStr, HCCL_BASE_DECIMAL, rankInfo.rankId) != HCCL_SUCCESS) {
         HCCL_ERROR("[Get][SingleRank]errNo[0x%016llx] rankid[%s] is invalid",
             HCOM_ERROR_CODE(HCCL_E_PARA), rankInfoStr.c_str());
         return HCCL_E_PARA;
     }
     // 获取item_id, -1表示 host
-    CHK_RET(GetJsonArrayMemberProperty(ranksObj, objIndex, "item_id", rankInfoStr));
+    CHK_RET(GetJsonArrayMemberProperty(ranksObj, objIndex, "item_id", rankInfoStr, false));
     CHK_RET(SalStrToInt(rankInfoStr, HCCL_BASE_DECIMAL, rankInfo.itemId));
     // 为了适配GetDevNum函数
     if (rankInfo.itemId == HOST_DEVICE_ID) {
@@ -59,7 +59,7 @@ HcclResult TopoinfoRanktableOffline::GetSingleRank(const nlohmann::json &ranksOb
         curServerDeviceNum_++;
     }
     // 获取rank_ip
-    if (GetJsonArrayMemberProperty(ranksObj, objIndex, "rank_ip", rankInfoStr) == HCCL_E_NOT_FOUND) {
+    if (GetJsonArrayMemberProperty(ranksObj, objIndex, "rank_ip", rankInfoStr, true) == HCCL_E_NOT_FOUND) {
         rankInfo.hostIp = HcclIpAddress();
     } else {
         CHK_RET(ConvertIpAddress(rankInfoStr, rankInfo.hostIp));
@@ -84,9 +84,9 @@ HcclResult TopoinfoRanktableOffline::GetSingleNode(const nlohmann::json &NodeLis
 
     // 处理ranklist
     // 获取node_id
-    CHK_RET(GetJsonArrayMemberProperty(NodeListObj, objIndex, "node_id", nodeId));
+    CHK_RET(GetJsonArrayMemberProperty(NodeListObj, objIndex, "node_id", nodeId, false));
     HCCL_DEBUG("Get Node[%u]: serverIdx:[%u] nodeId[%s]", objIndex, serverIdx, nodeId.c_str());
-    CHK_RET(GetJsonArrayMemberProperty(NodeListObj, objIndex, "rank_list", Ranks));
+    CHK_RET(GetJsonArrayMemberProperty(NodeListObj, objIndex, "rank_list", Ranks, false));
 
     HCCL_INFO("[%s.json] -> rank_list: size:%zu", fileName_.c_str(), Ranks.size());
     CHK_PRT_RET(Ranks.size() == 0, HCCL_ERROR("[Get][Ranks]Ranks size is zero"), HCCL_E_PARA);
@@ -107,7 +107,7 @@ HcclResult TopoinfoRanktableOffline::GetRanktableInfo(RankTable_t &clusterInfo)
     // 获取信息
     nlohmann::json node_list;
 
-    CHK_RET(GetJsonProperty(fileContent_, "node_list", node_list));
+    CHK_RET(GetJsonProperty(fileContent_, "node_list", node_list, false));
     HCCL_DEBUG("[rankTableJson] -> nodeListSize: [%zu]", node_list.size());
 
     // 保存serverNum

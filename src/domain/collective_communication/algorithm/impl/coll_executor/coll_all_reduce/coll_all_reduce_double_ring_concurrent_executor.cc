@@ -183,7 +183,7 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
     HcomCollOpInfo reduceScatterOpInfo = {
         "", execMem.inputPtr, nullptr, execMem.count, param.DataDes.dataType, param.root, param.reduceType
     };
-    if (DMAReduceFlag_ && (!GetExternalInputEnableInplace())) {
+    if (DMAReduceFlag_) {
         reduceScatterOpInfoPtr = &reduceScatterOpInfo;
     }
     CHK_RET(MultiRingReduceScatterConcurrent(param.tag, execMem.inputMem, execMem.outputMem, execMem.count,
@@ -396,7 +396,7 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
     HcomCollOpInfo allgatherOpInfo = {
         "", nullptr, execMem.outputPtr, execMem.count, param.DataDes.dataType, param.root, param.reduceType
     };
-    if (DMAReduceFlag_ && (!GetExternalInputEnableInplace())) {
+    if (DMAReduceFlag_) {
         allgatherOpInfoPtr = &allgatherOpInfo;
     }
     CHK_RET(MultiRingAllGatherConcurrent(param.tag, execMem.inputMem, execMem.outputMem, hdCount,

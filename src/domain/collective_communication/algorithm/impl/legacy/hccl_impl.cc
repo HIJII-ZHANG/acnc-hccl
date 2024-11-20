@@ -19,6 +19,7 @@
 #include "hccl_alg.h"
 #include "hccl_impl.h"
 #include "coll_alg_utils.h"
+#include "sal_pub.h"
 
 using namespace std;
 
@@ -1028,6 +1029,9 @@ HcclResult hcclImpl::CreateCommThread(const ErrContextPub &error_context, const 
     DeviceMem &inputMem, DeviceMem &outputMem, const CommParaInfo &commParaInfo,
     std::vector<std::unique_ptr<CommBase> > &commVec, HcclResult &retOut)
 {
+    //给当前线程添加名字
+    SetThreadName("Hccl_CreateComm");
+
     hrtErrMSetErrorContextPub(error_context);
     retOut = hrtSetDevice(deviceLogicId_);
     CHK_PRT_RET(retOut != HCCL_SUCCESS, HCCL_ERROR("[Create][CommThread]set device[%d] failed", deviceLogicId_),

@@ -415,14 +415,12 @@ HcclResult ReduceScatterRingConcurrentDirect::RunSubStream(const u32 step, std::
 HcclResult ReduceScatterRingConcurrentDirect::RunReduceScatter(const u32 rank, const u32 rankSize)
 {
     HCCL_INFO("ReduceScatterRingConcurrentDirect starts, the input param rank[%u]", rank);
-
     CHK_RET(ExecutorBase::ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
 
     CHK_RET(RunInitStep(rank, rankSize));
     CHK_RET(ExecutorBase::ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
     CHK_RET(MainRecordSub()); // 主流通知从流开始通信
     CHK_RET(SubWaitMain());   // 从流等待主流通知
-
     CHK_RET(ExecutorBase::ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
     CHK_RET(ExecutorBase::ExecEmptyTask(inputMem_, outputMem_, subStreams_[0], dispatcher_));
     u32 sliceSize = slices_.size() / rankSize;

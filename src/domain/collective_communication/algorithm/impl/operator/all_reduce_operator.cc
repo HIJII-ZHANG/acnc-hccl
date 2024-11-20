@@ -425,14 +425,16 @@ HcclResult AllReduceOperator::SelectAlgfor91093(const OpParam& param, std::strin
         CHK_RET(SelectAlgforAHC());
     }
     bool smallCountOptim91093 =
-        (!GetExternalInputEnableInplace()) &&
+        (!param.retryEnable) &&
         (serverNum_ == 1) &&
         ((workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) ||
         (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && !param.aicpuUnfoldMode)) &&
         IsSupportSDMAReduce(param.inputPtr, param.outputPtr, param.DataDes.dataType, param.reduceType) &&
         (deviceNumPerAggregation_ > HCCL_DEVICE_NUM_TWO) &&
         (param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] <= HCCL_SMALL_COUNT_1_MB * userRankSize_);
-    if (smallCountOptim91093) {
+    if (multiModuleDiffDeviceNumMode_ || multiSuperPodDiffServerNumMode_) {
+        algName = "AllReduceComm";
+    } else if (smallCountOptim91093) {
         algName = "AllReduceMeshSmallCountExecutor";
     } else if (GetExternalInputEnableRdmaSdmaConcurrent() && topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING &&
         !param.aicpuUnfoldMode && (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE)) {
@@ -446,7 +448,14 @@ HcclResult AllReduceOperator::SelectAlgfor91093(const OpParam& param, std::strin
         }
         algName = "AllReduceDoubleRingConcurrentExecutor";
     } else {
-        if (UseInterServerHDAlgo(algType_)) {
+        if (GetExternalInputEnableRdmaSdmaConcurrent()) {
+            if (!(UseInterServerRingAlgo(algType_) || UseInterServerNBAlgo(algType_))) {
+                HcclResult ret = SetInterServerRingAlgo(algType_);
+                CHK_PRT_RET(ret != HCCL_SUCCESS,
+                    HCCL_ERROR("[AllReduceOperator][SelectAlgfor91093]errNo[0x%016llx] tag[%s], AllReduce "\
+                    "concurrent set inter server ring algo failed", HCCL_ERROR_CODE(ret), param.tag.c_str()), ret);
+            }
+        } else if (UseInterServerHDAlgo(algType_)) {
             HcclResult ret = SetInterServerNHRAlgo(algType_);
             HCCL_WARNING("[AllReduceOperator][SelectAlgfor91093] only support ring, NB and NHR in AlgoLevel1 yet, "\
                 "default is algType=NHR.");

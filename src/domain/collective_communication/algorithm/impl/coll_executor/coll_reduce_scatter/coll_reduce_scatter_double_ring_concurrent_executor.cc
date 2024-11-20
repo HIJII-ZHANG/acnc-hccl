@@ -366,7 +366,7 @@ HcclResult CollReduceScatterDoubleRingConcurrentExecutor::KernelRun(const OpPara
     HcomCollOpInfo opInfo = {"", execMem.inputPtr, execMem.outputPtr, param.DataDes.count, param.DataDes.dataType,
         param.root, param.reduceType};
     HcomCollOpInfo *opInfoPtr = nullptr;
-    if (DMAReduceFlag_ && (!GetExternalInputEnableInplace())) {
+    if (DMAReduceFlag_) {
         opInfoPtr = &opInfo;
     }
 
