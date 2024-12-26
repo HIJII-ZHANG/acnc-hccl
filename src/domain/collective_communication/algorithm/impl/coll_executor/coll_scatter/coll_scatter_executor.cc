@@ -46,10 +46,6 @@ HcclResult CollScatterExecutor::CalcTransportMemType(TransportMemType &inputType
 
 bool CollScatterExecutor::IsHugeData(u64 curSize)
 {
-    if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT) {
-        return true;
-    }
-
     bool hugeData = curSize * topoAttr_.userRankSize / HCCL_INTERNODE_MAX_DATA_RATE > RDMA_SEND_MAX_SIZE ||
         curSize > SDMA_SEND_MAX_SIZE;
     return hugeData;
@@ -73,8 +69,9 @@ HcclResult CollScatterExecutor::RunLoop(OpParam &param, AlgResourceResponse &alg
     auto inCCLbuffer = algRes.cclInputMem;
     auto outCCLbuffer = algRes.cclOutputMem;
 
-    u64 maxCountPerLoop = inCCLbuffer.size() / (topoAttr_.userRankSize * unitSize); // 中转内存单次最多能够接受的output count
-
+    // 中转内存单次最多能够接受的output count
+    u64 maxCountPerLoop = inCCLbuffer.size() / topoAttr_.userRankSize / HCCL_MIN_SLICE_ALIGN
+        * HCCL_MIN_SLICE_ALIGN / unitSize;
     HCCL_DEBUG("[CollScatterExecutor][RunLoop]tag[%s], userRankSize is [%u], root is [%u], "
                "maxCountPerLoop is [%llu], totalRecvCount is [%llu]",
         tag_.c_str(), topoAttr_.userRankSize, root, maxCountPerLoop, totalRecvCount);
@@ -211,27 +208,27 @@ HcclResult CollScatterExecutor::KernelRunInner(DeviceMem& inputMem, u64 count, H
     u32 rootRankInner = 0;
     CHK_RET(GetRankByUserRank(commLevel, commIndex, root, rootRankInner));
 
-    std::unique_ptr<ExecutorBase> innerExecutor;
+    std::unique_ptr<AlgTemplateBase> innerTempAlg;
     if (UseInterServerNBAlgo(algType_)) {
         // server间NB算法走NB
-        innerExecutor.reset(new (std::nothrow) ScatterNB(dispatcher_));
+        innerTempAlg.reset(new (std::nothrow) ScatterNB(dispatcher_));
         HCCL_INFO("[Scatter][KernelRunInner]: using NB algo inter-server.");
     } else if (UseInterServerNHRAlgo(algType_)) {
-        innerExecutor.reset(new (std::nothrow) ScatterNHR(dispatcher_));
+        innerTempAlg.reset(new (std::nothrow) ScatterNHR(dispatcher_));
         HCCL_INFO("[Scatter][KernelRunInner]: using NHR algo inter-server.");
     } else {
-        innerExecutor.reset(new (std::nothrow) ScatterRing(dispatcher_));
+        innerTempAlg.reset(new (std::nothrow) ScatterRing(dispatcher_));
         HCCL_INFO("[Scatter][KernelRunInner]: using ring algo inter-server.");
     }
 
-    CHK_SMART_PTR_NULL(innerExecutor);
-    CHK_RET(innerExecutor->Prepare(inputMem, inputMem, inputMem, count * topoAttr_.userRankSize,
+    CHK_SMART_PTR_NULL(innerTempAlg);
+    CHK_RET(innerTempAlg->Prepare(inputMem, inputMem, inputMem, count * topoAttr_.userRankSize,
         dataType, stream, HCCL_REDUCE_RESERVED, rootRankInner, std::vector<Slice>(0))); // count是output的数据个数
-    CHK_RET(innerExecutor->RegisterProfiler(
+    CHK_RET(innerTempAlg->RegisterProfiler(
         (subCommSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + subCommInfo.localRank,
         PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, stream));
 
-    CHK_RET(RunTemplate(innerExecutor, subCommInfo));
+    CHK_RET(RunTemplate(innerTempAlg, subCommInfo));
     return HCCL_SUCCESS;
 }
 

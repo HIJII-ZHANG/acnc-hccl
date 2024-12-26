@@ -466,6 +466,11 @@ HcclResult TopoInfoExtractor::SetTopoInfoForLevel0()
     } else {    // 8p-ring/np ring 环场景
         u32 ringNum = multiOuterOrder_.size();
         CHK_RET(SetMultiOuter(ringNum)); // 8P_RING场景下，外层拓扑中有四个环; 910_93场景中适配双环
+        // SDMA&RDMA并发特性
+        if (GetExternalInputEnableRdmaSdmaConcurrent()) {
+            std::vector<std::vector<u32> > multiOrder = GetRingsOrderForAnyPath(ranksSize, topoType_, mockNicList);
+            SetMultiOuterAnyPath(multiOrder);
+        }
     }
 
     if (isConfigAHC_) {
@@ -479,7 +484,7 @@ HcclResult TopoInfoExtractor::SetTopoInfoForLevel1(bool prepareAHC)
 {
     std::map<u32, std::vector<RankInfo>> &serverToRank =
         (prepareAHC) ? serverToRankMerge_ : serverToRank_;
-    
+
     CommPlane commPlaneLevel1 = (prepareAHC) ? COMM_LEVEL1_AHC : COMM_LEVEL1;
 
     u32 moduleIdx = 0;
@@ -588,8 +593,9 @@ HcclResult TopoInfoExtractor::SetTopoInfoForLevel1(bool prepareAHC)
             calcGroupDone = true;
         }
 
-        if (GetExternalInputEnableRdmaSdmaConcurrent() && !prepareAHC) {
-            CommPlaneVector_[COMM_LEVEL1_RDMA].push_back(tmpBridgeVector);
+        if (GetExternalInputEnableRdmaSdmaConcurrent() && !prepareAHC) { // anypath的level1层
+            CommPlaneVector_[COMM_LEVEL1_ANYPATH_SDMA].push_back(tmpBridgeVector);
+            CommPlaneVector_[COMM_LEVEL1_ANYPATH_RDMA].push_back(tmpBridgeVector);
         }
         HCCL_INFO("SetTopoInfoForLevel1: topoRankInfo[%s]", outLogInfo.c_str());
     }
@@ -647,7 +653,7 @@ HcclResult TopoInfoExtractor::SetTopoInfoForLevel2()
         HCCL_RUN_INFO("SetTopoInfoForLevel2: identifier[%s], userRank[%u], userRankSize[%u], plane size[%u]",
             identifier_.c_str(), userRank_, userRankSize_, CommPlaneVector_[COMM_LEVEL2].size());
     }
-    
+
     return HCCL_SUCCESS;
 }
 
@@ -915,10 +921,46 @@ HcclResult TopoInfoExtractor::SetMultiOuter(u32 ringNum)
         HCCL_RUN_INFO("SetTopoInfoForLevel0: identifier[%s], userRank[%u], userRankSize[%u], topoRankInfo[%s]",
             identifier_.c_str(), userRank_, userRankSize_, outLogInfo.c_str());
         CommPlaneVector_[COMM_LEVEL0].push_back(tmpOuterVector);
-        // SDMA&RDMA并发特性
-        if (GetExternalInputEnableRdmaSdmaConcurrent()) {
-            CommPlaneVector_[COMM_LEVEL0_RDMA].push_back(tmpOuterVector);
+    }
+    return HCCL_SUCCESS;
+}
+
+// anypath创建通信域
+HcclResult TopoInfoExtractor::SetMultiOuterAnyPath(std::vector<std::vector<u32> > multiOrder)
+{
+    u32 ringNum = multiOrder.size();
+    std::vector<u32> tmpOuterOrder;
+    u32 moduleIdx = 0;
+    CHK_RET(GetModuleIdx(rankData_, moduleIdx));
+    auto iterRank = serverToRank_.find(moduleIdx); // 查询本rank所在服务器
+    bool check = (iterRank == serverToRank_.end());
+    CHK_PRT_RET(check, HCCL_ERROR("[Set][MultiOuter]can't find serverId[%s] in rank map", rankData_.serverId.c_str()),
+        HCCL_E_NOT_FOUND);
+
+    // 维护topo输出的信息
+    std::string outLogInfo = "";
+    RankInfo tempRankData;
+    for (u32 ringIndex = 0; ringIndex < ringNum; ringIndex++) {
+        tmpOuterOrder = multiOrder[ringIndex]; // 获取每一个环的设备物理ID排序
+        std::vector<RankInfo> tmpOuterVector;
+        outLogInfo = "userRank/devicePhyId: ";
+        for (u32 startIndex = 0; startIndex < (iterRank->second).size(); startIndex++) {
+            u32 devIndex = tmpOuterOrder[startIndex];
+            u32 outerRingUserank = (iterRank->second)[devIndex].userRank;
+            bool checkError = (rankVector_.size() <= outerRingUserank);
+            CHK_PRT_RET(checkError, HCCL_ERROR("[Set][MultiOuter]outer userRank[%u] is bigger than rank vector",
+                outerRingUserank), HCCL_E_INTERNAL);
+            tempRankData = rankVector_[outerRingUserank];
+            outLogInfo.append(std::to_string(tempRankData.userRank));
+            outLogInfo.append("/");
+            outLogInfo.append(std::to_string(tempRankData.devicePhyId));
+            outLogInfo.append("; ");
+            tmpOuterVector.push_back(tempRankData);
         }
+        HCCL_RUN_INFO("[AnyPath]SetTopoInfoForLevel0: identifier[%s], userRank[%u], userRankSize[%u], topoRankInfo[%s]",
+            identifier_.c_str(), userRank_, userRankSize_, outLogInfo.c_str());
+        CommPlaneVector_[COMM_LEVEL0_ANYPATH_SDMA].push_back(tmpOuterVector);
+        CommPlaneVector_[COMM_LEVEL0_ANYPATH_RDMA].push_back(tmpOuterVector);
     }
 
     return HCCL_SUCCESS;
@@ -1227,19 +1269,10 @@ std::vector<std::vector<u32>> GetRingsOrderByTopoType(u32 ranksSize, TopoType to
     } else if (topoType == TopoType::TOPO_TYPE_NP_DOUBLE_RING) { // 2 ring 场景
         std::vector<u32> tmpOuter0;   // 环0
         std::vector<u32> tmpOuter1;  // 环1
-        std::vector<u32> rohOuter;
-        if (GetExternalInputEnableRdmaSdmaConcurrent() && (CheckSdmaWithRohTopo(nicList, rohOuter)
-            && GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE)) {
-            tmpOuter0 = rohOuter;          // 环0, 8卡 { 0, 1, 3, 2, 4, 5, 7, 6 };
-            tmpOuter1.reserve(ranksSize);  // 环1, 8卡 { 0, 6, 7, 5, 4, 2, 3, 1 };
-            tmpOuter1.push_back(rohOuter[0]);
-            tmpOuter1.insert(tmpOuter1.end(), rohOuter.rbegin(), rohOuter.rend() - 1);
-        } else {
-            tmpOuter0 = nicList;  // { 0, 1, 2, 3, 4, 5, 6, 7 };
-            tmpOuter1.reserve(ranksSize);
-            tmpOuter1.push_back(nicList[0]);
-            tmpOuter1.insert(tmpOuter1.end(), tmpOuter0.rbegin(), tmpOuter0.rend() - 1);
-        }
+        tmpOuter0 = nicList;  // { 0, 1, 2, 3, 4, 5, 6, 7 };
+        tmpOuter1.reserve(ranksSize);
+        tmpOuter1.push_back(nicList[0]);
+        tmpOuter1.insert(tmpOuter1.end(), tmpOuter0.rbegin(), tmpOuter0.rend() - 1);
         HCCL_INFO("[GetRingsOrderByTopoType] TopoType:TOPO_TYPE_NP_DOUBLE_RING");
         // 填充 double ring 两环的comm outer的顺序
         multiRingOrder.push_back(tmpOuter0);
@@ -1262,6 +1295,47 @@ std::vector<std::vector<u32>> GetRingsOrderByTopoType(u32 ranksSize, TopoType to
             const char *charRing = ringString.c_str();
             HCCL_DEBUG("[GetRingsOrderByTopoType] The No.%zu ring: %s", i, charRing);
         }
+    }
+    return multiRingOrder;
+}
+
+std::vector<std::vector<u32>> GetRingsOrderForAnyPath(u32 ranksSize, TopoType topoType, std::vector<u32> &nicList)
+{
+    std::vector<std::vector<u32>> multiRingOrder;
+    if (topoType == TopoType::TOPO_TYPE_NP_DOUBLE_RING) { // 2 ring 场景
+        std::vector<u32> tmpOuter0;   // 环0
+        std::vector<u32> tmpOuter1;  // 环1
+        std::vector<u32> rohOuter;
+        if (CheckSdmaWithRohTopo(nicList, rohOuter)) {
+            tmpOuter0 = rohOuter;          // 环0, 8卡 { 0, 1, 3, 2, 4, 5, 7, 6 };
+            tmpOuter1.reserve(ranksSize);  // 环1, 8卡 { 0, 6, 7, 5, 4, 2, 3, 1 };
+            tmpOuter1.push_back(rohOuter[0]);
+            tmpOuter1.insert(tmpOuter1.end(), rohOuter.rbegin(), rohOuter.rend() - 1);
+        } else {
+            tmpOuter0 = nicList;  // { 0, 1, 2, 3, 4, 5, 6, 7 };
+            tmpOuter1.reserve(ranksSize);
+            tmpOuter1.push_back(nicList[0]);
+            tmpOuter1.insert(tmpOuter1.end(), tmpOuter0.rbegin(), tmpOuter0.rend() - 1);
+        }
+        // 填充 double ring 两环的comm outer的顺序
+        multiRingOrder.push_back(tmpOuter0);
+        multiRingOrder.push_back(tmpOuter1);
+    } else { // 1 ring 场景
+        std::vector<u32> tmpOuter0 = nicList; // 环0
+
+        // 填充 single ring 单环的comm outer的顺序
+        multiRingOrder.push_back(tmpOuter0);
+    }
+    // 打印多个环
+    for (size_t i = 0; i < multiRingOrder.size(); i++) {
+        auto ring = multiRingOrder[i];
+        std::ostringstream stringRepresentation;
+        for (std::vector<uint32_t>::iterator it = ring.begin(); it != ring.end(); it++) {
+            stringRepresentation << *it << " ";
+        }
+        std::string ringString = stringRepresentation.str();
+        const char *charRing = ringString.c_str();
+        HCCL_INFO("[GetRingsOrderByRdmaSdmaConcurrent] The No.%zu ring: %s", i, charRing);
     }
     return multiRingOrder;
 }

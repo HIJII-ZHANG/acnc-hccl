@@ -25,11 +25,9 @@ HcclResult CollAllGatherDoubleRingConcurrentExecutor::CalcStreamNum(u32& streamN
     // DoubleRing只支持910_93场景
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
         totalStreamNum = OUTER_PLANE_NUM_IN_NPRING_DOUBLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
-    } else {
+    } else { // 图模式增加两条流用于机内并发
         totalStreamNum = OUTER_PLANE_NUM_IN_NPRING_DOUBLE;
-    }
-    if (GetExternalInputEnableRdmaSdmaConcurrent()) {
-        totalStreamNum += RDMA_PLANE_NUM_IN_NPRING_DOUBLE; // 当前只有图模式进入该executor
+        totalStreamNum += RDMA_PLANE_NUM_IN_NPRING_DOUBLE;
     }
     streamNum = totalStreamNum - 1;
     HCCL_INFO("[CollAllGatherDoubleRingConcurrentExecutor][CalcStreamNum] tag[%s] streamNum_[%u]",
@@ -67,15 +65,12 @@ HcclResult CollAllGatherDoubleRingConcurrentExecutor::CalcLevel0CommInfo(Transpo
     TransportMemType outputType,
     std::vector<LevelNSubCommTransport>& opTransport)
 {
-    CommParaInfo commParaLevel0(COMM_LEVEL0, CommType::COMM_TAG_RING_INNER);
+    CommParaInfo commParaLevel0(COMM_LEVEL0_ANYPATH_SDMA, CommType::COMM_TAG_RING_INNER);
     commParaLevel0.forceRdma = false;
-    CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel0, opTransport[COMM_LEVEL0], inputType, outputType));
-    if (GetExternalInputEnableRdmaSdmaConcurrent()) {
-        CommParaInfo commParaLevel0Rdma(COMM_LEVEL0_RDMA, CommType::COMM_TAG_RING_INNER);
-        commParaLevel0Rdma.forceRdma = true;
-        CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel0Rdma, opTransport[COMM_LEVEL0_RDMA],
-            inputType, outputType));
-    }
+    CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel0, opTransport[COMM_LEVEL0_ANYPATH_SDMA], inputType, outputType));
+    CommParaInfo commParaLevel0Rdma(COMM_LEVEL0_ANYPATH_RDMA, CommType::COMM_TAG_RING_INNER);
+    commParaLevel0Rdma.forceRdma = true;
+    CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel0Rdma, opTransport[COMM_LEVEL0_ANYPATH_RDMA], inputType, outputType));
     return HCCL_SUCCESS;
 }
 
@@ -94,7 +89,8 @@ HcclResult CollAllGatherDoubleRingConcurrentExecutor::CalcLevel2CommInfo(Transpo
 }
 u64 CollAllGatherDoubleRingConcurrentExecutor::CalcLoopMaxCount(const u64 cclBuffSize, const u32 unitSize)
 {
-    u64 maxCountPerLoop = cclBuffSize / (topoAttr_.userRankSize * unitSize);
+    u64 maxCountPerLoop = cclBuffSize / topoAttr_.userRankSize / HCCL_MIN_SLICE_ALIGN
+        * HCCL_MIN_SLICE_ALIGN / unitSize;
     return maxCountPerLoop;
 }
 
@@ -113,13 +109,13 @@ HcclResult CollAllGatherDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
     CHK_PRT_RET(perDataSize == 0,
         HCCL_ERROR("[CollAllGatherDoubleRingConcurrentExecutor][KernelRun]errNo[0x%016llx] datatype[%d] is invalid",
             HCCL_ERROR_CODE(HCCL_E_PARA), param.DataDes.dataType), HCCL_E_PARA);
-    
-    CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+
+    CHK_RET(CheckCommSize(COMM_LEVEL0_ANYPATH_SDMA, COMM_INDEX_0 + 1));
+    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0_ANYPATH_SDMA, COMM_INDEX_0);
     u32 commIndex = outerCommInfo.localRank;
     commIndex = RefreshCommIdx(commIndex, topoAttr_.nicList, topoAttr_.devicePhyId);
-    CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
-    SubCommInfo innerCommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
+    CHK_RET(CheckCommSize(COMM_LEVEL1_ANYPATH_SDMA, commIndex + 1));
+    SubCommInfo innerCommInfo = GetSubCommInfo(COMM_LEVEL1_ANYPATH_SDMA, commIndex);
 
     //  第一步，将数据从input内存拷贝到output内存的对应位置
     u32 level0ServerIndex = commIndex;
@@ -193,7 +189,7 @@ HcclResult CollAllGatherDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
                 Slice rdmaSlice;
                 u64 sdmaSliceSize = ((level1DataSegsSlice[i].size <= HCCL_MIN_SLICE_ALIGN_910_93) ||
                     (syncTrans1 == MAX_SPLIT_VALUE)) ? level1DataSegsSlice[i].size :
-                    ((syncTrans1 * level1DataSegsSlice[i].size / MAX_SPLIT_VALUE) 
+                    ((syncTrans1 * level1DataSegsSlice[i].size / MAX_SPLIT_VALUE)
                     / HCCL_MIN_SLICE_ALIGN_910_93) * HCCL_MIN_SLICE_ALIGN_910_93;
                 sdmaSlice.size = sdmaSliceSize;
                 sdmaSlice.offset = level1DataSegsSlice[i].offset;
@@ -214,9 +210,9 @@ HcclResult CollAllGatherDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
             for (u32 planeIndex = 0; planeIndex < commPlaneNum; planeIndex++)
             {
                 std::vector<Slice> singleSlice = innerMultSlice[planeIndex].second;
-                SubCommInfo innerRdmaCommInfo = GetSubCommInfo(COMM_LEVEL1_RDMA, commIndex);
+                SubCommInfo innerRdmaCommInfo = GetSubCommInfo(COMM_LEVEL1_ANYPATH_RDMA, commIndex);
                 SubCommInfo level1CommInfo = innerMultSlice[planeIndex].first ? innerCommInfo : innerRdmaCommInfo;
-                std::unique_ptr<ExecutorBase> innerExecutor;
+                std::unique_ptr<AlgTemplateBase> innerExecutor;
                 if (UseInterServerNBAlgo(algType_)) {
                     innerExecutor.reset(new (std::nothrow) AllGatherNB(dispatcher_));
                     HCCL_INFO("allgather ring: using nonuniform-bruck algo inter-server.");
@@ -267,7 +263,7 @@ HcclResult CollAllGatherDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
                 }
             }
             HCCL_INFO("allgather double ring level1 run success");
-            CHK_RET(ExecutorBase::ExecEmptyTask(execMem.inputMem, execMem.outputMem, const_cast<Stream&>(param.stream),
+            CHK_RET(AlgTemplateBase::ExecEmptyTask(execMem.inputMem, execMem.outputMem, const_cast<Stream&>(param.stream),
                 dispatcher_));
             HCCL_INFO("[CollAllGatherDoubleRingConcurrentExecutor] level1 run success");
         }
@@ -277,7 +273,7 @@ HcclResult CollAllGatherDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
         CHK_RET(PrepareAllgatherSlice(level0RankSize, inputMemSize, dataSegsSlice));
 
         //  多环数据切分
-        multRingsSliceZero = PrepareMultiRingSlice(dataSegsSlice, param.tag, false, topoAttr_.nicList);
+        multRingsSliceZero = AnyPathPrepareMultiRingSlice(dataSegsSlice, param.tag, false, topoAttr_.nicList);
         std::vector<std::vector<Slice>> multRingsSlice;
         CHK_RET(CalculateLevel1AllgatherSlice(inputMemSize, level0RankSize, level1RankSize,
             multRingsSliceZero, multRingsSlice));
@@ -293,7 +289,7 @@ HcclResult CollAllGatherDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
             for (u32 segsIndex = 0; segsIndex < multRingsSlice[ringIndex].size(); segsIndex++) {
                 auto totalSize = multRingsSlice[ringIndex][segsIndex].size;
                 auto sdmaSliceOffset = multRingsSlice[ringIndex][segsIndex].offset;
-                auto sdmaSliceSize = ((totalSize <= HCCL_MIN_SLICE_ALIGN_910_93) || (syncTrans == MAX_SPLIT_VALUE)) ? 
+                auto sdmaSliceSize = ((totalSize <= HCCL_MIN_SLICE_ALIGN_910_93) || (syncTrans == MAX_SPLIT_VALUE)) ?
                     totalSize : ((syncTrans * totalSize / MAX_SPLIT_VALUE) / HCCL_MIN_SLICE_ALIGN_910_93) *
                     HCCL_MIN_SLICE_ALIGN_910_93;
                 Slice sdmaSliceTmp;

@@ -120,10 +120,6 @@ u64 CollReduceScatterMeshExecutor::CalcLoopMaxCount(const u32 unitSize)
 
 bool CollReduceScatterMeshExecutor::IsHugeData(const u64 curSize, OpParam *param)
 {
-    if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT) {
-        return true;
-    }
-
     bool hugeData = (curSize * topoAttr_.userRankSize / HCCL_INTERNODE_MAX_DATA_RATE > RDMA_SEND_MAX_SIZE) ||
                     (curSize > SDMA_SEND_MAX_SIZE);
     return hugeData;
@@ -145,52 +141,52 @@ HcclResult CollReduceScatterMeshExecutor::KernelRun(const OpParam &param, ExecMe
     u32 innerRankSize = innerCommInfo.localRankSize;
     if (innerRankSize > 1) {
         u64 reduceAttr = GetReduceAttr(execMem.inputMem, execMem.outputMem, param.DataDes.dataType, param.reduceType);
-        std::unique_ptr<ExecutorBase> innerExecutor;
+        std::unique_ptr<AlgTemplateBase> innerTempAlg;
         if (UseInterServerRingAlgo(algType_)) {
-            innerExecutor.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
-            CHK_SMART_PTR_NULL(innerExecutor);
+            innerTempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
+            CHK_SMART_PTR_NULL(innerTempAlg);
             HCCL_INFO("reducescatter mesh: using ring algo inter-server.");
             u64 ringSize = execMem.inputMem.size() / innerRankSize;
             u64 ringCount = ringSize / perDataSize;
-            CHK_RET(innerExecutor->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
+            CHK_RET(innerTempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
                 param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID, std::vector<Slice>(0)));
         } else if (UseInterServerNHRAlgo(algType_)) {
-            innerExecutor.reset(new (std::nothrow) ReduceScatterNHR(dispatcher_, reduceAttr));
+            innerTempAlg.reset(new (std::nothrow) ReduceScatterNHR(dispatcher_, reduceAttr));
             HCCL_INFO("reducescatter mesh: using nhr algo inter-server.");
-            CHK_SMART_PTR_NULL(innerExecutor);
+            CHK_SMART_PTR_NULL(innerTempAlg);
             u64 ringSize = execMem.inputMem.size() / innerRankSize;
             u64 ringCount = ringSize / perDataSize;
-            CHK_RET(innerExecutor->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
+            CHK_RET(innerTempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
                 param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID, std::vector<Slice>(0)));
         } else if (UseInterServerNHRV1Algo(algType_)) {
-            innerExecutor.reset(new (std::nothrow) ReduceScatterNHRV1(dispatcher_, reduceAttr));
+            innerTempAlg.reset(new (std::nothrow) ReduceScatterNHRV1(dispatcher_, reduceAttr));
             HCCL_INFO("reducescatter mesh: using nhr_v1 algo inter-server.");
-            CHK_SMART_PTR_NULL(innerExecutor);
+            CHK_SMART_PTR_NULL(innerTempAlg);
             u64 ringSize = execMem.inputMem.size() / innerRankSize;
             u64 ringCount = ringSize / perDataSize;
-            CHK_RET(innerExecutor->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
+            CHK_RET(innerTempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
                 param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID, std::vector<Slice>(0)));
         } else if (UseInterServerNBAlgo(algType_)) {
-            innerExecutor.reset(new (std::nothrow) ReduceScatterNB(dispatcher_, reduceAttr));
+            innerTempAlg.reset(new (std::nothrow) ReduceScatterNB(dispatcher_, reduceAttr));
             HCCL_INFO("reducescatter mesh: using nonuniform-bruck algo inter-server.");
-            CHK_SMART_PTR_NULL(innerExecutor);
+            CHK_SMART_PTR_NULL(innerTempAlg);
             u64 ringSize = execMem.inputMem.size() / innerRankSize;
             u64 ringCount = ringSize / perDataSize;
-            CHK_RET(innerExecutor->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
+            CHK_RET(innerTempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
                 param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID, std::vector<Slice>(0)));
         } else {
-            innerExecutor.reset(new (std::nothrow) ReduceScatterRecursiveHalvingDoubling(dispatcher_, reduceAttr));
-            CHK_SMART_PTR_NULL(innerExecutor);
+            innerTempAlg.reset(new (std::nothrow) ReduceScatterRecursiveHalvingDoubling(dispatcher_, reduceAttr));
+            CHK_SMART_PTR_NULL(innerTempAlg);
             HCCL_INFO("reducescatter mesh: using halving-doubling algo inter-server.");
             u64 inputDataCount = execMem.inputMem.size() / perDataSize; // count是output的数据个数
-            CHK_RET(innerExecutor->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, inputDataCount,
+            CHK_RET(innerTempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, inputDataCount,
                 param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID, std::vector<Slice>(0)));
         }
-        CHK_RET(innerExecutor->RegisterProfiler(
+        CHK_RET(innerTempAlg->RegisterProfiler(
             (innerRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + innerCommInfo.localRank,
             PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-        CHK_RET(RunTemplate(innerExecutor, innerCommInfo));
+        CHK_RET(RunTemplate(innerTempAlg, innerCommInfo));
     }
 
     /* *******************第二步: 节点内reducescatter ******************************************/
@@ -226,7 +222,7 @@ HcclResult CollReduceScatterMeshExecutor::KernelRun(const OpParam &param, ExecMe
     } else {
         std::vector<std::vector<Slice> > multiStreamSlice; // 每个stream使用的数据基于用户buffer的偏移
         // mesh算法stream数量为rank数减1
-        CHK_RET(ExecutorBase::PrepareSliceMeshStreams(dataSegsSlice, sliceNum - 1, multiStreamSlice));
+        CHK_RET(AlgTemplateBase::PrepareSliceMeshStreams(dataSegsSlice, sliceNum - 1, multiStreamSlice));
         CHK_RET(MultiStreamReduceScatterMesh(param.tag, reduceScatterMeshInput, reduceScatterMeshOutput, // 确定性
             execMem.count, param.DataDes.dataType, param.reduceType, multiStreamSlice,
             const_cast<Stream&>(param.stream), COMM_LEVEL0, serverSliceOffset));

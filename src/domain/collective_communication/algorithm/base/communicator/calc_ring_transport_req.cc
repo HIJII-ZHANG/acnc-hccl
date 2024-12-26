@@ -29,7 +29,8 @@ HcclResult CalcRingTransportReq::CalcTransportRequest(const std::string &tag, Tr
     commTransport.resize(ringSize);
 
     for (u32 ringIndex = 0; ringIndex < ringSize; ringIndex++) {
-        if ((commParaInfo.commPlane == COMM_LEVEL1 || commParaInfo.commPlane == COMM_LEVEL1_RDMA)&&
+        if ((commParaInfo.commPlane == COMM_LEVEL1 || commParaInfo.commPlane == COMM_LEVEL1_ANYPATH_SDMA ||
+            commParaInfo.commPlane == COMM_LEVEL1_ANYPATH_RDMA)&&
             !isBridgeVector_[ringIndex]) {
             continue; // 跳出本次循环
         }

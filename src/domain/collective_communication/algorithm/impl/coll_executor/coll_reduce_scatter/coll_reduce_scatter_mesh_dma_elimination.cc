@@ -126,7 +126,7 @@ HcclResult CollReduceScatterMeshDmaEliminationExecutor::KernelRun(const OpParam 
     } else {
         std::vector<std::vector<Slice> > multiStreamSlice; // 每个stream使用的数据基于用户buffer的偏移
         // mesh算法stream数量为rank数减1
-        CHK_RET(ExecutorBase::PrepareSliceMeshStreams(dataSegsSlice, sliceNum - 1, multiStreamSlice));
+        CHK_RET(AlgTemplateBase::PrepareSliceMeshStreams(dataSegsSlice, sliceNum - 1, multiStreamSlice));
         CHK_RET(MultiStreamReduceScatterMesh(param.tag, execMem.inputMem, execMem.scratchMem,
             execMem.count, param.DataDes.dataType, param.reduceType, multiStreamSlice, param.stream, COMM_LEVEL0, 0));
     }

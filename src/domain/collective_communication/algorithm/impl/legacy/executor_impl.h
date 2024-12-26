@@ -91,6 +91,7 @@
 #include "alltoallv_direct_fullmesh_pub.h"
 #include "all_reduce_hd_optim_pub.h"
 #include "broadcast_oneshot_pub.h"
+#include "all_gather_hd_stage_pub.h"
 
 namespace hccl {
 }

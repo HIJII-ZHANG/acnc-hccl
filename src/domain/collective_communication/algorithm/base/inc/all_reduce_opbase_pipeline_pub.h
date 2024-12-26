@@ -20,14 +20,14 @@
 #include "mem_device_pub.h"
 #include "stream_pub.h"
 #include "dispatcher.h"
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 #include "reducer_pub.h"
 #include "sender_pub.h"
 #include "coll_alg_param.h"
 
 namespace hccl {
 
-class AllReduceOpbasePipeline : public ExecutorBase {
+class AllReduceOpbasePipeline : public AlgTemplateBase {
 public:
     explicit AllReduceOpbasePipeline (const HcclDispatcher dispatcher, const u64 reduceAttrBitMap);
     ~AllReduceOpbasePipeline() override;

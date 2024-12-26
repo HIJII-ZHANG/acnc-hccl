@@ -2,3 +2,6 @@ approvers:
 - philo_yan
 - yanzhenghang
 - yanyefeng
+
+options:
+ no_parent_owners: true

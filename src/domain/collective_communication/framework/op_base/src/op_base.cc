@@ -22,6 +22,7 @@
 #include "externalinput_pub.h"
 #include "../common/src/topo/topoinfo_detect.h"
 #include "../common/src/topo/topoinfo_ranktable_partition.h"
+#include "../common/src/state_guard.h"
 #include "sal_pub.h"
 #include "profiling_manager_pub.h"
 #include "adapter_prof_pub.h"
@@ -44,14 +45,20 @@ const std::string HCCL_ALLTOALL = "ALLTOALL";
 const std::string HCCL_ALLTOALLV = "ALLTOALLV";
 const std::string HCCL_ALLTOALLVC = "ALLTOALLVC";
 
-map<std::string, shared_ptr<TopoInfoDetect>> g_topoDetectServerPtrMap;
+thread_local map<std::string, shared_ptr<TopoInfoDetect>> g_topoDetectServerPtrMap;
 
 HcclResult CallMsprofReportHostApi(hccl::hcclComm* hcclComm, HcclCMDType cmdType, uint64_t beginTime, u64 count,
     HcclDataType dataType, std::string tag)
 {
     if (GetExternalInputHcclIfProf()) {
         AlgType algType = AlgType::ALG_DEFAULT;
-        CHK_RET(hcclComm->GetAlgType(algType, cmdType));
+        if(cmdType == HcclCMDType::HCCL_CMD_BATCH_SEND_RECV){
+            algType = AlgType::ALG_PAIRWISE;
+        } else if (cmdType == HcclCMDType::HCCL_CMD_SEND || cmdType == HcclCMDType::HCCL_CMD_RECEIVE){
+            algType = AlgType::ALG_RESERVED;
+        } else {
+            CHK_RET(hcclComm->GetAlgType(algType, cmdType));
+        }
         uint64_t groupName = hrtMsprofGetHashId(hcclComm->GetIdentifier().c_str(), hcclComm->GetIdentifier().length());
         CHK_RET_AND_PRINT_IDE(ProfilingManagerPub::CallMsprofReportHostApi(cmdType, beginTime, count, dataType, algType,
             groupName), tag.c_str());
@@ -60,6 +67,7 @@ HcclResult CallMsprofReportHostApi(hccl::hcclComm* hcclComm, HcclCMDType cmdType
 }
 
 thread_local s32 g_hcclDeviceId = INVALID_INT;
+std::mutex g_opHcomInfosMutex{};
 HcclOpInfoCtx g_opHcomInfos[MAX_MODULE_DEVICE_NUM + 1];
 
 HcclResult HcclGetDeviceId(void)
@@ -85,6 +93,7 @@ s32 HcclGetThreadDeviceId()
 HcclOpInfoCtx &GetHcclOpInfoCtx(void)
 {
     if (HcclGetDeviceId() == HCCL_SUCCESS) {
+        std::lock_guard<std::mutex> lock(g_opHcomInfosMutex);
         if (!g_opHcomInfos[g_hcclDeviceId].isUsed) {
             HCCL_INFO("[GetHcclOpInfoCtx] Set device, use g_hcclDeviceId[%d] ", g_hcclDeviceId);
             if (g_opHcomInfos[MAX_MODULE_DEVICE_NUM].isUsed) {
@@ -97,6 +106,7 @@ HcclOpInfoCtx &GetHcclOpInfoCtx(void)
         return g_opHcomInfos[g_hcclDeviceId];
     }
 
+    std::lock_guard<std::mutex> lock(g_opHcomInfosMutex);
     for (u32 i = 0; i < MAX_MODULE_DEVICE_NUM; i++) {
         if (g_opHcomInfos[i].isUsed) {
             g_hcclDeviceId = i;
@@ -114,7 +124,7 @@ HcclResult GetDeviceComm(uint32_t ndev, const HcclRootInfo &rootHandle, const s3
     HcclComm &comm)
 {
     //给当前线程添加名字
-    SetThreadName("Hccl_GetDeviceComm");
+    SetThreadName("Hccl_GetDevComm");
 
     CHK_PRT_RET(hrtSetDevice(logicDeviceId) != HCCL_SUCCESS,
         HCCL_ERROR("[GetDeviceComm] set fail logicDeviceId[%d]", logicDeviceId), HCCL_E_INTERNAL);
@@ -139,7 +149,7 @@ HcclResult HcclGetCommAll(uint32_t ndev, int32_t *devices, HcclComm *comms)
     CHK_PTR_NULL(devices);
 
     //给当前线程添加名字
-    SetThreadName("Hccl_HcclGetCommAll");
+    SetThreadName("Hccl_GetCommAll");
 
     CHK_PRT_RET(hrtSetDevice(devices[0]) != HCCL_SUCCESS,
         HCCL_ERROR("[HcclGetCommAll] set fail devices[0][%d]", devices[0]), HCCL_E_INTERNAL);
@@ -227,8 +237,92 @@ HcclResult HcclCommInitAll(uint32_t ndev, int32_t *devices, HcclComm *comms)
     return HCCL_SUCCESS;
 }
 
-HcclResult InitCommClusterInfo(string &rankTableM, const uint32_t rank, const CommConfig &commConfig,
-    HcclComm *comm)
+std::map<s32, std::unordered_map<std::string, std::shared_ptr<HcclOpInfoCtx>>> g_oneSidedCommHcomInfos;
+std::set<HcclComm> g_oneSidedCommSet;
+
+/* 仅提供判断功能, 调用前需校验参数有效性*/
+bool IsOneSidedComm(HcclComm comm)
+{
+    return g_oneSidedCommSet.find(comm) != g_oneSidedCommSet.end();
+}
+
+/* 仅提供判断功能, 调用前需校验参数有效性*/
+bool IsCommNameExistInOneSidedComms(s32 deviceLogicId, const std::string &commName)
+{
+    bool exist = g_oneSidedCommHcomInfos.count(deviceLogicId) != 0 &&
+                g_oneSidedCommHcomInfos[deviceLogicId].count(commName) != 0;
+    if (exist && g_oneSidedCommHcomInfos[deviceLogicId][commName]->isUsed) {
+        return true;
+    }
+    return false;
+}
+
+HcclResult DeInitOneSidedHcomInfo(s32 deviceLogicId, const std::string &commName)
+{
+    CHK_PRT_RET(deviceLogicId == INVALID_INT,
+                HCCL_ERROR("[HcclCommDestroy][DeInitOneSidedHcomInfo] deviceLogicId is error."),
+                HCCL_E_PARA);
+    CHK_PRT_RET(commName.empty(),
+                HCCL_ERROR("[HcclCommDestroy][DeInitOneSidedHcomInfo] commName is error."),
+                HCCL_E_PARA);
+    g_oneSidedCommHcomInfos[deviceLogicId].erase(commName);
+    return HCCL_SUCCESS;
+}
+
+/*
+ * g_oneSidedCommHcomInfos 初始化
+ * s32 deviceLogicId
+ * const string &commName : 通信域名，用户确保全局唯一
+ */
+HcclResult InitOneSidedHcomInfo(s32 deviceLogicId, const std::string &commName)
+{
+    CHK_PRT_RET(deviceLogicId == INVALID_INT,
+                HCCL_ERROR("[InitOneSidedHcomInfo] deviceLogicId is error."),
+                HCCL_E_PARA);
+    CHK_PRT_RET(commName.empty(),
+                HCCL_ERROR("[InitOneSidedHcomInfo] commName is error."),
+                HCCL_E_PARA);
+    // comm name exit && isUsed = true
+    bool isCommNameExist = IsCommNameExistInOneSidedComms(deviceLogicId, commName);
+    CHK_PRT_RET(isCommNameExist, HCCL_ERROR("[Init][InitOneSidedHcomInfo] comm Name exist."), HCCL_E_PARA);
+    // 确保 deviceLogicId 和 commName 的 map 已经被初始化
+    if (g_oneSidedCommHcomInfos.find(deviceLogicId) == g_oneSidedCommHcomInfos.end()) {
+        g_oneSidedCommHcomInfos[deviceLogicId] = {};
+    }
+    // comm name not exit
+    if (g_oneSidedCommHcomInfos[deviceLogicId].count(commName) == 0) {
+        std::shared_ptr<HcclOpInfoCtx> opBaseHcomPtr;
+        EXECEPTION_CATCH((opBaseHcomPtr = std::make_shared<HcclOpInfoCtx>()), return HCCL_E_PARA);
+        g_oneSidedCommHcomInfos[deviceLogicId][commName] = opBaseHcomPtr;
+    }
+    // comm name exit && isUsed = False
+    g_oneSidedCommHcomInfos[deviceLogicId][commName]->isUsed = true;
+    return HCCL_SUCCESS;
+}
+
+HcclOpInfoCtx &GetOneSidedOpInfoCtx(s32 deviceLogicId, const std::string &commName)
+{
+    std::shared_ptr<HcclOpInfoCtx> oneSidedHComPtr = g_oneSidedCommHcomInfos[deviceLogicId][commName];
+    return *oneSidedHComPtr;
+}
+
+HcclResult CheckOpBasedHcom(HcclOpInfoCtx &opBaseHcom, const uint32_t rank, const CommConfig &commConfig)
+{
+    /* 防止重复调用初始化 */
+    CHK_PRT_RET((opBaseHcom.pComm != nullptr), HCCL_ERROR("[Init][CheckOpBasedHcom]errNo[0x%016llx] rank[%u] "\
+        "op_base hccl multiple initialization", HCCL_ERROR_CODE(HCCL_E_UNAVAIL), rank), HCCL_E_UNAVAIL);
+    const std::string commIdentifier = commConfig.GetConfigCommName();
+    auto iter = opBaseHcom.opGroup2CommMap.find(commIdentifier);
+    CHK_PRT_RET(iter != opBaseHcom.opGroup2CommMap.end(),
+        HCCL_ERROR("[Init][CheckOpBasedHcom]errNo[0x%016llx] The comm name[%s] already exists in Group2Comm map.",
+                HCCL_ERROR_CODE(HCCL_E_PARA),
+                commIdentifier.c_str()),
+        HCCL_E_PARA);
+    return HCCL_SUCCESS;
+}
+
+HcclResult InitCommClusterInfo(std::string &rankTableM, const uint32_t rank, const CommConfig &commConfig,
+    HcclOpInfoCtx& opBaseHcom, HcclComm *comm)
 {
     u32 rankTableSize = 0;
     HcclResult ret = HcomCheckRankTable(rankTableM.c_str(), rankTableSize);
@@ -236,21 +330,7 @@ HcclResult InitCommClusterInfo(string &rankTableM, const uint32_t rank, const Co
         HCCL_ERROR("[Init][CommClusterInfo]check rankTable string error, rankTableSize [%u]",
             rankTableSize), HCCL_E_PARA);
 
-    HcclOpInfoCtx& opBaseHcom = GetHcclOpInfoCtx();
-
-    /* 防止重复调用初始化 */
-    CHK_PRT_RET((opBaseHcom.pComm != nullptr), HCCL_ERROR("[Init][CommClusterInfo]errNo[0x%016llx] rank[%u] "\
-        "op_base hccl multiple initialization", HCCL_ERROR_CODE(HCCL_E_UNAVAIL), rank), HCCL_E_UNAVAIL);
-
     const std::string commIdentifier = commConfig.GetConfigCommName();
-    auto iter = opBaseHcom.opGroup2CommMap.find(commIdentifier);
-    CHK_PRT_RET(
-        iter != opBaseHcom.opGroup2CommMap.end(),
-        HCCL_ERROR("[Init][CommClusterInfo]errNo[0x%016llx] The comm name[%s] already exists in Group2Comm map.",
-        HCCL_ERROR_CODE(HCCL_E_PARA), commIdentifier.c_str()),
-        HCCL_E_PARA
-    );
-
     opBaseHcom.pComm.reset(
         new (std::nothrow) hccl::hcclComm(
             commConfig.GetConfigBufferSize(), commConfig.GetConfigBufferSize(), commIdentifier));
@@ -296,6 +376,11 @@ HcclResult InitCommClusterInfo(string &rankTableM, const uint32_t rank, const Co
         *comm = opBaseHcom.pComm.get();
         std::unique_lock<std::mutex> lock(opBaseHcom.opGroupMapMutex);
         opBaseHcom.opGroup2CommMap[opBaseHcom.pComm->GetIdentifier()] = opBaseHcom.pComm;
+
+	// 特殊场景，当comm name被手动配置为HCCL_WORLD_GROUP时，需要将pComm赋值到hcomInfo.pComm
+	if (opBaseHcom.pComm->GetIdentifier() == HCCL_WORLD_GROUP) {
+	    HcomGetCtxHomInfo().pComm = opBaseHcom.pComm;
+	}
     } while (0);
 
     if (errorFlag) {
@@ -339,7 +424,10 @@ HcclResult HcclCommInitClusterInfo(const char *clusterInfo, uint32_t rank, HcclC
 
     HCCL_INFO("%s success, clusterInfoRealPath[%s]", __func__, realFilePath.c_str());
 
-    CHK_RET(InitCommClusterInfo(rankTableM, rank, commConfig, comm));
+    HcclOpInfoCtx &opBaseHcom = GetHcclOpInfoCtx();
+    CHK_RET(CheckOpBasedHcom(opBaseHcom, rank, commConfig));
+    
+    CHK_RET(InitCommClusterInfo(rankTableM, rank, commConfig, opBaseHcom, comm));
 
     /* 关键状态记录 */
     HCCL_RUN_INFO("[HCCL_TRACE]%s success, take time [%lld]us, clusterInfo[%s], rank[%u], deviceLogicId[%d]",
@@ -347,32 +435,59 @@ HcclResult HcclCommInitClusterInfo(const char *clusterInfo, uint32_t rank, HcclC
     return HCCL_SUCCESS;
 }
 
-HcclResult HcclCommInitClusterInfoMem(const char *clusterInfo, uint32_t rank, HcclComm *comm)
+HcclResult HcclCommInitClusterInfoMemConfig(const char *rankTableString, uint32_t rank,
+    HcclCommConfig *config, HcclComm *comm)
 {
     HcclUs startut = TIME_NOW();
     s32 deviceLogicId = 0;
     CHK_RET(hrtGetDeviceRefresh(&deviceLogicId));
 
     // 入参合法性校验
-    CHK_PTR_NULL(clusterInfo);
+    CHK_PTR_NULL(rankTableString);
     CHK_PTR_NULL(comm);
 
-    HCCL_RUN_INFO("Entry-%s: clusterInfo[%s], rank[%u], deviceLogicId[%d]",
-        __func__, clusterInfo, rank, deviceLogicId);
+    HCCL_RUN_INFO("Entry-%s: rankTableString[%s], rank[%u], deviceLogicId[%d]",
+        __func__, rankTableString, rank, deviceLogicId);
 
     HcclResult ret = InitExternalInput();
-    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[%s]errNo[0x%016llx] init external input error",
-        __func__, HCCL_ERROR_CODE(ret)), HCCL_E_PARA);
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[%s]errNo[0x%016llx] init external input error", __func__, HCCL_ERROR_CODE(ret)),
+        HCCL_E_PARA);
 
-    std::string rankTableM(clusterInfo);
-    std::string identifier = HCCL_WORLD_GROUP;
+    CHK_PRT_RET(strlen(config->hcclCommName) == 0,
+        HCCL_ERROR("[Init][HcclCommInitClusterInfoMemConfig] hcclCommName is error."),
+        HCCL_E_PARA);
+
+    std::string rankTableM(rankTableString);
+    std::string identifier = config->hcclCommName;
     CommConfig commConfig(identifier);
+    HCCL_RUN_INFO("Entry-%s: %s", "hcclCommName", identifier.c_str());
+
+    /* 读取用户配置 */
+    ret = commConfig.Load(config);
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[Init][HcclCommInitClusterInfoMemConfig]errNo[0x%016llx] load comm config failed.",
+        HCCL_ERROR_CODE(ret)), HCCL_E_PARA);
     
-    CHK_RET(InitCommClusterInfo(rankTableM, rank, commConfig, comm));
+    CHK_PRT_RET(deviceLogicId == INVALID_INT,
+        HCCL_ERROR("[Init][HcclCommInitClusterInfoMemConfig] deviceLogicId is error."),
+        HCCL_E_PARA);
+    
+    bool isCommNameExist = IsCommNameExistInOneSidedComms(deviceLogicId, identifier);
+    CHK_PRT_RET(isCommNameExist, HCCL_ERROR("[Init][HcclCommInitClusterInfoMemConfig] comm Name exist."), HCCL_E_PARA);
+
+    CHK_RET(InitOneSidedHcomInfo(deviceLogicId, identifier));
+
+    const std::string commIdentifier = commConfig.GetConfigCommName();
+    HcclOpInfoCtx &oneSidedHCom = GetOneSidedOpInfoCtx(deviceLogicId, commIdentifier);
+    
+    CHK_RET(InitCommClusterInfo(rankTableM, rank, commConfig, oneSidedHCom, comm));
+
+    g_oneSidedCommSet.insert(*comm);
 
     /* 关键状态记录 */
-    HCCL_RUN_INFO("[HCCL_TRACE]%s success, take time [%lld]us, clusterInfo[%s], rank[%u], deviceLogicId[%d]",
-        __func__, DURATION_US(TIME_NOW() - startut), clusterInfo, rank, deviceLogicId);
+    HCCL_RUN_INFO("[HCCL_TRACE]%s success, take time [%lld]us, rankTableString[%s], rank[%u], deviceLogicId[%d]",
+        __func__, DURATION_US(TIME_NOW() - startut), rankTableString, rank, deviceLogicId);
     return HCCL_SUCCESS;
 }
 
@@ -413,7 +528,13 @@ HcclResult HcclCommInitClusterInfoConfig(const char *clusterInfo, uint32_t rank,
 
     HCCL_INFO("%s success, clusterInfoRealPath[%s]", __func__, realFilePath.c_str());
 
-    CHK_RET(InitCommClusterInfo(rankTableM, rank, commConfig, comm));
+    HcclOpInfoCtx &opBaseHcom = GetHcclOpInfoCtx();
+    CHK_RET(CheckOpBasedHcom(opBaseHcom, rank, commConfig));
+    
+    CHK_RET(InitCommClusterInfo(rankTableM, rank, commConfig, opBaseHcom, comm));
+
+    // 记录groupName和UDI的映射
+    HCCL_PROFILER_ADD_GROUP_UDI(commConfig.GetConfigCommName(), commConfig.GetConfigUdi());
 
     /* 关键状态记录 */
     HCCL_RUN_INFO("[HCCL_TRACE]%s success, take time [%lld]us, clusterInfo[%s], rank[%u], deviceLogicId[%d]",
@@ -502,6 +623,16 @@ HcclResult HcclCreateSubCommConfigInner(hccl::hcclComm *globalComm, uint32_t ran
     return HCCL_SUCCESS;
 }
 
+HcclResult SubCommIsOneSidedComm(HcclComm *comm)
+{
+    if (IsOneSidedComm(*comm)) {
+        HCCL_ERROR("[%s]errNo[0x%016llx] oneSidedComm does not support create sub comm.",
+            __func__, HCCL_ERROR_CODE(HCCL_E_NOT_SUPPORT));
+        return HCCL_E_NOT_SUPPORT;
+    }
+    return HCCL_SUCCESS;
+}
+
 HcclResult HcclCreateSubCommConfig(HcclComm *comm, uint32_t rankNum, uint32_t *rankIds,
     uint64_t subCommId, uint32_t subCommRankId, HcclCommConfig *config, HcclComm *subComm)
 {
@@ -517,22 +648,20 @@ HcclResult HcclCreateSubCommConfig(HcclComm *comm, uint32_t rankNum, uint32_t *r
     }
     CHK_PRT_RET(rankIds == nullptr && subCommId == INVALID_SUBCOMM_ID,
         HCCL_RUN_INFO("[HCCL_TRACE]HcclCreateSubCommConfig return, rankIds is nullptr and subCommId is 0xFFFFFFFF, " \
-            "this device is not in the sub comm, deviceLogicId[%u].", deviceLogicId),
-        HCCL_SUCCESS);
+            "this device is not in the sub comm, deviceLogicId[%u].", deviceLogicId), HCCL_SUCCESS);
     CHK_PRT_RET(rankIds == nullptr || subCommId == INVALID_SUBCOMM_ID,
         HCCL_ERROR("[%s]errNo[0x%016llx] " \
             "rankIds[%p] is nullptr xor subCommId[%llu] is invalid. " \
             "The two parameters should only be both valid or both invalid.",
-            __func__, HCCL_ERROR_CODE(HCCL_E_PARA), rankIds, subCommId),
-        HCCL_E_PARA);
+            __func__, HCCL_ERROR_CODE(HCCL_E_PARA), rankIds, subCommId), HCCL_E_PARA);
+    CHK_RET(SubCommIsOneSidedComm(comm));
 
     HcclResult ret = HCCL_SUCCESS;
     // 入参合法性校验
     CHK_PRT_RET((rankNum == 0), HCCL_ERROR("[%s]errNo[0x%016llx] Rank num cannot be zero.",
         __func__, HCCL_ERROR_CODE(HCCL_E_PARA)), HCCL_E_PARA);
-    CHK_PRT_RET((subCommRankId >= rankNum), HCCL_ERROR("[%s]errNo[0x%016llx] subCommRankId[%u] " \
-        "should be less than rankNum[%u].", __func__, HCCL_ERROR_CODE(HCCL_E_PARA), subCommRankId, rankNum),
-        HCCL_E_PARA);
+    CHK_PRT_RET((subCommRankId >= rankNum), HCCL_ERROR("[%s]errNo[0x%016llx] subCommRankId[%u] should be less " \
+        "than rankNum[%u].", __func__, HCCL_ERROR_CODE(HCCL_E_PARA), subCommRankId, rankNum), HCCL_E_PARA);
 
     RPT_INPUT_ERR(config == nullptr, "EI0003", std::vector<std::string>({"ccl_op", "parameter", "value", "tips"}),\
         std::vector<std::string>({"HcclCreateSubCommConfig", "config", "nullptr", "please check comm"}));
@@ -541,8 +670,7 @@ HcclResult HcclCreateSubCommConfig(HcclComm *comm, uint32_t rankNum, uint32_t *r
 
     ret = InitExternalInput();
     CHK_PRT_RET(ret != HCCL_SUCCESS,
-        HCCL_ERROR("[%s]errNo[0x%016llx] init external input error",
-        __func__, HCCL_ERROR_CODE(ret)), HCCL_E_PARA);
+        HCCL_ERROR("[%s]errNo[0x%016llx] init external input error", __func__, HCCL_ERROR_CODE(ret)), HCCL_E_PARA);
 
     hccl::hcclComm *globalComm = static_cast<hccl::hcclComm*>(*comm);
     CHK_PTR_NULL(globalComm);
@@ -551,10 +679,12 @@ HcclResult HcclCreateSubCommConfig(HcclComm *comm, uint32_t rankNum, uint32_t *r
     CommConfig commConfig(identifier);
     ret = commConfig.Load(config);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
-        HCCL_ERROR("[%s]errNo[0x%016llx] load comm config failed.", __func__, HCCL_ERROR_CODE(ret)),
-        HCCL_E_PARA);
+        HCCL_ERROR("[%s]errNo[0x%016llx] load comm config failed.", __func__, HCCL_ERROR_CODE(ret)), HCCL_E_PARA);
 
     CHK_RET(HcclCreateSubCommConfigInner(globalComm, rankNum, rankIds, subCommRankId, commConfig, subComm));
+
+    // 记录groupName和UDI的映射
+    HCCL_PROFILER_ADD_GROUP_UDI(commConfig.GetConfigCommName(), commConfig.GetConfigUdi());
 
     /* 关键状态记录 */
     HCCL_RUN_INFO("[HCCL_TRACE]%s success, take time [%lld]us, " \
@@ -619,6 +749,7 @@ HcclResult HcclGetCommName(HcclComm commHandle, char *commName)
     CHK_PTR_NULL(commHandle);
     CHK_PTR_NULL(commName);
     hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(commHandle);
+    StateGuard<hccl::hcclComm, HcclCommState> guard(hcclComm, HcclCommState::INUSE);
     s32 ret = strncpy_s(commName, ROOTINFO_INDENTIFIER_MAX_LENGTH, hcclComm->GetIdentifier().c_str(),
         hcclComm->GetIdentifier().size());
     CHK_PRT_RET(ret != EOK, HCCL_ERROR("HcclGetCommName str copy fail. return[%d]", ret), HCCL_E_INTERNAL);
@@ -631,7 +762,16 @@ HcclResult HcclGetCommHandle(const char *commName, std::shared_ptr<hccl::hcclCom
     CHK_PTR_NULL(commName);
     std::string group(commName);
 
-    HcclOpInfoCtx& opBaseHcom = GetHcclOpInfoCtx();
+    s32 deviceLogicId = 0;
+    HcclResult ret = HCCL_SUCCESS;
+    ret = hrtGetDevice(&deviceLogicId);
+    if (ret == HCCL_SUCCESS && IsCommNameExistInOneSidedComms(deviceLogicId, commName)) {
+        HcclOpInfoCtx &oneSidedHcom = GetOneSidedOpInfoCtx(deviceLogicId, commName);
+        comm = oneSidedHcom.pComm;
+        return HCCL_SUCCESS;
+    }
+
+    HcclOpInfoCtx &opBaseHcom = GetHcclOpInfoCtx();
     std::unique_lock<std::mutex> lock(opBaseHcom.opGroupMapMutex);
     auto iter = opBaseHcom.opGroup2CommMap.find(group);
     if (iter == opBaseHcom.opGroup2CommMap.end()) {
@@ -767,6 +907,11 @@ HcclResult InitCommRootInfo(const u32 nRanks, const u32 rank, const HcclRootHand
         opBaseHcom.opGroup2CommMap[pComm->GetIdentifier()] = pComm;
         lock.unlock();
 
+        // 特殊场景，当comm name被手动配置为HCCL_WORLD_GROUP时，需要将pComm赋值到hcomInfo.pComm
+        if (pComm->GetIdentifier() == HCCL_WORLD_GROUP) {
+            HcomGetCtxHomInfo().pComm = pComm;
+        }
+
         ret = HcomSetGroupTopoInfo(pComm->GetIdentifier().c_str(), nRanks);
         CHK_PRT_BREAK(ret != HCCL_SUCCESS,
             HCCL_ERROR("[InitCommRootInfo]errNo[0x%016llx] setGroupTopoInfo error", HCCL_ERROR_CODE(ret)),
@@ -829,6 +974,9 @@ HcclResult HcclCommInitRootInfoInner(uint32_t nRanks, const HcclRootInfo *rootIn
         HCCL_ERROR("[Init][CommRootInfoConfig]errNo[0x%016llx]HcclCommInitRootInfo failed.",
         HCCL_ERROR_CODE(ret)),
         ret);
+
+    // 记录groupName和UDI的映射
+    HCCL_PROFILER_ADD_GROUP_UDI(commConfig.GetConfigCommName(), commConfig.GetConfigUdi());
 
     /* 关键状态记录 */
     HCCL_RUN_INFO("[HCCL_TRACE]HcclCommInitRootInfoInner success, take time [%lld]us, rankNum[%u], rank[%u]",
@@ -905,6 +1053,9 @@ HcclResult HcclCommInitRootInfoConfigInner(uint32_t nRanks, const HcclRootInfo *
         HCCL_ERROR_CODE(ret)),
         ret);
 
+    // 记录groupName和UDI的映射
+    HCCL_PROFILER_ADD_GROUP_UDI(commConfig.GetConfigCommName(), commConfig.GetConfigUdi());
+
     HCCL_RUN_INFO("[HCCL_TRACE]HcclCommInitRootInfoConfigInner success, take time [%lld]us, "\
         "rankNum[%u], rank[%u]", DURATION_US(TIME_NOW() - startut), nRanks, rank);
 
@@ -945,9 +1096,20 @@ HcclResult HcclSetConfig(HcclConfig config, HcclConfigValue configValue)
         HcclOpInfoCtx& opBaseInfo = GetHcclOpInfoCtx();
         // 遍历所有的通信域设置其确定性计算配置参数
         for (auto it = opBaseInfo.opGroup2CommMap.begin(); it != opBaseInfo.opGroup2CommMap.end(); it++) {
-           CHK_RET(it->second->SetDeterministicConfig(configValue.value));
+            CHK_RET(it->second->SetDeterministicConfig(configValue.value));
         }
-    }
+        // 遍历 OneSided 通信域，设置 second->SetDeterministicConfig(configValue.value)
+        for (auto &oneSidedCommHcomInfoMap : g_oneSidedCommHcomInfos) {
+            for (auto &oneSidedCommHcomInfoPtrMap : oneSidedCommHcomInfoMap.second) {
+                CHK_RET(oneSidedCommHcomInfoPtrMap.second->pComm->SetDeterministicConfig(configValue.value));
+                for (auto it = oneSidedCommHcomInfoPtrMap.second->opGroup2CommMap.begin();
+                    it != oneSidedCommHcomInfoPtrMap.second->opGroup2CommMap.end();
+                    it++) {
+                    CHK_RET(it->second->SetDeterministicConfig(configValue.value));
+                }
+            }
+        }
+        }
     return HCCL_SUCCESS;
 }
 
@@ -995,6 +1157,7 @@ HcclResult HcclAllReduce(void *sendBuf, void *recvBuf, uint64_t count, HcclDataT
 
     hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
     const std::lock_guard<std::mutex> lock(hcclComm->operatorlock_);
+    StateGuard<hccl::hcclComm, HcclCommState> guard(hcclComm, HcclCommState::INUSE);
     // 同通信域同算子复用tag
     const string tag = "AllReduce_" + hcclComm->GetIdentifier();
     DevType devType;
@@ -1045,7 +1208,6 @@ HcclResult HcclAllReduce(void *sendBuf, void *recvBuf, uint64_t count, HcclDataT
     return HCCL_SUCCESS;
 }
 
-
 HcclResult HcclBarrier(HcclComm comm, aclrtStream stream)
 {
     HcclUs startut = TIME_NOW();
@@ -1062,6 +1224,7 @@ HcclResult HcclBarrier(HcclComm comm, aclrtStream stream)
     HcclDataType dataType = HCCL_DATA_TYPE_FP32;
     HcclReduceOp op = HCCL_REDUCE_SUM;
     hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
+    StateGuard<hccl::hcclComm, HcclCommState> guard(hcclComm, HcclCommState::INUSE);
     // 同通信域同算子复用tag
     const string tag = "AllReduce_" + hcclComm->GetIdentifier();
 
@@ -1138,6 +1301,7 @@ HcclResult HcclBroadcast(void *buf, uint64_t count, HcclDataType dataType, uint3
     CHK_PTR_NULL(buf);
     hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
     const std::lock_guard<std::mutex> lock(hcclComm->operatorlock_);
+    StateGuard<hccl::hcclComm, HcclCommState> guard(hcclComm, HcclCommState::INUSE);
     // 同通信域同算子复用tag
     const string tag = "Broadcast_" + hcclComm->GetIdentifier();
 
@@ -1205,6 +1369,7 @@ HcclResult HcclReduceScatter(void *sendBuf, void *recvBuf, uint64_t recvCount, H
     CHK_PTR_NULL(recvBuf);
     hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
     const std::lock_guard<std::mutex> lock(hcclComm->operatorlock_);
+    StateGuard<hccl::hcclComm, HcclCommState> guard(hcclComm, HcclCommState::INUSE);
     // 同通信域同算子复用tag
     const string tag = "ReduceScatter_" + hcclComm->GetIdentifier();
     DevType devType;
@@ -1281,6 +1446,7 @@ HcclResult HcclScatter(void *sendBuf, void *recvBuf, uint64_t recvCount, HcclDat
 
     hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
     const std::lock_guard<std::mutex> lock(hcclComm->operatorlock_);
+    StateGuard<hccl::hcclComm, HcclCommState> guard(hcclComm, HcclCommState::INUSE);
     u32 commRank = INVALID_VALUE_RANKID;
     CHK_RET(hcclComm->GetUserRank(commRank));
     if (commRank == root) { // 本rank为root节点，send_buff不为空
@@ -1358,6 +1524,7 @@ HcclResult HcclAllGather(void *sendBuf, void *recvBuf, uint64_t sendCount, HcclD
     CHK_PTR_NULL(recvBuf);
     hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
     const std::lock_guard<std::mutex> lock(hcclComm->operatorlock_);
+    StateGuard<hccl::hcclComm, HcclCommState> guard(hcclComm, HcclCommState::INUSE);
     // 同通信域同算子复用tag
     const std::string tag = "AllGather_" + hcclComm->GetIdentifier();
     CHK_RET_AND_PRINT_IDE(HcomCheckOpParam(tag.c_str(), sendCount, dataType, stream), tag.c_str());
@@ -1417,6 +1584,7 @@ HcclResult HcclSend(void* sendBuf, uint64_t count, HcclDataType dataType, uint32
     CHK_RET(hrtGetStreamId(stream, streamId));
 
     hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
+    StateGuard<hccl::hcclComm, HcclCommState> guard(hcclComm, HcclCommState::INUSE);
 
     // 同算子复用tag，为实现通信域复用，根据srRank和dstRank构造Tag
     u32 localRank = INVALID_VALUE_RANKID, rankSize = INVALID_VALUE_RANKSIZE;
@@ -1491,6 +1659,7 @@ HcclResult HcclRecv(void* recvBuf, uint64_t count, HcclDataType dataType, uint32
     CHK_RET(hrtGetStreamId(stream, streamId));
 
     hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
+    StateGuard<hccl::hcclComm, HcclCommState> guard(hcclComm, HcclCommState::INUSE);
 
     // 同算子复用tag，为实现通信域复用，根据srRank和dstRank构造Tag
     u32 localRank = INVALID_VALUE_RANKID, rankSize = INVALID_VALUE_RANKSIZE;
@@ -1542,16 +1711,44 @@ HcclResult HcclRecv(void* recvBuf, uint64_t count, HcclDataType dataType, uint32
     return HCCL_SUCCESS;
 }
 
-HcclResult HcclCommDestroy(HcclComm comm)
+HcclResult HcclOneSidedCommDestroy(HcclComm comm, s32 deviceLogicId, HcclUs startut)
 {
-    HcclUs startut = TIME_NOW();
-    s32 deviceLogicId = 0;
-    CHK_RET(hrtGetDeviceRefresh(&deviceLogicId));
-    CHK_PRT_RET(comm == nullptr, HCCL_WARNING("[Destroy][HcclComm]An empty comm given, skip destroy."), HCCL_SUCCESS);
+    hccl::hcclComm *hcclComm = static_cast<hccl::hcclComm *>(comm);
+    std::string group = hcclComm->GetIdentifier();
+    CHK_PRT_RET(group.empty(),
+                HCCL_ERROR("[HcclCommDestroy][HcclOneSidedCommDestroy] commName is error."),
+                HCCL_E_PARA);
+    HCCL_RUN_INFO("Entry-%s: deviceLogicId[%d], commName[%s]",
+                  __func__, deviceLogicId, group.c_str());
 
-    hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
-    CHK_RET(SetWorkflowMode(HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE));
+    HcclOpInfoCtx &opBaseHcom = GetOneSidedOpInfoCtx(deviceLogicId, hcclComm->GetIdentifier());
 
+    g_oneSidedCommSet.erase(comm);
+
+    std::unique_lock<std::mutex> lock(opBaseHcom.opGroupMapMutex);
+    auto iter = opBaseHcom.opGroup2CommMap.find(group);
+    if (iter != opBaseHcom.opGroup2CommMap.end()) {
+        EXECEPTION_CATCH(opBaseHcom.opGroup2CommMap.erase(group), return HCCL_E_MEMORY);
+        HcclCloseCommConnections(group);
+    } else {
+        HCCL_ERROR("[HcclCommDestroy] comm is not exist, comm=%p, group=%s, deviceLogicId=%d", comm, group.c_str(),
+            deviceLogicId);
+        return HCCL_E_PARA;
+    }
+
+    opBaseHcom.isUsed = false;
+    CHK_RET(DeInitOneSidedHcomInfo(deviceLogicId, group));
+
+    HcclUs endut = TIME_NOW();
+    /* 关键状态记录 */
+    HCCL_USER_CRITICAL_LOG("op_base comm destroy complete, take time [%lld]us, group[%s], deviceLogicId[%d]",
+        DURATION_US(endut - startut), group.c_str(), deviceLogicId);
+    
+    return HCCL_SUCCESS;
+}
+
+static HcclResult ResetDevice(hccl::hcclComm* hcclComm)
+{
     s32 logicDeviceId = 0;
     hcclComm->GetDeviceId(logicDeviceId);
     g_hcclDeviceId = logicDeviceId;
@@ -1560,6 +1757,34 @@ HcclResult HcclCommDestroy(HcclComm comm)
         HCCL_RUN_INFO("[HcclCommDestroy] reset logicDeviceId[%d]", logicDeviceId);
         CHK_PRT_RET(hrtResetDevice(logicDeviceId) != HCCL_SUCCESS,
             HCCL_ERROR("[HcclCommDestroy] reset fail logicDeviceId[%d]", logicDeviceId), HCCL_E_INTERNAL);
+    }
+    return HCCL_SUCCESS;
+}
+
+HcclResult HcclCommDestroy(HcclComm comm)
+{
+    HCCL_RUN_INFO("Entry-%s: op_base comm destroy begin", __func__);
+
+    HcclUs startut = TIME_NOW();
+    s32 deviceLogicId = 0;
+    HcclResult ret = hrtGetDeviceRefresh(&deviceLogicId);
+    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[HcclCommDestroy] Get device fail, comm=%p", comm), ret);
+    CHK_PRT_RET(comm == nullptr, HCCL_WARNING("[Destroy][HcclComm]An empty comm given, skip destroy."), HCCL_SUCCESS);
+
+    hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
+    HcclCommState state = hcclComm->GetState();
+    if (state == HcclCommState::INUSE) {
+        HCCL_WARNING("[HcclCommDestroy] comm is in use, please try again later");
+        return HCCL_E_AGAIN;
+    }
+    HCCL_RUN_INFO("[HcclCommDestroy] comm state is %s", HcclCommStateToString(state));
+    
+    CHK_RET(hcclComm->SetStopFlag(true));
+    CHK_RET(SetWorkflowMode(HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE));
+    CHK_RET(ResetDevice(hcclComm));
+
+    if (IsOneSidedComm(comm)) {
+        return HcclOneSidedCommDestroy(comm, deviceLogicId, startut);
     }
 
     HcclOpInfoCtx& opBaseHcom = GetHcclOpInfoCtx();
@@ -1571,6 +1796,11 @@ HcclResult HcclCommDestroy(HcclComm comm)
     } else {
         HCCL_RUN_INFO("com is not global com");
         group = hcclComm->GetIdentifier();
+    }
+
+    // 特殊场景，当comm name被手动配置为HCCL_WORLD_GROUP时，需要将hcomInfo.pComm设为nullptr
+    if (hcclComm->GetIdentifier() == HCCL_WORLD_GROUP) {
+        HcomGetCtxHomInfo().pComm = nullptr;
     }
 
     HcomUnSetGroupTopoInfo(group.c_str());
@@ -1587,6 +1817,10 @@ HcclResult HcclCommDestroy(HcclComm comm)
     }
 
     HcclUs endut = TIME_NOW();
+
+    // 删除groupName和UDI的映射
+    HCCL_PROFILER_DEL_GROUP_UDI(group);
+
     /* 关键状态记录 */
     HCCL_RUN_INFO("op_base comm destroy complete, take time [%lld]us, group[%s], deviceLogicId[%d]",
         DURATION_US(endut - startut), group.c_str(), deviceLogicId);
@@ -1738,6 +1972,7 @@ HcclResult HcclGetRankSize(HcclComm comm, uint32_t *rankSize)
     CHK_PTR_NULL(rankSize);
 
     hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
+    StateGuard<hccl::hcclComm, HcclCommState> guard(hcclComm, HcclCommState::INUSE);
     u32 tmpRankSize = INVALID_VALUE_RANKSIZE;
     CHK_RET(hcclComm->GetRankSize(tmpRankSize));
     *rankSize = tmpRankSize;
@@ -1753,6 +1988,7 @@ HcclResult HcclGetRankId(HcclComm comm, uint32_t *rank)
     CHK_PTR_NULL(rank);
 
     hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
+    StateGuard<hccl::hcclComm, HcclCommState> guard(hcclComm, HcclCommState::INUSE);
     u32 tmpRankId = INVALID_VALUE_RANKID;
     CHK_RET(hcclComm->GetUserRank(tmpRankId));
     *rank = tmpRankId;
@@ -1792,8 +2028,11 @@ HcclResult HcclAlltoAll(const void *sendBuf, uint64_t sendCount, HcclDataType se
     RPT_INPUT_ERR(comm == nullptr, "EI0003", std::vector<std::string>({"ccl_op", "parameter", "value", "tips"}),\
         std::vector<std::string>({"HcclAlltoAll", "comm", "nullptr", "please check comm"}));
     CHK_PTR_NULL(comm);
+    CHK_PRT_RET(sendBuf == recvBuf,
+        HCCL_ERROR("[HcclAlltoAll] sendBuf and recvBuf cannot be same."), HCCL_E_PARA);
 
     hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
+    StateGuard<hccl::hcclComm, HcclCommState> guard(hcclComm, HcclCommState::INUSE);
 
     const std::string tag = HCCL_ALLTOALL + "_" + hcclComm->GetIdentifier();
     CHK_RET(HcomCheckOpParam(tag.c_str(), 0, sendType, stream));
@@ -1881,6 +2120,7 @@ HcclResult HcclAlltoAllV(const void *sendBuf, const void *sendCounts, const void
     CHK_PTR_NULL(comm);
 
     hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
+    StateGuard<hccl::hcclComm, HcclCommState> guard(hcclComm, HcclCommState::INUSE);
 
     u32 rankSize = 0;
     CHK_RET(hcclComm->GetRankSize(rankSize));
@@ -1977,6 +2217,7 @@ HcclResult HcclAlltoAllVC(const void *sendBuf, const void *sendCountMatrix,
     CHK_PTR_NULL(comm);
 
     hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
+    StateGuard<hccl::hcclComm, HcclCommState> guard(hcclComm, HcclCommState::INUSE);
 
     u32 rankSize = 0;
     CHK_RET(hcclComm->GetRankSize(rankSize));
@@ -2076,6 +2317,7 @@ HcclResult HcclReduce(void *sendBuf, void *recvBuf, uint64_t count, HcclDataType
         std::vector<std::string>({"HcclReduce", "recvBuf", "nullptr", "please check recvBuf"}));
     CHK_PTR_NULL(recvBuf);
     hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
+    StateGuard<hccl::hcclComm, HcclCommState> guard(hcclComm, HcclCommState::INUSE);
     // 同通信域同算子复用tag
     const string tag = "Reduce_" + hcclComm->GetIdentifier();
     DevType devType;
@@ -2357,7 +2599,7 @@ HcclResult RunGather(u64 *sendCounts, u64 *sdispls, void *sendDevBuf, GatherPara
 void GatherMemCopyThread(void *baseAddr, u64 offset, std::vector<u64> &addrInfo, OpBaseMemPara memCpyPara)
 {
     //给当前线程添加名字
-    SetThreadName("Hccl_GatherMemCopy");
+    SetThreadName("Hccl_GatherCopy");
 
     void *addr = nullptr;
     const u32 NUM_TWO = 2;
@@ -2404,6 +2646,7 @@ HcclResult HcclGetCommAsyncError(HcclComm comm, HcclResult *asyncError)
     CHK_PTR_NULL(asyncError);
 
     hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
+    StateGuard<hccl::hcclComm, HcclCommState> guard(hcclComm, HcclCommState::INUSE);
     CHK_RET(hcclComm->CommCheckErrorCqe(*asyncError));
 
     return HCCL_SUCCESS;
@@ -2652,6 +2895,7 @@ HcclResult HcclBatchSendRecv(HcclSendRecvItem* sendRecvInfo, uint32_t itemNum, H
     CHK_RET(hrtGetStreamId(stream, streamId));
 
     hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
+    StateGuard<hccl::hcclComm, HcclCommState> guard(hcclComm, HcclCommState::INUSE);
     // 若任务不同，也复用tag
     const string tag = "worldBatchSendRecv_" + hcclComm->GetIdentifier();
     u32 rankSize = INVALID_VALUE_RANKSIZE;

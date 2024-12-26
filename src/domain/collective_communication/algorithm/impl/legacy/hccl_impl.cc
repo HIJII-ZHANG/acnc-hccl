@@ -1174,16 +1174,16 @@ HcclResult hcclImpl::ReleaseSignal(innerStreamInfo_t &innerStream)
     return HCCL_SUCCESS;
 }
 
-HcclResult hcclImpl::RunExecutor(std::unique_ptr<CommBase> &commCombine, std::unique_ptr<ExecutorBase> &executor,
+HcclResult hcclImpl::RunTemplateAlg(std::unique_ptr<CommBase> &commCombine, std::unique_ptr<AlgTemplateBase> &tempAlg,
     DeviceMem &inputMem, DeviceMem &outputMem, u64 count, HcclDataType dataType,
     HcclReduceOp op, u32 root, Stream &stream) const
 {
-    CHK_SMART_PTR_NULL(executor);
+    CHK_SMART_PTR_NULL(tempAlg);
     CHK_SMART_PTR_NULL(commCombine);
 
-    CHK_RET(executor->Prepare(inputMem, outputMem, outputMem, count, dataType, stream, op, root));
+    CHK_RET(tempAlg->Prepare(inputMem, outputMem, outputMem, count, dataType, stream, op, root));
 
-    CHK_RET(commCombine->RunExecutor(executor));
+    CHK_RET(commCombine->RunTemplateAlg(tempAlg));
     return HCCL_SUCCESS;
 }
 
@@ -1283,23 +1283,23 @@ HcclResult hcclImpl::AddSubStreamToProfiling(const std::string &tag, HcclCMDType
 HcclResult hcclImpl::RegisterToHeartBeat()
 {
     return HeartbeatPub::RegisterToHeartBeat(deviceLogicId_, userRank_, deviceType_,
-        hbRankInfoList_, collectiveId_, isUsedRdmaOuter_);
+        hbRankInfoList_, identifier_, isUsedRdmaOuter_);
 }
 
 HcclResult hcclImpl::RegisterToHeartBeat(u32 peerRankId, const std::string& tag)
 {
     return HeartbeatPub::RegisterToHeartBeat(deviceLogicId_, userRank_, deviceType_,
-        hbRankInfoList_, peerRankId, tag, isUsedRdmaOuter_);
+        hbRankInfoList_, peerRankId, identifier_, tag, isUsedRdmaOuter_);
 }
 
 void hcclImpl::UnRegisterToHeartBeat()
 {
-    HeartbeatPub::UnRegisterToHeartBeat(deviceLogicId_, deviceType_, collectiveId_);
+    HeartbeatPub::UnRegisterToHeartBeat(deviceLogicId_, deviceType_, identifier_);
 }
 
 void hcclImpl::UnRegisterToHeartBeat(const std::string& tag)
 {
-    HeartbeatPub::UnRegisterToHeartBeat(deviceLogicId_, deviceType_, tag);
+    HeartbeatPub::UnRegisterToHeartBeat(deviceLogicId_, deviceType_, identifier_, tag);
 }
 
 u32 hcclImpl::GetSubRootForScatter(const u32 root)

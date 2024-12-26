@@ -234,6 +234,7 @@ public:
     void AtomicInitClear();
     bool GetNicInitialized();
     void DestroyAlgResource(AlgResourceResponse &res);
+    void DestroyOpTransportResponse(OpCommTransport &opTransportResponse);
     HcclResult DestroyNetworkResources();
     HcclResult DisablePreResource();
     HcclResult GetWorkspaceSubStreamNum(u64 &streamNum, u64 dataSize, HcclCMDType opType);
@@ -307,11 +308,19 @@ public:
     u8 GetDeterministicConfig() const;  // 获取确定性计算配置
     HcclResult SetDeterministicConfig(const u8 deterministic);  // 设置确定性计算配置
     bool GetMC2EnvFlag();
+    HcclResult SetStopFlag(bool value);
+    HcclResult SetState(HcclCommState state);
+    HcclCommState GetState();
     HcclResult ResetNotify();
     HcclResult ResetNotifyForDestRank(s64 destRank);
-    HcclResult SetTransportStatus(std::string &newTag, bool statusStop, bool isSendRecv, u32 remoteRank);
+
+    HcclResult SetTransportStatus(const HcclOpIdentifier &opId, bool statusStop,
+        const std::map<u32, bool> &remoteRankPortMap, const std::map<u32, bool> &isChangeLinkMap, bool isChangeLinkFlag);
+
 private:
+
     bool IsEnableRoce();
+    bool IsEnableBackupLink();
     void SetAttrs();
     u32 HcclGetCmdTimeout();
     HcclResult SetMC2EnvFlag();
@@ -346,6 +355,7 @@ private:
     HcclResult DeinitNic();
     HcclResult RegisterToHeartBeat();
     HcclResult RegisterToHeartBeat(u32 peerRankId, std::string &tag);
+    void UnRegisterToHeartBeat();
     HcclResult MrManagerInit();
     HcclResult MrManagerDeInit();
     HcclResult InitRecvMsgAndRequestBuffer();
@@ -379,6 +389,19 @@ private:
     HcclResult SetDynamicTilingDataAlltoallv(const OpParam &opParam, HostMem &dynamicDataMem);
     HcclResult SetDynamicTilingDataAlltoallvc(const OpParam &opParam, HostMem &dynamicDataMem);
     HcclResult GetReportHcclMC2Info(const Stream &kfcStream, const std::vector<Stream> &aicpuStreams);
+
+    HcclResult ReAllocTransports(const std::string &tag, const std::string &newTag);
+    HcclResult SetTransportStatusImpl(OpCommTransport &opCommTransport, bool statusStop,
+        bool isSendRecv, u32 remoteRank, const std::map<u32, bool> &remoteRankPortMap, bool isUseDefault);
+    HcclResult SetTransportStatusImplForChange(OpCommTransport &opCommTransport, bool isSendRecv, u32 remoteRank,
+        const std::map<u32, bool> &remoteRankPortMap, bool isUseDefault, const std::map<u32, bool> &isChangeLinkMap,
+        bool isCurTag);
+    void ClearOpTransportResponseLinks(OpCommTransport &opTransportResponse);
+    HcclResult SetSignalTransport(SingleSubCommTransport &singleSubCommTransport,
+        u32 linkIdx, bool statusStop);
+    void InsertNewTagToTagMap(std::string &newTag, std::string &tag);
+    HcclResult GetTagFromNewTag(const std::string &newTag, std::string &tag);
+
     u32 deviceNumPerServer_;
     HcclDispatcher dispatcher_; // dispatcher放到最后析构
     HcclDispatcher vDispatcher_; // virtualDispatcher放到最后析构
@@ -397,7 +420,9 @@ private:
     bool inlineReduceSwitchOn_;
     NICDeployment nicDeployment_;
     u32 devicePhyId_;
+    u32 deviceBackUpPhyId_;
     s32 deviceLogicId_;
+    u32 deviceBackUpLogicId_;
     std::vector<HcclIpAddress> devIpAddr_;
     std::vector<HcclIpAddress> devBackupIpAddr_;
     HcclIpAddress hostIp_;
@@ -448,6 +473,7 @@ private:
     std::shared_ptr<ProfilerManager> profilerManager_;
     bool isStandardCard_ = false;
     bool is310PDuoCard_ = false;
+    s32 hccsPortNum_ = -1;
     std::string superPodId_;
     u32 superDeviceId_ = INVALID_UINT;
     bool useSuperPodMode_ = false;
@@ -531,27 +557,14 @@ private:
     HcclResult BuildServerAndsuperPodRank(const std::string &algName);
     HcclResult BuildOpTopoResParam(
         const std::string &algName, const AlgResourceResponse &algResource);
-    HcclResult BuildOpRemoteResParam(const AlgResourceResponse &algResource, const std::string &newTag);
-    HcclResult BuildOpResParam(const std::string &algName, const OpParam &param, const AlgResourceResponse &algResource,
+    HcclResult BuildOpRemoteResParam(const AlgResourceResponse &algResource, const std::string &newTag, bool isRetry = false);
+    HcclResult BuildOpResParam(const std::string &algName, const AlgResourceResponse &algResource,
         const std::string &newTag);
     HcclResult BuildOpRetryParam(const AlgResourceResponse &algResource, const std::string &newTag);
-    HcclResult BuildOpRemoteBufferResParam(const u32 &rankId, const std::string &tag, const LINK &link);
-    HcclResult BuildRdmaOpBufferResParam(const u32 &rankId, const std::string &tag, const LINK &link);
-    HcclResult BuildRdmaOpQpInfosParam(const u32 &rankId, const std::string &tag, const LINK &link);
-    void AddIpcNotifyResParam(const u32 &rankId, const std::string &tag, const HcclSignalInfo &signalInfo,
-        rankTagSignalInfo_t &rankTagSignalInfo, std::unordered_map<u32, std::unordered_set<u64>> &resIdSet);
-    void AddRdmaNotifyResParam(const u32 &rankId, const std::string &tag, const HcclSignalInfo &signalInfo,
-        rankTagSignalInfo_t &rankTagSignalInfo, std::unordered_map<u32,
-        std::unordered_set<u64>> &resIdSet, bool &isNewFlag);
-    void AddRdmaNotifyAddrParam(const u32 &rankId, const std::string &tag, u64 notifyAddr,
-        rankTagAddr_t &rankTagAddr, u32 key, rankTagKey_t &rankTagKey,
-        std::unordered_map<u32, std::unordered_set<u64>> &resAddrSet);
-    void BuildOpIpcNotifyResParam(const TransportRequest &transportRequest, const std::string &tag, const LINK &link);
-    void BuildOpRdmaNotifyResParam(const TransportRequest &transportRequest, const std::string &tag, const LINK &link);
     HcclResult CopyHostListResToDeviceParam(const std::string &newTag, const ListCommon *headList, const u64 size);
     HcclResult CopyHostOpRemoteResToDeviceParam(const std::string &newTag);
     HcclResult CopyHostOpResToDeviceParam(const std::string &newTag);
-    HcclResult AicpuResourceInit(const std::string &algName, const OpParam &param,
+    HcclResult AicpuResourceInit(const std::string &algName,
         const AlgResourceResponse &algResource, const std::string &newTag, const rtStream_t &aicpuStream);
     HcclResult AicpuResourceRefresh(const AlgResourceResponse &algResource, const std::string &newTag);
     HcclResult OrchestrateAicpu(const HcclCMDType &opType, const std::string &algName, const OpParam &param,
@@ -560,20 +573,17 @@ private:
     HcclResult CopyVectorToDeviceMem(const u64 len, DeviceMem &dstDeviceMem, const std::vector<T> &srcVec);
     template <typename T>
     HcclResult CreateListNode(T **resHostPtr, T **resDevicePtr);
-    HcclResult ParseRemoteSignalToMem(const std::string &newTag, const u32 &usrRankId,
-        std::vector<HcclSignalInfo> &tagRemoteNotifyUsed, std::vector<HcclSignalInfo> &tagLocalNotifyUsed,
-        HcclRankRelationResV2 *rankRelationResHostPtr);
-    HcclResult ParseRdmaRemoteSignalToMem(const std::string &newTag, const u32 &usrRankId,
-        std::vector<u64> &tagRemoteNotifyUsed, std::vector<HcclSignalInfo> &tagLocalNotifyUsed,
-        HcclRankRelationResV2 *rankRelationResHostPtr);
-    HcclResult ParseRemoteTagDataToMem(const std::string &newTag, const u32 &usrRankId,
-        HcclRankRelationResV2 *rankRelationResHostPtr, HcclRankRelationResV2 *rankRelationResDevicePtr);
-    HcclResult AssignQpInfo(const std::string &tag, const u32 &usrRankId, HcclQpInfoV2 QpInfo[],
-        std::vector<HcclQpInfoV2> tagQpInfo);
-    HcclResult ParseRdmaRemoteTagDataToMem(const std::string &newTag, const u32 &usrRankId,
-        HcclRankRelationResV2 *rankRelationResHostPtr, HcclRankRelationResV2 *rankRelationResDevicePtr);
-    HcclResult ParseRemoteDataToMem(const std::string &newTag);
-    HcclResult ParseRdmaRemoteDataToMem(const std::string &newTag);
+    HcclResult ParseRemoteDataToMem(const OpCommTransport &opTransportResponse, const std::string &newTag,
+        bool isBakup = false, bool isRetry = false);
+    HcclResult BuildRelationResByRemoteRankId(const TransportRequest &transportRequest, const LINK &link,
+        HcclRankRelationResV2 *&rankRelationResHostPtr, HcclRankRelationResV2 *&rankRelationResDevicePtr);
+    HcclResult BuildRemoteResByTag(const std::string &newTag, const u32 &usrRankId,
+        HcclRankRelationResV2 *&rankRelationResHostPtr, HcclRankRelationResV2 *&rankRelationResDevicePtr,
+        bool isBackup, bool isRetry);
+    HcclResult BuildOpRemoteLinkP2pResParam(const LINK &link, HccltagRemoteResV3 &tagRemoteRes);
+    HcclResult BuildOpRemoteLinkRoceResParam(const LINK &link, HccltagRemoteResV3 &tagRemoteRes, bool isBakup,
+        bool isRetry);
+    HcclResult CheckNotifyOrQPMaxNum(u64 &existNum, const u64 &MaxNum, const bool &isNotifyRes);
     HcclResult AllocAlgNotifys(const std::string &tag, const NotifyLoadType notifyLoadType, const u32 notifyNum,
       std::vector<std::shared_ptr<LocalNotify> > &notifiesM2S, std::vector<std::shared_ptr<LocalNotify> > &notifiesS2M);
     HcclIpAddress loopBackIp_;
@@ -627,6 +637,8 @@ private:
     std::unique_ptr<HcclSocketManager> socketManager_;
     std::unique_ptr<TransportManager> transportManager_ = { nullptr };
     std::unordered_map<std::string, AlgResourceResponse> resMap_; // tag : AlgResourceResponse
+    std::unordered_set<std::string> hostResMap_;
+    std::unordered_set<std::string> hbSendRecvTags_;
     bool isSuspending = false;
     bool retryEnable_ = false;
     bool inplaceSupportRetry_ = false; //inplace是否支持重执行
@@ -638,23 +650,6 @@ private:
     HcclOpResParam *opResDeviceParaPtr_;
     Stream opMainStream_;
     bool isContextLaunched_{false};
-    rankTagSignalInfo_t localIpcNotifyUsed_;
-    rankTagSignalInfo_t remoteNotifyUsed_;
-    std::unordered_map<u32, TransportAttr> p2pLinkAttrMap_;
-    std::unordered_map<u32, std::unordered_set<u64>> localIpcNotifyExist_;
-    std::unordered_map<u32, std::unordered_set<u64>> remoteIpcNotifyExist_;
-    std::unordered_map<u32, std::unordered_map<std::string, RemoteRes>> rankTagRemoteRes_;
-    std::unordered_map<u32, std::unordered_map<std::string, RemoteRes>> rankTagLocalRes_;
-    std::unordered_map<u32, std::unordered_map<std::string, std::vector<HcclQpInfoV2>>> rankTagQpInfo_;
-    std::unordered_map<u32, std::unordered_set<u64>> rankTagQpPtrSet_;
-    rankTagKey_t rdmaNotifyValueKey_;
-    rankTagKey_t remoteRdmaNotifyKey_;
-    rankTagSignalInfo_t localRdmaNotify_;
-    std::unordered_map<u32, std::unordered_set<u64>> localRdmaNotifyExist_;
-    rankTagAddr_t localRdmaNotifyValue_;
-    rankTagAddr_t remoteRdmaNotify_;
-    std::unordered_map<u32, std::unordered_set<u64>> remoteRdmaNotifyExist_;
-    rankTagChipId_t chipIdList_;
     std::vector<std::shared_ptr<DeviceMem>> deviceMemVec_;
     std::vector<std::shared_ptr<HostMem>> hostMemVec_;
     DeviceMem nicListDevice_;
@@ -667,6 +662,7 @@ private:
     std::unique_ptr<IHcclOneSidedService> oneSideService_ = {nullptr};
     HcclRankLinkInfo hcclRankLinkInfo_{};
     std::unique_ptr<OpRetryManagerPub> opRetryManager_ = { nullptr };
+    std::unordered_map<u32, std::unordered_map<std::string, HccltagRemoteResV3>> rankTagRemoteRes_;  // 以rankid&tag粒度保存HccltagRemoteResV3
     std::shared_ptr<HDCommunicate> kfcControlTransferH2D_;
     std::shared_ptr<HDCommunicate> kfcStatusTransferD2H_;
     HcclCommConnections commConnections_;
@@ -675,6 +671,8 @@ private:
     bool isNsRecovery_{false};
     HostMem opTilingDataBuf_;
     HostMem apiTilingDataMem_;
+    std::atomic<HcclCommState> state_{HcclCommState::IDLE};
+    std::unordered_map<std::string, std::string> newTagToTagMap_;
 };
 
 void HcclOneSidedServiceCallbackInstall(HcclResult (*func)(std::unique_ptr<IHcclOneSidedService> &,

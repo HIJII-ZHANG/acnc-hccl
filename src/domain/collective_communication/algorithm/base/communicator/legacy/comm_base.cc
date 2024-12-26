@@ -208,8 +208,11 @@ u32 CommBase::GetSocketsPerLink()
 {
     bool multiQpDevType = paraVector_[rank_].deviceType == DevType::DEV_TYPE_910B ||
                 paraVector_[rank_].deviceType  == DevType::DEV_TYPE_910_93;
-    if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT &&
+    if (GetExternalInputQpSrcPortConfigPath() != "" &&
         GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && multiQpDevType) {
+        return 2;
+    } else if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT &&
+               GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && multiQpDevType) {
         return 2;
     }
     return 1;
@@ -266,19 +269,19 @@ HcclResult CommBase::SetTransportType(const u32 dstRank)
     return HCCL_SUCCESS;
 }
 
-HcclResult CommBase::RunExecutor(const std::unique_ptr<ExecutorBase> &executor)
+HcclResult CommBase::RunTemplateAlg(const std::unique_ptr<AlgTemplateBase> &tempAlg)
 {
-    HcclResult ret = executor->RunAsync(Rank(), RankSize(), transportInfo_);
-    CHK_PRT_RET(ret == HCCL_E_AGAIN, HCCL_WARNING("[Run][Executor]group has been destroyed. Break!"), ret);
-    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[Run][Executor]comm base run executor rank[%u] rank size[%u] failed",
-        rank_, rankSize_), ret);
+    HcclResult ret = tempAlg->RunAsync(Rank(), RankSize(), transportInfo_);
+    CHK_PRT_RET(ret == HCCL_E_AGAIN, HCCL_WARNING("[Run][AlgTemplateBase]group has been destroyed. Break!"), ret);
+    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[Run][AlgTemplateBase]comm base run tempAlg "\
+        "rank[%u] rank size[%u] failed", rank_, rankSize_), ret);
     return HCCL_SUCCESS;
 }
 
-HcclResult CommBase::RunExecutorStaged(const std::unique_ptr<ExecutorBase> &executor, const RunStage &stage)
+HcclResult CommBase::RunTemplateAlgStaged(const std::unique_ptr<AlgTemplateBase> &tempAlg, const RunStage &stage)
 {
-    HcclResult ret = executor->RunAsyncStaged(Rank(), RankSize(), transportInfo_, stage);
-    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[Run][RunExecutorStaged]comm base run executor staged "\
+    HcclResult ret = tempAlg->RunAsyncStaged(Rank(), RankSize(), transportInfo_, stage);
+    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[Run][RunTemplateAlgStaged]comm base run tempAlg staged "\
         "rank[%u] rank size[%u] failed", rank_, rankSize_), ret);
     return HCCL_SUCCESS;
 }
@@ -556,13 +559,13 @@ HcclResult CommBase::CalcLinksNum(const MachineType machineType, const u32 dstRa
         if (linkType == LinkTypeInServer::SIO_TYPE) {
             isInterRdma = false;
             isInterHccs = true;
-            HCCL_DEBUG("[Calc][LinksNum]EnableRdmaSdma rank[%u], rankDevId[%u], ip[%s], dstRank[%u], dstDevId[%u], "\
+            HCCL_DEBUG("[Calc][LinksNum]EnableRdmaSdma rank[%u], rankDevId[%d], ip[%s], dstRank[%u], dstDevId[%u], "\
                 "dstIp[%s] adjust to SIO.", rank_, localDeviceId, paraVector_[rank_].nicIp[0].GetReadableAddress(),
                 dstRank, remoteDeviceId, paraVector_[dstRank].nicIp[0].GetReadableAddress());
         } else {
             isInterRdma = true;
             isInterHccs = false;
-            HCCL_DEBUG("[Calc][LinksNum]EnableRdmaSdma rank[%u], rankDevId[%u], ip[%s], dstRank[%u], dstDevId[%u], "\
+            HCCL_DEBUG("[Calc][LinksNum]EnableRdmaSdma rank[%u], rankDevId[%d], ip[%s], dstRank[%u], dstDevId[%u], "\
                 "dstIp[%s] link type[%u].", rank_, localDeviceId, paraVector_[rank_].nicIp[0].GetReadableAddress(),
                 dstRank, remoteDeviceId, paraVector_[dstRank].nicIp[0].GetReadableAddress(), linkType);
         }
@@ -637,10 +640,7 @@ HcclResult CommBase::CreateDestLink(const ErrContextPub &error_context, const Ma
 {
     hrtErrMSetErrorContextPub(error_context);
     // 给当前线程添加名字
-    s32 sRet = pthread_setname_np(pthread_self(), threadStr.c_str());
-    if (sRet != 0) {
-        HCCL_WARNING("err[%d] link[%s] nameSet failed.", sRet, threadStr.c_str());
-    }
+    SetThreadName(threadStr);
     if (!IsGeneralServer()) {
         CHK_RET(hrtSetDevice(deviceLogicId_));
     }
@@ -781,7 +781,7 @@ HcclResult CommBase::SetMachinePara(MachineType machineType, const std::string &
     machinePara.remoteSocketPort = paraVector_[dstRank].hostPort;
     machinePara.isAicpuModeEn = isAicpuModeEn_;
     machinePara.deviceLogicId = deviceLogicId_;
-    machinePara.udpSport = 0x0; /* 0代表默认不配置 */
+    machinePara.srcPorts = std::vector<u32>(1, 0); /* 默认填充一个元素，0代表默认不配置 */
     return HCCL_SUCCESS;
 }
 

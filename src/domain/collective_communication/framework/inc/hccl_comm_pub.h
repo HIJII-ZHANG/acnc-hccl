@@ -279,6 +279,9 @@ public:
         void **commContext);
     bool GetCommResource(const std::string &tag, void **commContext);
     bool GetCommResource(void *&commContext);
+    HcclResult SetStopFlag(bool value);
+    HcclResult SetState(HcclCommState state);
+    HcclCommState GetState();
     HcclResult GetAicpuOpStreamNotify(HcclRtStream *opStream, void** aicpuNotify);
     HcclResult Mc2AiCpuStreamAllocAndGet(u32 streamMode, rtStream_t &aiCpuStream);
     HcclResult GetAiCpuNotifyData(HcclRtNotify notifyHandle, HcclSignalInfo &notifyInfo);

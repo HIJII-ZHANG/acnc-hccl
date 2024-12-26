@@ -52,7 +52,7 @@ HcclResult CalcHDTransportReq::CalcTransportRequest(const std::string &tag, Tran
             CHK_RET(GetRankByUserRank(subCommPlaneVector_[ringIndex], subUserRankRoot, subRoot));
         }
 
-        std::vector<bool> linkRelation =  ExecutorBase::CalcLinksRelation(rank, rankSize, subRoot,
+        std::vector<bool> linkRelation =  AlgTemplateBase::CalcLinksRelation(rank, rankSize, subRoot,
             HalvingDoublingType::RECURSIVE_HALVING_DOUBLING);
 
         for (u32 rankIndex = 0; rankIndex < rankSize; rankIndex++) {

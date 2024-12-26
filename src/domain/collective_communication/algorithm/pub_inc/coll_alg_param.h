@@ -48,6 +48,12 @@ enum DeviceMode {
     AICPU = 1
 };
 
+enum class TransportStatus {
+    INIT,
+    READY,
+    STOP
+};
+
 struct TransportRequest {
     bool isValid = false;
     RankId localUserRank = 0;
@@ -60,6 +66,7 @@ struct TransportRequest {
 struct SingleSubCommTransport {
     std::vector<TransportRequest> transportRequests;
     std::vector<LINK> links;
+    std::vector<TransportStatus> status; // 代表该transport是否ready, stop后为stop, 建链后为ready
     u64 taskNum = 0;
     std::map<u32, u32> userRank2subCommRank;
     std::map<u32, u32> subCommRank2UserRank;
@@ -101,7 +108,8 @@ struct AlgResourceResponse {
     std::vector<std::shared_ptr<LocalNotify> > notifiesS2M;  // 大小等同于slaveStreams
     std::vector<std::shared_ptr<LocalNotify> > notifiesDevM2S;  // 大小等同于slaveStreams
     std::vector<std::shared_ptr<LocalNotify> > notifiesDevS2M;  // 大小等同于slaveStreams
-    OpCommTransport opTransportResponse;
+    OpCommTransport opTransportResponse; // 默认的Transport资源
+    OpCommTransport opTransportResponseBackUp;  // Transport备资源 (借轨场景使用)
     std::vector<std::shared_ptr<ThreadManage>> threadManage;
 };
 

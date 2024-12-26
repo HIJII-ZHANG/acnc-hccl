@@ -48,10 +48,10 @@ HcclResult SendReceiveOperator::SendRun(const std::string &tag, DeviceMem &input
     std::shared_ptr<Transport> &destLink = commP2P->GetTransportByRank(destRank);
     CHK_SMART_PTR_NULL(destLink);
 
-    SendReceive executor(dispatcher_, destLink);
-    CHK_RET(executor.SendPrepare(inputPtr, destRank, stream));
-    CHK_RET(executor.RegisterProfiler(0, PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, stream));
-    CHK_RET(executor.SendRunAsync());
+    SendReceive tempAlg(dispatcher_, destLink);
+    CHK_RET(tempAlg.SendPrepare(inputPtr, destRank, stream));
+    CHK_RET(tempAlg.RegisterProfiler(0, PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, stream));
+    CHK_RET(tempAlg.SendRunAsync());
     return HCCL_SUCCESS;
 }
 
@@ -80,16 +80,16 @@ HcclResult SendReceiveOperator::SendCommon(const std::string &tag, DeviceMem &in
     CHK_SMART_PTR_NULL(destLink);
 
     // 使用SendReceive类，执行send操作
-    std::unique_ptr<SendReceive> executor;
-    executor.reset(new (std::nothrow) SendReceive(dispatcher_, destLink));
-    CHK_SMART_PTR_NULL(executor);
+    std::unique_ptr<SendReceive> tempAlg;
+    tempAlg.reset(new (std::nothrow) SendReceive(dispatcher_, destLink));
+    CHK_SMART_PTR_NULL(tempAlg);
 
-    CHK_RET(executor->SendPrepare(inputPtr, destRank, stream));
+    CHK_RET(tempAlg->SendPrepare(inputPtr, destRank, stream));
 
-    CHK_RET(executor->RegisterProfiler(0, PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET,
+    CHK_RET(tempAlg->RegisterProfiler(0, PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET,
                                        stream));
 
-    CHK_RET(executor->SendRunAsync()); /* 执行send操作 */
+    CHK_RET(tempAlg->SendRunAsync()); /* 执行send操作 */
 
     return HCCL_SUCCESS;
 }
@@ -183,10 +183,10 @@ HcclResult SendReceiveOperator::ReceiveRun(const std::string &tag, DeviceMem &ou
     std::shared_ptr<Transport> &srcLink = commP2P->GetTransportByRank(srcRank);
     CHK_SMART_PTR_NULL(srcLink);
 
-    SendReceive executor(dispatcher_, srcLink);
-    CHK_RET(executor.ReceivePrepare(outputPtr, srcRank, stream));
-    CHK_RET(executor.RegisterProfiler(0, PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, stream));
-    CHK_RET(executor.ReceiveRunAsync());
+    SendReceive tempAlg(dispatcher_, srcLink);
+    CHK_RET(tempAlg.ReceivePrepare(outputPtr, srcRank, stream));
+    CHK_RET(tempAlg.RegisterProfiler(0, PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, stream));
+    CHK_RET(tempAlg.ReceiveRunAsync());
 
     return HCCL_SUCCESS;
 }
@@ -216,16 +216,16 @@ HcclResult SendReceiveOperator::ReceiveCommon(const std::string &tag, DeviceMem 
     CHK_SMART_PTR_NULL(srcLink);
 
     // 获取ring algorithm所需的通信连接
-    std::unique_ptr<SendReceive> executor;
-    executor.reset(new (std::nothrow) SendReceive(dispatcher_, srcLink));
-    CHK_SMART_PTR_NULL(executor);
+    std::unique_ptr<SendReceive> tempAlg;
+    tempAlg.reset(new (std::nothrow) SendReceive(dispatcher_, srcLink));
+    CHK_SMART_PTR_NULL(tempAlg);
 
-    CHK_RET(executor->ReceivePrepare(outputPtr, srcRank, stream));
+    CHK_RET(tempAlg->ReceivePrepare(outputPtr, srcRank, stream));
 
-    CHK_RET(executor->RegisterProfiler(0, PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET,
+    CHK_RET(tempAlg->RegisterProfiler(0, PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET,
                                        stream));
 
-    CHK_RET(executor->ReceiveRunAsync()); /* 执行send操作 */
+    CHK_RET(tempAlg->ReceiveRunAsync()); /* 执行send操作 */
 
     return HCCL_SUCCESS;
 }

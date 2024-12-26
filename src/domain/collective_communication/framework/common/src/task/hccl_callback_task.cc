@@ -36,7 +36,7 @@ HcclCallbackTask::~HcclCallbackTask()
 void HcclCallbackTask::CallbackThread()
 {
     //给当前线程添加名字
-    SetThreadName("Hccl_CallbackTask");
+    SetThreadName("Hccl_Callback");
 
     CHK_PRT(hrtSetDevice(deviceLogicId_));
     callbackThreadId_ = pthread_self();

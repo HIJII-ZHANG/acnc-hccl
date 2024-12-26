@@ -12,9 +12,12 @@
 #define HCCL_COMM_CONFIG_PUB_H
 
 constexpr u32 COMM_CONFIG_MAGIC_WORD = 0xf0f0f0f0;  // Magic word值，用于校验传入的配置结构体是否已经被初始化
-constexpr u32 COMM_CONFIG_MAX_VERSION = 2;          // 当前支持的最高版本
-constexpr u32 COMM_CONFIG_VERSION_ONE = 1;
-constexpr u32 COMM_CONFIG_VERSION_TWO = 2;
+
+enum CommConfigVersion {
+    COMM_CONFIG_VERSION_ONE = 1,
+    COMM_CONFIG_VERSION_TWO = 2,
+    COMM_CONFIG_VERSION_THREE = 3                     // 当前支持的最高版本
+};
 
 // 通信域级别配置参数结构体 - 内部信息
 typedef struct CommConfigInfoDef {
@@ -30,6 +33,7 @@ typedef struct CommConfigHandleDef {
     u32 bufferSize;     // ccl buffer 大小配置
     u32 deterministic;   // 确定性计算配置
     char commName[COMM_NAME_MAX_LENGTH];  // 通信域名称
+    char udi[UDI_MAX_LENGTH];   // user define information
 } CommConfigHandle;
 
 namespace hccl {
@@ -42,6 +46,7 @@ public:
     u64 GetConfigBufferSize() const;               // 获取CCL buffer大小配置
     u8 GetConfigDeterministic() const;             // 获取确定性计算配置
     const std::string& GetConfigCommName() const;  // 获取通信域名称
+    const std::string& GetConfigUdi() const;  // 获取UDI
 
 private:
     HcclResult CheckMagicWord(const CommConfigHandle& config);      // 检查Magic Word是否合法
@@ -50,10 +55,12 @@ private:
     HcclResult SetConfigBufferSize(const CommConfigHandle& config);     // 设置通信Buffer配置
     HcclResult SetConfigDeterministic(const CommConfigHandle& config);  // 设置确定性计算配置
     HcclResult SetConfigCommName(const CommConfigHandle& config);       // 设置通信域名称
+    HcclResult SetConfigUdi(const CommConfigHandle& config);  // 设置UDI
 
     u64 bufferSize_;        // CCL buffer大小配置，单位B
     u8 deterministic_;      // 确定性计算配置：0-关闭，1-开启，其他数字暂时保留
     std::string commName_;  // 通信域名称
+    std::string udi_;       // user define information，用于在报错日志中定位错误通信域
 };
 }
 #endif /* HCCL_COMM_CONFIG_PUB_H */

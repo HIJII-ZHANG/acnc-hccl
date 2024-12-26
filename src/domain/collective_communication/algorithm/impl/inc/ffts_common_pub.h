@@ -107,7 +107,7 @@ using HcclOpMetaInfo = struct HcclOpMetaInfoDef {
     }
 
     static HcclOpMetaInfoDef GetOneForBroadcast(bool isRootRank, uint32_t rootRank,
-        bool hugeData = false, bool isSmallCount = false, u64 sliceNum = 1)
+        bool hugeData = false, bool isSmallCount = false, u64 sliceNum = 1, CopyPattern copyPattern = CopyPattern::BCOPY)
     {
         HcclOpMetaInfoDef meta;
         meta.opType = HcclCMDType::HCCL_CMD_BROADCAST;
@@ -116,6 +116,7 @@ using HcclOpMetaInfo = struct HcclOpMetaInfoDef {
         meta.rootRank = rootRank;
         meta.hugeData = hugeData;
         meta.sliceNum = sliceNum;
+        meta.copyPattern = copyPattern;
         meta.isEnableCache = CheckEnableCache(meta);
         return meta;
     }

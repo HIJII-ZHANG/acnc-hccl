@@ -134,15 +134,21 @@ HcclResult BroadCastOperator::SelectAlgfor91093(const OpParam& param, std::strin
         CHK_RET(SetInterServerNHRAlgo(algType_));
         HCCL_WARNING("[BroadCastOperator][BroadCastOperator] do not support ring in AlgoLevel1 yet, reset algType=NHR.");
     }
-    bool smallCountOptim91093 =
+    bool smallCountOptimSingleServer =
         (serverNum_ == 1) &&
         ((workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) ||
         (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && !param.aicpuUnfoldMode)) &&
         (deviceNumPerAggregation_ > HCCL_DEVICE_NUM_TWO) &&
         (param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] <= HCCL_SMALL_COUNT_2_MB * userRankSize_);
-    if (multiModuleDiffDeviceNumMode_ || multiSuperPodDiffServerNumMode_) {
+    bool smallCountOptimMultiServer =
+        (deviceNumPerAggregation_ > HCCL_DEVICE_NUM_TWO) && (serverNum_ != 1) && (superPodNum_ == 1) &&
+        (param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] <= HCCL_SMALL_COUNT_256_KB * userRankSize_);
+    if (multiModuleDiffDeviceNumMode_ || multiSuperPodDiffServerNumMode_ || smallCountOptimMultiServer) {
         algName = "BroadCastComm";
-    } else if (smallCountOptim91093) {
+        if (smallCountOptimMultiServer) {
+            CHK_RET(SetInterServerNHRAlgo(algType_));
+        }
+    } else if (smallCountOptimSingleServer) {
         algName = "BroadCastSmallCountExecutor";
     } else if (topoType_ == TopoType::TOPO_TYPE_NP_SINGLE_RING || topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) {
         algName = "BroadCastRingFor91093Executor";

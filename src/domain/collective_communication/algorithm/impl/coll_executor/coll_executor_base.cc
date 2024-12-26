@@ -35,13 +35,13 @@ HcclResult CollExecutorBase::SetIsSupportSDMAReduce(bool isSupportSDMAReduce)
     return HCCL_SUCCESS;
 }
 
-HcclResult CollExecutorBase::RunTemplate(const std::unique_ptr<ExecutorBase> &executor, const SubCommInfo &commInfo)
+HcclResult CollExecutorBase::RunTemplate(const std::unique_ptr<AlgTemplateBase> &tempAlg, const SubCommInfo &commInfo)
 {
-    HcclResult ret = executor->RunAsync(commInfo.localRank, commInfo.localRankSize, commInfo.links);
+    HcclResult ret = tempAlg->RunAsync(commInfo.localRank, commInfo.localRankSize, commInfo.links);
     CHK_PRT_RET(ret == HCCL_E_AGAIN, HCCL_WARNING("[CollExecutorBase][RunTemplate]" \
         "group has been destroyed. Break!"), ret);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
-        HCCL_ERROR("[CollExecutorBase][RunTemplate]run executor rank[%u] rank size[%u] failed",
+        HCCL_ERROR("[CollExecutorBase][RunTemplate]run tempAlg rank[%u] rank size[%u] failed",
         commInfo.localRank, commInfo.localRankSize), ret);
     return HCCL_SUCCESS;
 }

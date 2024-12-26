@@ -25,7 +25,7 @@ protected:
     virtual bool IsHugeData(const u64 curSize);
     virtual bool IsDataSplitForRdmaSdmaConcurrent(const u64 curSize);
     HcclResult RunLoop(OpParam &param, AlgResourceResponse &algRes);
-    bool IsAllGatherSmallData(const u64 curSize);
+    virtual bool IsSmallData(const u64 size);
 
     // 工具类
     HcclResult PrepareAllgatherSlice(u32 sliceNum, u64 inputMemSize, std::vector<Slice> &dataSegsSlice) const;

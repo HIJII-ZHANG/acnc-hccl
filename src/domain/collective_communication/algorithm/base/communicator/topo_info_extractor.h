@@ -25,15 +25,17 @@ namespace hccl {
 
 typedef enum {
     COMM_LEVEL0 = 0,    // 一级通信域(server内)
-    COMM_LEVEL0_RDMA,
+    COMM_LEVEL0_ANYPATH_RDMA,  // anypath特性使用
     COMM_LEVEL1,        // 二级通信域(server间)
-    COMM_LEVEL1_RDMA,
+    COMM_LEVEL1_ANYPATH_RDMA, // anypath特性使用
     COMM_LEVEL1_AHC,    // AHC 二级通信域(server间)
     COMM_LEVEL2,        // 三级通信域(超节点间)
     COMM_MESH_L0,       // mesh内
     COMM_MESH_L1,       // mesh间
     COMM_COMBINE,       // 打平通信域，大ring环
     COMM_COMBINE_ORDER, // 打平通信域，按rank排序
+    COMM_LEVEL0_ANYPATH_SDMA,  // anypath特性使用
+    COMM_LEVEL1_ANYPATH_SDMA, // anypath特性使用
     COMM_LEVEL_RESERVED,
 } CommPlane;
 
@@ -66,6 +68,7 @@ public:
     HcclResult GetServerIdx(const RankInfo &rankInfo, u32 &serverIdx) const;
     bool IsDiffDeviceModuleInServer() const;
     HcclResult SetMultiOuter(u32 ringNum);
+    HcclResult SetMultiOuterAnyPath(std::vector<std::vector<u32> > multiOrder);
     HcclResult GetModuleIdx(const RankInfo &rankInfo, u32 &moduleIdx);
     HcclResult SetBridgeLinkInfo(RankInfo &bridgePara, u32 bridgeUserRank);
     HcclResult SetTopoDefaultInfoFor8P();
@@ -139,6 +142,7 @@ bool Ascending(const RankInfo &first, const RankInfo &second);
 bool CompareWithUserRankAscend(const RankInfo &left, const RankInfo &right);
 bool CheckSdmaWithRohTopo(const std::vector<u32> &nicList, std::vector<u32> &topoList);
 std::vector<std::vector<u32>> GetRingsOrderByTopoType(u32 ranksSize, TopoType topoType, std::vector<u32> &nicList);
+std::vector<std::vector<u32>> GetRingsOrderForAnyPath(u32 ranksSize, TopoType topoType, std::vector<u32> &nicList);
 }
 
 #endif

@@ -11,12 +11,12 @@
 #ifndef REDUCE_SCATTER_MESH_ATOMIC_H
 #define REDUCE_SCATTER_MESH_ATOMIC_H
 
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 #include "reducer_pub.h"
 #include "sender_pub.h"
 
 namespace hccl {
-class ReduceScatterMeshAtomic : public ExecutorBase {
+class ReduceScatterMeshAtomic : public AlgTemplateBase {
 public:
     explicit ReduceScatterMeshAtomic(const HcclDispatcher dispatcher, const u64 reduceAttrBitMap,
         std::vector<Stream> &meshStreams, const std::vector<std::shared_ptr<LocalNotify>> &meshSignal,

@@ -137,10 +137,6 @@ u64 CollReduceScatterRingExecutor::CalcLoopMaxCount(const u32 unitSize)
 
 bool CollReduceScatterRingExecutor::IsHugeData(const u64 curSize, OpParam *param)
 {
-    if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT) {
-        return true;
-    }
-
     bool hugeData;
     if (DMAReduceFlag_) {
         hugeData = curSize > SDMA_SEND_MAX_SIZE;
@@ -177,7 +173,7 @@ HcclResult CollReduceScatterRingExecutor::KernelRun(const OpParam &param, ExecMe
     bool isMultiNic = topoType_ == TopoType::TOPO_TYPE_8P_RING && topoAttr_.nicList.size() != DEVICE_EIGHT;
     if (isMultiNic) {
         u64 inputDataCount = execMem.inputMem.size() / perDataSize;
-        CHK_RET(ExecutorBase::PrepareSliceData(inputDataCount, perDataSize, sliceNum, 0, dataSegsSlice));
+        CHK_RET(AlgTemplateBase::PrepareSliceData(inputDataCount, perDataSize, sliceNum, 0, dataSegsSlice));
         multiStreamSlice = PrepareMultiRingSlice(dataSegsSlice, param.tag);
         CHK_PRT_RET(multiStreamSlice.size() != ringNum,
             HCCL_ERROR("[CollReduceScatterRingExecutor][KernelRun]ringNum[%u] != multiStreamSlice size[%zu]",
@@ -199,63 +195,63 @@ HcclResult CollReduceScatterRingExecutor::KernelRun(const OpParam &param, ExecMe
         if (innerRankSize > 1) {
             u64 reduceAttr = GetReduceAttr(execMem.inputMem, execMem.scratchMem, param.DataDes.dataType,
                 param.reduceType);
-            std::unique_ptr<ExecutorBase> innerExecutor;
+            std::unique_ptr<AlgTemplateBase> innerTempAlg;
 
             if (UseInterServerRingAlgo(algType_)) {
-                innerExecutor.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
+                innerTempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
                 HCCL_INFO("reducescatter ring: using ring algo inter-server.");
-                CHK_SMART_PTR_NULL(innerExecutor);
+                CHK_SMART_PTR_NULL(innerTempAlg);
 
                 u64 ringSize = execMem.inputMem.size() / innerRankSize;
                 u64 ringCount = ringSize / perDataSize;
 
-                CHK_RET(innerExecutor->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
+                CHK_RET(innerTempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
                     param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID,
                     std::vector<Slice>(0)));
             } else if (UseInterServerNHRAlgo(algType_)) {
-                innerExecutor.reset(new (std::nothrow) ReduceScatterNHR(dispatcher_, reduceAttr));
+                innerTempAlg.reset(new (std::nothrow) ReduceScatterNHR(dispatcher_, reduceAttr));
                 HCCL_INFO("reducescatter ring: using nhr algo inter-server.");
-                CHK_SMART_PTR_NULL(innerExecutor);
+                CHK_SMART_PTR_NULL(innerTempAlg);
 
                 u64 ringSize = execMem.inputMem.size() / innerRankSize;
                 u64 ringCount = ringSize / perDataSize;
-                CHK_RET(innerExecutor->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
+                CHK_RET(innerTempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
                     param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID,
                     std::vector<Slice>(0)));
             } else if (UseInterServerNHRV1Algo(algType_)) {
-                innerExecutor.reset(new (std::nothrow) ReduceScatterNHRV1(dispatcher_, reduceAttr));
+                innerTempAlg.reset(new (std::nothrow) ReduceScatterNHRV1(dispatcher_, reduceAttr));
                 HCCL_INFO("reducescatter ring: using nhr_v1 algo inter-server.");
-                CHK_SMART_PTR_NULL(innerExecutor);
+                CHK_SMART_PTR_NULL(innerTempAlg);
 
                 u64 ringSize = execMem.inputMem.size() / innerRankSize;
                 u64 ringCount = ringSize / perDataSize;
-                CHK_RET(innerExecutor->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
+                CHK_RET(innerTempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
                     param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID,
                     std::vector<Slice>(0)));
             } else if (UseInterServerNBAlgo(algType_)) {
-                innerExecutor.reset(new (std::nothrow) ReduceScatterNB(dispatcher_, reduceAttr));
+                innerTempAlg.reset(new (std::nothrow) ReduceScatterNB(dispatcher_, reduceAttr));
                 HCCL_INFO("reducescatter ring: using nonuniform-bruck algo inter-server.");
-                CHK_SMART_PTR_NULL(innerExecutor);
+                CHK_SMART_PTR_NULL(innerTempAlg);
 
                 u64 ringSize = execMem.inputMem.size() / innerRankSize;
                 u64 ringCount = ringSize / perDataSize;
-                CHK_RET(innerExecutor->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
+                CHK_RET(innerTempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
                     param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID,
                     std::vector<Slice>(0)));
             } else {
-                innerExecutor.reset(new (std::nothrow) ReduceScatterRecursiveHalvingDoubling(dispatcher_, reduceAttr));
+                innerTempAlg.reset(new (std::nothrow) ReduceScatterRecursiveHalvingDoubling(dispatcher_, reduceAttr));
                 HCCL_INFO("reducescatter ring: using halving-doubling algo inter-server.");
 
-                CHK_SMART_PTR_NULL(innerExecutor);
+                CHK_SMART_PTR_NULL(innerTempAlg);
                 u64 inputDataCount = execMem.inputMem.size() / perDataSize; // count是output的数据个数
-                CHK_RET(innerExecutor->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, inputDataCount,
+                CHK_RET(innerTempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, inputDataCount,
                     param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID,
                     std::vector<Slice>(0)));
             }
-            CHK_RET(innerExecutor->RegisterProfiler(
+            CHK_RET(innerTempAlg->RegisterProfiler(
                 (innerRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + innerCommInfo.localRank,
                 PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, param.stream));
-            CHK_RET(RunTemplate(innerExecutor, innerCommInfo));
+            CHK_RET(RunTemplate(innerTempAlg, innerCommInfo));
         }
     }
 

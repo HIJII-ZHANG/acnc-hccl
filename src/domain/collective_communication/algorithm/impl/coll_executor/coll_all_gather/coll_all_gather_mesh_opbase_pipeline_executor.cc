@@ -74,9 +74,6 @@ u64 CollAllGatherMeshOpbasePipelineExecutor::CalcLoopMaxCount(const u64 cclBuffS
 
 bool CollAllGatherMeshOpbasePipelineExecutor::IsHugeData(const u64 curSize)
 {
-    if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT) {
-        return true;
-    }
     bool hugeData = curSize > RDMA_SEND_MAX_SIZE || curSize > SDMA_SEND_MAX_SIZE;
     return hugeData;
 }
@@ -97,13 +94,13 @@ HcclResult CollAllGatherMeshOpbasePipelineExecutor::KernelRun(const OpParam &par
         "", execMem.inputPtr, execMem.outputPtr, param.DataDes.count, param.DataDes.dataType, 0, HCCL_REDUCE_RESERVED
     };
 
-    std::unique_ptr<AllGatherPipeline> executor;
-    executor.reset(new (std::nothrow) AllGatherPipeline(dispatcher_));
-    CHK_SMART_PTR_NULL(executor);
-    CHK_RET(executor->Prepare(&opInfo, topoAttr_.userRank, execMem.count, execMem.inputMem, execMem.outputMem,
+    std::unique_ptr<AllGatherPipeline> tempAlg;
+    tempAlg.reset(new (std::nothrow) AllGatherPipeline(dispatcher_));
+    CHK_SMART_PTR_NULL(tempAlg);
+    CHK_RET(tempAlg->Prepare(&opInfo, topoAttr_.userRank, execMem.count, execMem.inputMem, execMem.outputMem,
         outerCommInfo, innerCommInfo, const_cast<Stream&>(param.stream),
         algResResp_->slaveStreams, algResResp_->notifiesM2S, algResResp_->notifiesS2M));
-    CHK_RET(executor->RunAsync());
+    CHK_RET(tempAlg->RunAsync());
     return HCCL_SUCCESS;
 }
 

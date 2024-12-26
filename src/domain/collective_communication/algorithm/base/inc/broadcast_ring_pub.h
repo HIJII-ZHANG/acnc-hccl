@@ -11,10 +11,10 @@
 #ifndef BROADCAST_RING_PUB_H
 #define BROADCAST_RING_PUB_H
 
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 
 namespace hccl {
-class BroadcastRing : public ExecutorBase {
+class BroadcastRing : public AlgTemplateBase {
 public:
     explicit BroadcastRing(const HcclDispatcher dispatcher);
     ~BroadcastRing() override;

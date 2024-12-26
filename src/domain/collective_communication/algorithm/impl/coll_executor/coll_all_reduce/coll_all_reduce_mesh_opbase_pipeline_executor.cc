@@ -80,9 +80,6 @@ u64 CollAllReduceMeshOpbasePipelineExecutor::CalcLoopMaxCount(const u64 cclBuffS
 
 bool CollAllReduceMeshOpbasePipelineExecutor::IsHugeData(const u64 curSize)
 {
-    if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT) {
-        return true;
-    }
     bool hugeData = curSize / topoAttr_.deviceNumPerAggregation / HCCL_INTERNODE_MAX_DATA_RATE > RDMA_SEND_MAX_SIZE ||
         curSize > SDMA_SEND_MAX_SIZE;
     return hugeData;
@@ -109,13 +106,13 @@ HcclResult CollAllReduceMeshOpbasePipelineExecutor::KernelRun(const OpParam &par
         "", execMem.inputPtr, execMem.outputPtr, execMem.count, param.DataDes.dataType, param.root, param.reduceType
     };
 
-    std::unique_ptr<AllReduceOpbasePipeline> executor;
-    executor.reset(new (std::nothrow) AllReduceOpbasePipeline(dispatcher_, reduceAttr));
-    CHK_SMART_PTR_NULL(executor);
-    CHK_RET(executor->Prepare(&opInfo, execMem.inputMem, execMem.outputMem, execMem.count,
+    std::unique_ptr<AllReduceOpbasePipeline> tempAlg;
+    tempAlg.reset(new (std::nothrow) AllReduceOpbasePipeline(dispatcher_, reduceAttr));
+    CHK_SMART_PTR_NULL(tempAlg);
+    CHK_RET(tempAlg->Prepare(&opInfo, execMem.inputMem, execMem.outputMem, execMem.count,
         innerCommInfo, outerCommInfo, const_cast<Stream&>(param.stream),
         algResResp_->slaveStreams, algResResp_->notifiesM2S, algResResp_->notifiesS2M));
-    CHK_RET(executor->RunAsync());
+    CHK_RET(tempAlg->RunAsync());
     return HCCL_SUCCESS;
 }
 

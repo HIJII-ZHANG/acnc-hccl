@@ -45,7 +45,7 @@ HcclResult CommHalvingDoubling::CalcLink()
         CHK_RET(GetRankByUserRank(subUserRankRoot_, subRoot));
     }
 
-    std::vector<bool> linkRelation = ExecutorBase::CalcLinksRelation(rank_, rankSize_, subRoot,
+    std::vector<bool> linkRelation = AlgTemplateBase::CalcLinksRelation(rank_, rankSize_, subRoot,
                                                                      halvingDoublingType_);
     if (linkRelation.size() == 0) {
         HCCL_ERROR("[Calc][Link]comm halving doubling calculate link relation failed!");

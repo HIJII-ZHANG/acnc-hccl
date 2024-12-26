@@ -65,18 +65,18 @@ HcclResult CollReduceScatterFor310PRingExecutor::KernelRun(const OpParam &param,
         SalSetBitOne(reduceAttr, ATTR_POS_INLINE_REDUCE);
     }
 
-    std::unique_ptr<ExecutorBase> executor;
-    executor.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
-    CHK_SMART_PTR_NULL(executor);
+    std::unique_ptr<AlgTemplateBase> tempAlg;
+    tempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
+    CHK_SMART_PTR_NULL(tempAlg);
 
-    CHK_RET(executor->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
+    CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
         param.DataDes.dataType, param.stream, param.reduceType));
 
-    CHK_RET(executor->RegisterProfiler(
+    CHK_RET(tempAlg->RegisterProfiler(
         (outerCommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + outerCommInfo.localRank,
         PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-    CHK_RET(RunTemplate(executor, outerCommInfo));
+    CHK_RET(RunTemplate(tempAlg, outerCommInfo));
     return HCCL_SUCCESS;
 }
 

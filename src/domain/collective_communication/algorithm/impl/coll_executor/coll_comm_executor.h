@@ -40,7 +40,7 @@ public:
         s32 profStage, const u64 baseOffset = 0, const HcomCollOpInfo *opInfo = nullptr,
         const std::vector<std::vector<Slice>> multRingsUserMemSlice = std::vector<std::vector<Slice>> (0));
 
-    HcclResult MultiRingReduceScatterConcurrent(const std::string &tag, DeviceMem inputMem,DeviceMem outputMem, 
+    HcclResult MultiRingReduceScatterConcurrent(const std::string &tag, DeviceMem inputMem,DeviceMem outputMem,
         const u64 count, const HcclDataType dataType, const HcclReduceOp reductionOp,
         const std::vector<std::pair<bool, std::vector<Slice>>> multRingsSliceZero, Stream stream,
         s32 profStage, const u64 baseOffset = 0, const HcomCollOpInfo *opInfo = nullptr,
@@ -73,7 +73,7 @@ public:
         std::vector<Slice> &level1DataSegsSlice, u32 syncTrans);
 
     HcclResult MultiRingMultiRootScatter(const std::string &tag, DeviceMem &inputMem, DeviceMem &outputMem,
-        const u64 count, const HcclDataType dataType, const std::vector<std::vector<Slice>> &multRingsSliceZero, 
+        const u64 count, const HcclDataType dataType, const std::vector<std::vector<Slice>> &multRingsSliceZero,
         u32 root, Stream stream, const u64 baseOffset);
 
     HcclResult MultiStreamReduceScatterMesh(const std::string &tag, DeviceMem inputMem, DeviceMem outputMem,
@@ -108,6 +108,10 @@ public:
     void NicSendSizeCal(const std::vector<std::vector<Slice>> &mutliSegsSlices, u32 ringCount, u32 chunkSize,
         const std::vector<u32> &nicList, const std::string &tag);
     std::vector<std::vector<Slice> > PrepareMultiRingSlice(const std::vector<Slice> &dataSegsSlice,
+        const std::string &tag, bool avoidCceRewrite = false, std::vector<u32> nicList = {0, 1, 2, 3, 4, 5, 6, 7});
+    // AnyPath特性使用
+    std::vector<std::vector<u32>> GetRingsOrderForAnyPath(u32 ranksSize, TopoType topoType, std::vector<u32> &nicList);
+    std::vector<std::vector<Slice> > AnyPathPrepareMultiRingSlice(const std::vector<Slice> &dataSegsSlice,
         const std::string &tag, bool avoidCceRewrite = false, std::vector<u32> nicList = {0, 1, 2, 3, 4, 5, 6, 7});
     u32 RefreshCommIdx(u32 commIndex, std::vector<u32> nicList, u32 devicePhyId);
 

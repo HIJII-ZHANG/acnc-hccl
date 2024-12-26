@@ -94,9 +94,6 @@ u64 CollAllReduceExecutor::CalcLoopMaxCount(const u64 cclBuffSize, const u32 uni
 
 bool CollAllReduceExecutor::IsHugeData(const u64 curSize)
 {
-    if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT) {
-        return true;
-    }
     HCCL_WARNING("[CollAllReduceExecutor][IsHugeData]opMeta is using the default option: not huge data.");
     return false;
 }
@@ -150,7 +147,7 @@ HcclResult CollAllReduceExecutor::GetSliceNum(const u64 totalSize, const bool is
         }
     } else if (UseInterServerNHRAlgo(algType_)) {
         u64 sliceSize = (actualSize + (actualRankSize - 1)) / actualRankSize;
-        u64 sliceSizeAligned = ExecutorBase::RoundUpWithDivisor(sliceSize, HCCL_MIN_SLICE_ALIGN);
+        u64 sliceSizeAligned = AlgTemplateBase::RoundUpWithDivisor(sliceSize, HCCL_MIN_SLICE_ALIGN);
         sliceNum = isSmallData ? 1 : static_cast<u64>(std::ceil(actualSize * 1.0f / sliceSizeAligned));
     }
     return HCCL_SUCCESS;
@@ -232,8 +229,9 @@ HcclResult CollAllReduceExecutor::RunLoopInner(OpParam &param, const ReduceType 
         CHK_RET(GetSliceNum(execMem.count * unitSize, smallData, sliceNum));
         bool dataSplit = IsDataSplitForRdmaSdmaConcurrent(curSize);
         bool isDeterministic = topoMatcher_->GetExternalInputHcclDeterministic();
+        CopyPattern copy =  DMAReduceFlag_? CopyPattern::ZCOPY : CopyPattern::BCOPY;
         auto opMeta = HcclOpMetaInfo::GetOneForAllReduce(autoSelectedAlgTypeLevel1,
-            param.DataDes.dataType, reduceType, smallData, 1, hugeData, CopyPattern::BCOPY, sliceNum,
+            param.DataDes.dataType, reduceType, smallData, 1, hugeData, copy, sliceNum,
             false, true, dataSplit, isDeterministic);
         CHK_RET(InitTask(dispatcher_, param.stream, opMeta.isEnableCache, opMeta.GetCacheKey()));
     }
@@ -316,7 +314,8 @@ bool CollAllReduceExecutor::IsAllReduceSmallData(u64 size)
 {
     if (UseInterServerNHRAlgo(algType_)) {
         const AlgTypeLevel0 algLevel0 = GetLevel0AlgType(algType_);
-        if (algLevel0 == AlgTypeLevel0::ALG_LEVEL0_RESERVED) { // level0算法配null走单层拓扑场景
+        if (algLevel0 == AlgTypeLevel0::ALG_LEVEL0_RESERVED ||
+            (topoAttr_.deviceType == DevType::DEV_TYPE_910_93 && !DMAReduceFlag_)) { // level0算法配null走单层拓扑场景
             if (size <= NHR_ALLREDUCE_SMALL_SIZE) {
                 return true;
             }
@@ -338,7 +337,7 @@ HcclResult CollAllReduceExecutor::PrepareSliceDataWithAlignSize(u64 totalSize, u
     dataSlice.reserve(sliceNum);
     CHK_PRT_RET((sliceNum == 0), HCCL_ERROR("[Prepare][SliceData]data slice prepare, sliceNum is 0"), HCCL_E_PARA);
     u64 tempPerSlice = (totalSize + sliceNum - 1) / sliceNum; /* 1是为了向上取整 */
-    u64 sizePerSlice = ExecutorBase::RoundUpWithDivisor(tempPerSlice, alignSize);
+    u64 sizePerSlice = AlgTemplateBase::RoundUpWithDivisor(tempPerSlice, alignSize);
     HCCL_DEBUG("total_size:%llu sliceNum:%u temp_per_ring:%llu size_per_ring:%llu", totalSize, sliceNum, tempPerSlice,
         sizePerSlice);
     u64 residueSize = totalSize;

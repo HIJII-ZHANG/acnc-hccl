@@ -22,7 +22,7 @@
 #include "calc_impl.h"
 
 namespace hccl {
-constexpr u32 COMM_LEVEL1_INDEX = 2;
+constexpr u32 COMM_LEVEL1_INDEX = COMM_LEVEL1;
 using HcclAlgoInfo = struct HcclAlgoInfoDef {
     bool inlineReduceSwitchOn;       // 收到数量时同时完成Reduce计算
     std::string identifier;
@@ -91,6 +91,7 @@ using HcclExternalEnable = struct HcclExternalEnableDef {
     u32 highPerfEnable;
     u32 intraRoceSwitch;
     u32 dumpDebug;
+    u32 interHccsDisable;
 
     HcclExternalEnableDef()
         : enableRdmaSdmaConcurrent(0),
@@ -98,7 +99,8 @@ using HcclExternalEnable = struct HcclExternalEnableDef {
         deterministic(0),
         highPerfEnable(0),
         intraRoceSwitch(0),
-        dumpDebug(0)
+        dumpDebug(0),
+        interHccsDisable(0)
     {}
 };
 
@@ -124,12 +126,14 @@ public:
     u32 GetExternalInputHcclHighPerfEnable();
     u32 GetExternalInputIntraRoceSwitch();
     u32 GetExternalInputHcclDumpDebug();
+    u32 GetExternalInputInterHccsDisable();
     bool CheckSdmaWithRohTopo(const std::vector<u32> &nicList, std::vector<u32> &topoList);
     HcclResult GetSubRootForScatter(const u32 root, u32& subRoot);
     u32 GetSubRootUserRank(const u32 userRank, const u32 rootUserRank);
     u32 GetSubRootUserRankWithSuperPod(const u32 userRank, const u32 rootUserRank);
     u32 GetSubRootWithSuperPod(const u32 userRank, const u32 rootUserRank);
     HcclResult GetLocalSuperPodRankSize(const u32 userRank, u32& devNumInlocalPod, u32& rankIdxInPod);
+    HcclResult GetLocalServerRankSize(const u32 userRank, u32& devNumInlocalServer, u32& rankIdxInServer);
     HcclResult SetDeterministicConfig(const u8 deterministic);
     u8 GetDeterministicConfig() const;
     bool GetLevelAsymType(const CommPlane level) const;

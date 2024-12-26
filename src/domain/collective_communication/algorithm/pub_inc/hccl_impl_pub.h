@@ -110,6 +110,7 @@ using HcclTopoAttr = struct HcclTopoAttrDef {
     DevType deviceType;
     bool isStandardCard;
     bool is310PDuoCard;
+    s32 hccsPortNum;
 
     std::vector<u32> nicList;
     std::unordered_map<u32, u32> pairLinkCounter; // server内所有device间的链路类型计数
@@ -138,6 +139,7 @@ using HcclTopoAttr = struct HcclTopoAttrDef {
         deviceType(DevType::DEV_TYPE_COUNT),
         isStandardCard(false),
         is310PDuoCard(false),
+        hccsPortNum(-1),
         nicList(0),
         pairLinkCounter(0),
         pairLinkInfo(0),

@@ -11,10 +11,10 @@
 #ifndef ALL_REDUCE_RING_PUB_H
 #define ALL_REDUCE_RING_PUB_H
 
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 
 namespace hccl {
-class AllReduceRing : public ExecutorBase {
+class AllReduceRing : public AlgTemplateBase {
 public:
     explicit AllReduceRing(const HcclDispatcher dispatcher, const u64 reduceAttrBitMap);
     ~AllReduceRing() override;

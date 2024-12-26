@@ -11,10 +11,10 @@
 #ifndef MULTI_ROOT_SCATTER_RING_PUB_H
 #define MULTI_ROOT_SCATTER_RING_PUB_H
 
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 
 namespace hccl {
-class MultiRootScatterRing : public ExecutorBase {
+class MultiRootScatterRing : public AlgTemplateBase {
 public:
     explicit MultiRootScatterRing(const HcclDispatcher dispatcher);
 

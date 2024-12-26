@@ -224,7 +224,7 @@ private:
     void DestroyIntraServerComm(const std::string &tag);
     void DestroyOuterComm(const std::string &tag);
     HcclResult ReleaseSignal(innerStreamInfo_t &innerStream);
-    HcclResult RunExecutor(std::unique_ptr<CommBase> &commCombine, std::unique_ptr<ExecutorBase> &executor,
+    HcclResult RunTemplateAlg(std::unique_ptr<CommBase> &commCombine, std::unique_ptr<AlgTemplateBase> &tempAlg,
                               DeviceMem &inputMem, DeviceMem &outputMem, u64 count, HcclDataType GetLevel0AlgTypedataType,
                               HcclReduceOp op, u32 root, Stream &stream) const;
 

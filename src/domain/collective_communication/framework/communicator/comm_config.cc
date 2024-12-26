@@ -74,23 +74,28 @@ HcclResult CommConfig::CheckMagicWord(const CommConfigHandle &config)
 
 HcclResult CommConfig::SetConfigByVersion(const CommConfigHandle &config)
 {
-    if (config.info.version > COMM_CONFIG_MAX_VERSION) {
+    if (config.info.version > CommConfigVersion::COMM_CONFIG_VERSION_THREE) {
         // 传入的config的版本高于当前版本，警告不支持的配置项将被忽略
         HCCL_WARNING("[SetConfigByVersion] The version of provided config[%u] is higher than the current version[%u], "
             "unsupported configuration will be ignored.",
             config.info.version,
-            COMM_CONFIG_MAX_VERSION);
+            CommConfigVersion::COMM_CONFIG_VERSION_THREE);
     }
 
-    if (config.info.version >= COMM_CONFIG_VERSION_ONE) {
+    if (config.info.version >= CommConfigVersion::COMM_CONFIG_VERSION_ONE) {
         // 版本大于等于1，设置CCL buffer、确定性计算配置
         CHK_RET(SetConfigBufferSize(config));
         CHK_RET(SetConfigDeterministic(config));
     }
 
-    if (config.info.version >= COMM_CONFIG_VERSION_TWO) {
+    if (config.info.version >= CommConfigVersion::COMM_CONFIG_VERSION_TWO) {
         // 版本大于等于2，设置通信域名称
         CHK_RET(SetConfigCommName(config));
+    }
+
+    if (config.info.version >= CommConfigVersion::COMM_CONFIG_VERSION_THREE) {
+        // 版本大于等于3，设置Udi
+        CHK_RET(SetConfigUdi(config));
     }
 
     return HCCL_SUCCESS;
@@ -147,6 +152,20 @@ HcclResult CommConfig::SetConfigCommName(const CommConfigHandle &config)
     return HCCL_SUCCESS;
 }
 
+HcclResult CommConfig::SetConfigUdi(const CommConfigHandle &config)
+{
+    if (config.udi != nullptr) {
+        if (config.udi[0] == '\0') {
+            udi_ = "Unspecified";
+            return HCCL_SUCCESS;
+        }
+        auto udiLength = strlen(config.udi);
+        udiLength = udiLength < COMM_NAME_MAX_LENGTH ? udiLength : COMM_NAME_MAX_LENGTH;
+        udi_ = std::string(config.udi, udiLength);
+    }
+    return HCCL_SUCCESS;
+}
+
 u64 CommConfig::GetConfigBufferSize() const
 {
     return bufferSize_;
@@ -160,5 +179,10 @@ u8 CommConfig::GetConfigDeterministic() const
 const std::string& CommConfig::GetConfigCommName() const
 {
     return commName_;
+}
+
+const std::string& CommConfig::GetConfigUdi() const
+{
+    return udi_;
 }
 }

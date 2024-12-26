@@ -159,7 +159,7 @@ HcclResult CollAllReduceMeshSmallCountExecutor::KernelRun(const OpParam &param, 
     if (!CalcScratchMemFlag(totalSize_)) {
         execMem.scratchMem = execMem.outputMem;
     }
-
+    
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
     SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
 
@@ -179,37 +179,37 @@ HcclResult CollAllReduceMeshSmallCountExecutor::KernelRun(const OpParam &param, 
         "", execMem.inputPtr, execMem.outputPtr, execMem.count, param.DataDes.dataType, param.root, param.reduceType
     };
 
-    std::unique_ptr<ExecutorBase> outer2Executor;
+    std::unique_ptr<AlgTemplateBase> outer2TempAlg;
     if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
         bool aicpu = true;
         aicpu = false;
-        outer2Executor.reset(new (std::nothrow) AllReduceHDOptim(dispatcher_,
+        outer2TempAlg.reset(new (std::nothrow) AllReduceHDOptim(dispatcher_,
             reduceAttr, algResResp_->slaveStreams, algResResp_->notifiesM2S, algResResp_->notifiesS2M,
             outerCommInfo.localRank, &opInfo, aicpu));
     } else if (!topoMatcher_->GetExternalInputHcclDeterministic()) {
-        outer2Executor.reset(new (std::nothrow) AllReduceReduceBcast(dispatcher_,
+        outer2TempAlg.reset(new (std::nothrow) AllReduceReduceBcast(dispatcher_,
             reduceAttr, algResResp_->slaveStreams, algResResp_->notifiesM2S, algResResp_->notifiesS2M,
             outerCommInfo.localRank, outerCommInfo.localRankSize, topoAttr_.userRank, &opInfo));
     } else if (topoAttr_.deviceNumPerAggregation == DEVICE_EIGHT) {
         if (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE || aicpuUnfoldMode_) {
-            outer2Executor.reset(new (std::nothrow) AllReduceDoubling(dispatcher_, reduceAttr));
+            outer2TempAlg.reset(new (std::nothrow) AllReduceDoubling(dispatcher_, reduceAttr));
         } else {
-            outer2Executor.reset(new (std::nothrow) AllReduceDoublingDirect(dispatcher_, reduceAttr, &opInfo));
+            outer2TempAlg.reset(new (std::nothrow) AllReduceDoublingDirect(dispatcher_, reduceAttr, &opInfo));
         }
     } else {
-        outer2Executor.reset(new (std::nothrow) AllReduceLocalReduceBcast(dispatcher_,
+        outer2TempAlg.reset(new (std::nothrow) AllReduceLocalReduceBcast(dispatcher_,
             reduceAttr, algResResp_->slaveStreams, algResResp_->notifiesM2S, algResResp_->notifiesS2M,
             outerCommInfo.localRank, outerCommInfo.localRankSize, topoAttr_.userRank, &opInfo));
     }
-    CHK_SMART_PTR_NULL(outer2Executor);
-    CHK_RET(outer2Executor->Prepare(execMem.inputMem, execMem.scratchMem, execMem.outputMem, execMem.count,
+    CHK_SMART_PTR_NULL(outer2TempAlg);
+    CHK_RET(outer2TempAlg->Prepare(execMem.inputMem, execMem.scratchMem, execMem.outputMem, execMem.count,
         param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID, dataSegsSlice, 0));
 
     CHK_RET(
-        outer2Executor->RegisterProfiler(
+        outer2TempAlg->RegisterProfiler(
             (outerCommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + outerCommInfo.localRank,
             PROF_STAGE_2, HCCL_EXEC_STEP_NOT_SET, param.stream));
-    CHK_RET(RunTemplate(outer2Executor, outerCommInfo));
+    CHK_RET(RunTemplate(outer2TempAlg, outerCommInfo));
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
         CHK_RET(LaunchTask(dispatcher_, const_cast<Stream&>(param.stream)));
     }

@@ -63,7 +63,8 @@ HcclResult CollAllGatherMeshExecutor::CalcLevel0CommInfo(TransportMemType inputT
 
 u64 CollAllGatherMeshExecutor::CalcLoopMaxCount(const u64 cclBuffSize, const u32 unitSize)
 {
-    u64 maxCountPerLoop = cclBuffSize / (topoAttr_.userRankSize * unitSize);
+    u64 maxCountPerLoop = cclBuffSize / topoAttr_.userRankSize / HCCL_MIN_SLICE_ALIGN
+        * HCCL_MIN_SLICE_ALIGN / unitSize;
     return maxCountPerLoop;
 }
 
@@ -98,7 +99,7 @@ HcclResult CollAllGatherMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
     CHK_RET(PrepareAllgatherSlice(sliceNum, inputMemSize, dataSegsSlice));
 
     // mesh算法stream数量为server内rank数减1
-    CHK_RET(ExecutorBase::PrepareSliceMeshStreams(dataSegsSlice, sliceNum - 1, multiStreamSlice));
+    CHK_RET(AlgTemplateBase::PrepareSliceMeshStreams(dataSegsSlice, sliceNum - 1, multiStreamSlice));
 
     CHK_RET(ActiveSlaveStreams(param.stream));
 
@@ -106,61 +107,61 @@ HcclResult CollAllGatherMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
     DeviceMem currentOutputMem = execMem.outputMem.range(baseOffset, inputMemSize * outerRankSize);
     CHK_SMART_PTR_NULL(currentOutputMem);
 
-    std::unique_ptr<ExecutorBase> outerExecutor;
+    std::unique_ptr<AlgTemplateBase> outerTempAlg;
     if (topoAttr_.deviceType == DevType::DEV_TYPE_910B) {
-        outerExecutor.reset(
+        outerTempAlg.reset(
             new (std::nothrow) AllGatherMeshAtomic(dispatcher_, algResResp_->slaveStreams,
             algResResp_->notifiesM2S, algResResp_->notifiesS2M, commIndex, outerRankSize,
             topoAttr_.userRank));
     } else {
-        outerExecutor.reset(
+        outerTempAlg.reset(
             new (std::nothrow) AllGatherMesh(dispatcher_, algResResp_->slaveStreams, algResResp_->notifiesM2S,
                 algResResp_->notifiesS2M, commIndex, outerRankSize, topoAttr_.userRank));
     }
-    CHK_SMART_PTR_NULL(outerExecutor);
-    CHK_RET(outerExecutor->Prepare(currentOutputMem, currentOutputMem, execMem.inputMem,
+    CHK_SMART_PTR_NULL(outerTempAlg);
+    CHK_RET(outerTempAlg->Prepare(currentOutputMem, currentOutputMem, execMem.inputMem,
         execMem.count * outerRankSize, param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED,
         OUTER_BRIDGE_RANK_ID, dataSegsSlice, baseOffset));
     u32 rankSize = outerRankSize;
-    CHK_RET(outerExecutor->RegisterProfiler((rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + commIndex,
+    CHK_RET(outerTempAlg->RegisterProfiler((rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + commIndex,
         PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
-    CHK_RET(RunTemplate(outerExecutor, outerCommInfo));
+    CHK_RET(RunTemplate(outerTempAlg, outerCommInfo));
     HCCL_INFO("all gather mesh HD outer run success");
 
     //  第三步， AI server 间 recursive halving doubling all gather
     u64 hdSize = inputMemSize * outerRankSize;
     u64 hdCount = hdSize / perDataSize;
 
-    std::unique_ptr<ExecutorBase> innerExecutor;
+    std::unique_ptr<AlgTemplateBase> innerTempAlg;
     if (UseInterServerRingAlgo(algType_) || (topoAttr_.isDiffDeviceModule && topoAttr_.serverNum == 1)) {
         // 1-单server-SDMA
-        innerExecutor.reset(new (std::nothrow) AllGatherRing(dispatcher_));
+        innerTempAlg.reset(new (std::nothrow) AllGatherRing(dispatcher_));
         HCCL_INFO("allgather mesh: using ring algo inter-server.");
     } else if (UseInterServerNHRAlgo(algType_)) {
-        innerExecutor.reset(new (std::nothrow) AllGatherNHR(dispatcher_));
+        innerTempAlg.reset(new (std::nothrow) AllGatherNHR(dispatcher_));
         HCCL_INFO("allgather mesh: using nhr algo inter-server.");
     } else if (UseInterServerNHRV1Algo(algType_)) {
-        innerExecutor.reset(new (std::nothrow) AllGatherNHRV1(dispatcher_));
+        innerTempAlg.reset(new (std::nothrow) AllGatherNHRV1(dispatcher_));
         HCCL_INFO("allgather mesh: using nhr_v1 algo inter-server.");
     } else if (UseInterServerNBAlgo(algType_)) {
-        innerExecutor.reset(new (std::nothrow) AllGatherNB(dispatcher_));
+        innerTempAlg.reset(new (std::nothrow) AllGatherNB(dispatcher_));
         HCCL_INFO("allgather mesh: using nonuniform-bruck algo inter-server.");
     } else {
-        innerExecutor.reset(new (std::nothrow) AllGatherRecursiveHalvingDoubling(dispatcher_));
+        innerTempAlg.reset(new (std::nothrow) AllGatherRecursiveHalvingDoubling(dispatcher_));
         HCCL_INFO("allgather mesh: using halving-doubling algo inter-server.");
     }
-    CHK_SMART_PTR_NULL(innerExecutor);
+    CHK_SMART_PTR_NULL(innerTempAlg);
 
     //  此处虽然带入inputMem作为scratch mem, 但inputMem 不能被使用
-    CHK_RET(innerExecutor->Prepare(execMem.outputMem, execMem.outputMem, execMem.inputMem, hdCount,
+    CHK_RET(innerTempAlg->Prepare(execMem.outputMem, execMem.outputMem, execMem.inputMem, hdCount,
         param.DataDes.dataType, param.stream, HcclReduceOp::HCCL_REDUCE_RESERVED, INVALID_VALUE_RANKID,
         std::vector<Slice>(COMM_INDEX_0), 0));
 
     rankSize = innerCommInfo.localRankSize;
-    CHK_RET(innerExecutor->RegisterProfiler((rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + serverIndex,
+    CHK_RET(innerTempAlg->RegisterProfiler((rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + serverIndex,
         PROF_STAGE_2, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-    CHK_RET(RunTemplate(innerExecutor, innerCommInfo));
+    CHK_RET(RunTemplate(innerTempAlg, innerCommInfo));
 
     HCCL_INFO("all gather mesh HD inner run success");
     return HCCL_SUCCESS;

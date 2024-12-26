@@ -78,6 +78,7 @@ HcclResult DestroyFlag(const char *group, bool flag);
 HcclResult HcomQueryGroupRef(const char *group, u32 &groupRef);
 bool HcomCheckrtMemcpyAddrAsync(void);
 HcclResult HcomGetbackloggedByGroup(const char *group, std::vector<u32> &groupRanks, s32 &groupSize);
+HcomInfo& HcomGetCtxHomInfo(void);
 
 #ifdef __cplusplus
 extern "C" {

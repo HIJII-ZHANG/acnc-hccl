@@ -43,17 +43,6 @@ extern HcclResult HcclCommInitClusterInfoConfig(const char *clusterInfo, uint32_
     HcclCommConfig *config, HcclComm *comm);
 
 /**
- * @brief Initialize one side communication.
- *
- * @param clusterString A string identifying the cluster info.
- * @param rank A integer identifying the identify for the rank.
- * @param comm A pointer identifying the initialized communication resource.
- * @return HcclResult
- * @see HcclCommDestroy()
- */
-extern HcclResult HcclCommInitClusterInfoMem(const char *clusterString, uint32_t rank, HcclComm *comm);
-
-/**
  * @brief Initialize HCCL sub communication based on global communication with config params.
  *
  * @param comm A pointer identifying the global communication resource.

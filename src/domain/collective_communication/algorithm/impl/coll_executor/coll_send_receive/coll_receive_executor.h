@@ -11,7 +11,7 @@
 #ifndef COLL_RECEIVE_EXECUTOR_H
 #define COLL_RECEIVE_EXECUTOR_H
 #include "coll_comm_executor.h"
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
  
 namespace hccl {
 class CollReceiveExecutor : public CollNativeExecutorBase {
@@ -33,6 +33,8 @@ private:
     /* *************** 算法编排 *************** */
     HcclResult RunLoop(OpParam &param, AlgResourceResponse &algRes);
     HcclResult RunTemplate(const OpParam &param, DeviceMem &outputMem);
+
+    bool DMAReduceFlag_{false}; // 是否DMA消减的标志    
 };
  
 } // namespace hccl

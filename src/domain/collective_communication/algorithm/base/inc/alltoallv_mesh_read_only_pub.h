@@ -11,7 +11,7 @@
 #ifndef ALLTOALL_V_MESH_READ_ONLY_PUB_H
 #define ALLTOALL_V_MESH_READ_ONLY_PUB_H
 
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 #include "alltoallv_staged_calculator_pub.h"
 
 // 区分单算子模式和图模式，单算子模式需要主从流并发，每步主流先将下一步需要 SDMA 发到其他卡的数据搬到 scratch，再唤醒从流
@@ -24,7 +24,7 @@ struct DataTrace {
     u64 dataOffset;
 };
 
-class AlltoAllVMeshReadOnly : public ExecutorBase {
+class AlltoAllVMeshReadOnly : public AlgTemplateBase {
 public:
     explicit AlltoAllVMeshReadOnly(const HcclDispatcher dispatcher, Stream &mainStream,
         std::vector<Stream> &subStreams,

@@ -11,10 +11,10 @@
 #ifndef BCAST_HALVINGDOUBLING_PUB_H
 #define BCAST_HALVINGDOUBLING_PUB_H
 
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 
 namespace hccl {
-class BcastHalvingDoubling : public ExecutorBase {
+class BcastHalvingDoubling : public AlgTemplateBase {
 public:
     explicit BcastHalvingDoubling(const HcclDispatcher dispatcher);
     ~BcastHalvingDoubling() override;

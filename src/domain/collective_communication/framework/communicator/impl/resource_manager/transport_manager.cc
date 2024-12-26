@@ -47,6 +47,7 @@ TransportManager::TransportManager(CCLBufferManager &cclBufferManager,
 
 TransportManager::~TransportManager()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (enableP2PDevices_.size() != 0) {
         (void)P2PMgmtPub::DisableP2P(enableP2PDevices_);
         enableP2PDevices_.clear();
@@ -109,18 +110,45 @@ HcclResult TransportManager::CreateVirturalTransport(SingleSubCommTransport& sin
     return HCCL_SUCCESS;
 }
 
-HcclResult TransportManager::Alloc(const std::string &tag, const TransportIOMem &transMem,
-    OpCommTransport &opTransportResponse, bool isAicpuModeEn)
+void TransportManager::AddremoteUserRankToList(TransportRequest &transportRequest, std::vector<u32> &rankList,
+    TransportType transportType)
 {
+    if (!transportRequest.isValid) {
+        return;
+    }
+    TransportType type = GetTransportType(transportRequest.remoteUserRank, transportRequest.isUsedRdma);
+    if (type == transportType) {
+        // 仅添加对应Type类型的对端
+        rankList.emplace_back(transportRequest.remoteUserRank);
+    }
+    return;
+}
+
+HcclResult TransportManager::GetRemoteRankList(OpCommTransport &opTransportResponse, std::vector<u32> &rankList,
+    TransportType transportType)
+{
+    // 对当前所有的transportLink做判断
+    for (auto &levelNSubCommTransport : opTransportResponse) {
+        for (auto &singleSubCommTransport : levelNSubCommTransport) {
+            for (auto &transportRequest : singleSubCommTransport.transportRequests) {
+                AddremoteUserRankToList(transportRequest, rankList, transportType);
+            }
+        }
+    }
+    return HCCL_SUCCESS;
+}
+
+HcclResult TransportManager::Alloc(const std::string &tag, const TransportIOMem &transMem,
+    OpCommTransport &opTransportResponse, bool isAicpuModeEn, bool isBackup)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
     CHK_RET(notifyPool_->RegisterOp(tag));
     for (auto &levelNSubCommTransport : opTransportResponse) {
         for (auto &singleSubCommTransport : levelNSubCommTransport) {
             std::vector<std::unique_ptr<std::thread> > linkThreads; // 建链所需线程
             linkThreads.resize(singleSubCommTransport.transportRequests.size());
+            ThreadsGuard threadsGuard(linkThreads);                 // 确保异常退出场景析构时等待线程join
             u32 threadsRapplyNum{0};                                // 线程使用计数器
-
-            singleSubCommTransport.links.clear();
-            singleSubCommTransport.links.reserve(singleSubCommTransport.transportRequests.size());
 
             if (singleSubCommTransport.needVirtualLink) {
                 // task多线程并行下发，根据当前transport创建vtransport信息
@@ -129,27 +157,40 @@ HcclResult TransportManager::Alloc(const std::string &tag, const TransportIOMem 
 
             u32 linkIdx = 0;
             for (auto &transportRequest : singleSubCommTransport.transportRequests) {
-                std::shared_ptr<Transport> subTrans;
-                EXECEPTION_CATCH((subTrans = std::make_shared<Transport>(nullptr)), return HCCL_E_PTR);
-                singleSubCommTransport.links.emplace_back(subTrans);
-                if (transportRequest.isValid) {
+                if (transportRequest.isValid && singleSubCommTransport.links[linkIdx] == nullptr) {
+                    if (isBackup && !transportRequest.isUsedRdma) {
+                        // 备用链路不需要创建p2p
+                        HCCL_INFO("[%s]: no need to create p2p backup link, remoteUserRank[%u], userRank[%u], "
+                            "isUsedRdma[%u], isBackup[%d]", __func__, transportRequest.remoteUserRank, userRank_,
+                            transportRequest.isUsedRdma, isBackup);
+                        linkIdx++;
+                        continue;
+                    }
                     DeviceMem inputMem;
                     DeviceMem outputMem;
-                    HCCL_DEBUG("transportRequest.inputMemType[%d] transportRequest.outputMemType[%d]",
-                        transportRequest.inputMemType, transportRequest.outputMemType);
+                    HCCL_DEBUG("transportRequest.inputMemType[%d] transportRequest.outputMemType[%d], isBackup[%d]",
+                        transportRequest.inputMemType, transportRequest.outputMemType, isBackup);
                     GetIOMem(transMem, transportRequest.inputMemType, transportRequest.outputMemType,
                         inputMem, outputMem);
 
                     std::vector<std::shared_ptr<HcclSocket> > connectSockets;
                     bool isInterRdma;
-                    HCCL_DEBUG("[TransportManager][Alloc]: remoteUserRank[%u], userRank[%u], isUsedRdma[%u]",
+                    HCCL_DEBUG("[%s]: remoteUserRank[%u], userRank[%u], isUsedRdma[%u]", __func__,
                         transportRequest.remoteUserRank, userRank_, transportRequest.isUsedRdma);
+                    bool chooseBackup = transportRequest.isUsedRdma ? isBackup : false;
                     HcclResult ret = CreateDestSockets(tag, transportRequest.remoteUserRank, singleSubCommTransport.taskNum,
-                        connectSockets, isInterRdma, transportRequest.isUsedRdma);
+                        connectSockets, isInterRdma, transportRequest.isUsedRdma, chooseBackup);
+                    HCCL_DEBUG("[%s]CreateDestSockets finished, chooseBackup[%d]", __func__, chooseBackup);
                     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[Alloc]Create dest sockets failed"), ret);
 
                     MachineType machineType = transportRequest.localUserRank < transportRequest.remoteUserRank?
                         MachineType::MACHINE_SERVER_TYPE : MachineType::MACHINE_CLIENT_TYPE;
+
+                    if (transportRequest.isUsedRdma) {
+                        HCCL_INFO("[%s]: create rdma link, remoteUserRank[%u], userRank[%u], "
+                            "isBackup[%d], chooseBackup[%d], isInterRdma[%d]", __func__, transportRequest.remoteUserRank, 
+                            userRank_, isBackup, chooseBackup, isInterRdma);
+                    }
 
                     std::string threadStr = (isInterRdma? "HcclTerL_" : "HcclIntra_") +
                         std::to_string(threadsRapplyNum);
@@ -160,26 +201,35 @@ HcclResult TransportManager::Alloc(const std::string &tag, const TransportIOMem 
                             singleSubCommTransport.supportDataReceivedAck, singleSubCommTransport.linkMode,
                             singleSubCommTransport.enableUseOneDoorbell, threadStr, connectSockets,
                             inputMem, outputMem, transportRequest.isUsedRdma,
-                            std::ref(singleSubCommTransport.links.back()), isAicpuModeEn));
+                            std::ref(singleSubCommTransport.links[linkIdx]), isAicpuModeEn, chooseBackup));
                         CHK_SMART_PTR_NULL(linkThreads[threadsRapplyNum]); // 异常时其他线程待处理
-
+                    singleSubCommTransport.status[linkIdx] = TransportStatus::READY; // 建链后 transport设置为ready状态
                     threadsRapplyNum++;
                 }
                 linkIdx++;
             }
 
             for (u32 index = 0; index < linkThreads.size(); index++) {
-                if (linkThreads[index] == nullptr) {
+                if (linkThreads[index] == nullptr || !linkThreads[index]->joinable()) {
                     continue;
                 }
                 linkThreads[index]->join(); // 等待线程执行完毕
                 CHK_RET(hrtResetDevice(deviceLogicId_)); // 防止线程里面异常退出，在进程中reset
             }
             linkThreads.clear();
+            CHK_PRT_RET(GetStopFlag(), HCCL_ERROR("Terminating operation due to external request"), HCCL_E_INTERNAL);
 
             linkIdx = 0;
             for (auto &transportRequest : singleSubCommTransport.transportRequests) {
                 if (transportRequest.isValid) {
+                    if (isBackup && !transportRequest.isUsedRdma) {
+                        // 备用链路不需要创建p2p
+                        HCCL_INFO("[%s]: no need to check p2p backup link, remoteUserRank[%u], userRank[%u], "
+                            "isUsedRdma[%u], isBackup[%d]", __func__, transportRequest.remoteUserRank, userRank_,
+                            transportRequest.isUsedRdma, isBackup);
+                        linkIdx++;
+                        continue;
+                    }
                     if (singleSubCommTransport.links[linkIdx] == nullptr) {
                         HCCL_ERROR("[Create]errNo[0x%016llx] transport create fail in thread, local rank[%d] remote rank[%d]",
                             HCCL_ERROR_CODE(HCCL_E_NOT_FOUND), userRank_, transportRequest.remoteUserRank);
@@ -202,14 +252,31 @@ HcclResult TransportManager::Alloc(const std::string &tag, const TransportIOMem 
     return HCCL_SUCCESS;
 }
 
-HcclResult TransportManager::IncreAlloc(const std::string &tag, const TransportIOMem &transMem,
-    OpCommTransport &opTransportReq, OpCommTransport &opTransportResponse, bool isAicpuModeEn)
+HcclResult TransportManager::GetIncreRemoteRankList(OpCommTransport &opTransportReq,
+    OpCommTransport &opTransportResponse, std::vector<u32> &rankList, TransportType transportType)
 {
+    for (u32 levelIndex = 0; levelIndex < opTransportReq.size(); levelIndex++) {
+        for (u32 ringIndex = 0; ringIndex < opTransportReq[levelIndex].size(); ringIndex++) {
+            SingleSubCommTransport &reqSingleSubComm = opTransportReq[levelIndex][ringIndex];
+            for (u32 rankIndex = 0; rankIndex < reqSingleSubComm.transportRequests.size(); rankIndex++) {
+                TransportRequest &transportRequest = reqSingleSubComm.transportRequests[rankIndex];
+                AddremoteUserRankToList(transportRequest, rankList, transportType);
+            }
+        }
+    }
+    return HCCL_SUCCESS;
+}
+
+HcclResult TransportManager::IncreAlloc(const std::string &tag, const TransportIOMem &transMem,
+    OpCommTransport &opTransportReq, OpCommTransport &opTransportResponse, bool isAicpuModeEn, bool isBackup)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
     CHK_RET(notifyPool_->RegisterOp(tag));
     for (u32 levelIndex = 0; levelIndex < opTransportReq.size(); levelIndex++) {
         for (u32 ringIndex = 0; ringIndex < opTransportReq[levelIndex].size(); ringIndex++) {
             std::vector<std::unique_ptr<std::thread> > linkThreads; // 建链所需线程
             linkThreads.resize(opTransportReq[levelIndex][ringIndex].transportRequests.size());
+            ThreadsGuard threadsGuard(linkThreads);                 // 确保异常退出场景析构时等待线程join
             u32 threadsRapplyNum{0};                                // 线程使用计数器
             SingleSubCommTransport &reqSingleSubComm = opTransportReq[levelIndex][ringIndex];
             SingleSubCommTransport &respSingleSubComm = opTransportResponse[levelIndex][ringIndex];
@@ -224,6 +291,13 @@ HcclResult TransportManager::IncreAlloc(const std::string &tag, const TransportI
                     continue;
                 }
                 if (transportRequest.isValid) {
+                    if (isBackup && !transportRequest.isUsedRdma) {
+                        // 备用链路不需要创建p2p
+                        HCCL_INFO("[%s]: no need to create p2p backup link, remoteUserRank[%u], userRank[%u], "
+                            "isUsedRdma[%u], isBackup[%d]", __func__, transportRequest.remoteUserRank, userRank_,
+                            transportRequest.isUsedRdma, isBackup);
+                        continue;
+                    }
                     respSingleSubComm.transportRequests[rankIndex] = transportRequest;
                     DeviceMem inputMem;
                     DeviceMem outputMem;
@@ -232,8 +306,9 @@ HcclResult TransportManager::IncreAlloc(const std::string &tag, const TransportI
 
                     std::vector<std::shared_ptr<HcclSocket> > connectSockets;
                     bool isInterRdma;
+                    bool chooseBackup = transportRequest.isUsedRdma ? isBackup : false;
                     HcclResult ret = CreateDestSockets(tag, transportRequest.remoteUserRank, reqSingleSubComm.taskNum,
-                        connectSockets, isInterRdma, transportRequest.isUsedRdma);
+                        connectSockets, isInterRdma, transportRequest.isUsedRdma, chooseBackup);
                     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[IncreAlloc]Create dest sockets failed"), ret);
 
                     MachineType machineType = transportRequest.localUserRank < transportRequest.remoteUserRank?
@@ -245,8 +320,9 @@ HcclResult TransportManager::IncreAlloc(const std::string &tag, const TransportI
                             machineType, rankInfoList_[userRank_].serverId, transportRequest.remoteUserRank,
                             reqSingleSubComm.supportDataReceivedAck, reqSingleSubComm.linkMode,
                             reqSingleSubComm.enableUseOneDoorbell, threadStr, connectSockets, inputMem, outputMem,
-                            transportRequest.isUsedRdma, std::ref(respSingleSubComm.links[rankIndex]), isAicpuModeEn));
+                            transportRequest.isUsedRdma, std::ref(respSingleSubComm.links[rankIndex]), isAicpuModeEn, chooseBackup));
                         CHK_SMART_PTR_NULL(linkThreads[threadsRapplyNum]); // 异常时其他线程待处理
+                    respSingleSubComm.status[rankIndex] = TransportStatus::READY; // 建链后 transport设置为ready状态
                     threadsRapplyNum++;
                 }
             }
@@ -324,8 +400,9 @@ u32 TransportManager::GetRemoteNicPort(u32 remoteRank)
 }
 
 HcclResult TransportManager::CreateDestSockets(const std::string &tag, RankId remoteRank, u64 taskNum,
-    std::vector<std::shared_ptr<HcclSocket> > &connectSockets, bool &isInterRdma, bool forceRdma)
+    std::vector<std::shared_ptr<HcclSocket> > &connectSockets, bool &isInterRdma, bool forceRdma, bool isBackup)
 {
+    // 改对端的ip和port
     UpdateIsInterRdma(remoteRank, isInterRdma, forceRdma);
     HCCL_INFO("[Create][DestSockets]UpdateIsInterRdma finished. local rank[%u], remote rank[%u],"
         "isInterRdma[%d], forceRdma[%d]", userRank_, remoteRank, isInterRdma, forceRdma);
@@ -337,14 +414,27 @@ HcclResult TransportManager::CreateDestSockets(const std::string &tag, RankId re
 
     HcclRankLinkInfo remoteLinkInfo;
     MakeRemoteLinkInfo(remoteRank, isInterRdma, socketsPerLink, remoteLinkInfo);
+    if (isBackup) {
+        remoteLinkInfo.ip = rankInfoList_[remoteRank].backupNicIp[0];
+        remoteLinkInfo.port = AICPU_RETRY_BACKUP_PORT;
+    }
+
+    HCCL_INFO("[%s] ip and port info. local rank[%u], remote rank[%u], isBackup[%d], port[%u], ip[%s]",
+        __func__, userRank_, remoteRank, isBackup, remoteLinkInfo.port, remoteLinkInfo.ip.GetReadableIP());
 
     std::string newTag;
     CHK_RET(ConstructTransTag(tag, newTag, isInterRdma));
 
     HcclResult ret = HCCL_SUCCESS;
     if (isInterRdma || Is310PDevice()) {
-        HcclNetDevCtx &netDevCtx = nicDeployment_ == NICDeployment::NIC_DEPLOYMENT_DEVICE ?
+        HcclNetDevCtx netDevCtx = nicDeployment_ == NICDeployment::NIC_DEPLOYMENT_DEVICE ?
             netDevCtxMap_[devIpAddr_[0]]: netDevCtxMap_[hostIp_];
+        if (isBackup && nicDeployment_ == NICDeployment::NIC_DEPLOYMENT_DEVICE) {
+            netDevCtx = netDevCtxMap_[rankInfoList_[userRank_].backupNicIp[0]];
+            HCCL_DEBUG("[%s]refresh netDevCtx info. local rank[%u], remote rank[%u], isBackup[%d], port[%u], ip[%s]",
+                __func__, userRank_, remoteRank, isBackup, remoteLinkInfo.port, 
+                (rankInfoList_[userRank_].backupNicIp[0]).GetReadableIP());
+        }
         ret = socketManager_->CreateSingleLinkSocket(newTag, netDevCtx, remoteLinkInfo, connectSockets, false, false);
         if (!GetExternalInputHcclIsTcpMode()) {
             std::vector<std::string>::iterator iter = std::find(socketTagVec_.begin(), socketTagVec_.end(), newTag);
@@ -367,7 +457,7 @@ HcclResult TransportManager::CreateDestSockets(const std::string &tag, RankId re
         if (!isInterServer && !isHaveCpuRank_) {
             std::vector<u32> WaitP2PEnabledDevices;
             WaitP2PEnabledDevices.push_back(rankInfoList_[remoteRank].devicePhyId);
-            HcclResult ret = P2PMgmtPub::WaitP2PEnabled(WaitP2PEnabledDevices);
+            HcclResult ret = P2PMgmtPub::WaitP2PEnabled(WaitP2PEnabledDevices, [this]() -> bool { return this->GetStopFlag(); });
             CHK_PRT_RET(ret != HCCL_SUCCESS,
                 HCCL_ERROR("[Create][DestSockets]Wait Enable P2P Failed, src devicePhyId[%d], dst devicePhyId[%d], ret[%u]",
                 rankInfoList_[userRank_].devicePhyId, rankInfoList_[remoteRank].devicePhyId, ret), ret);
@@ -383,8 +473,11 @@ HcclResult TransportManager::CreateDestSockets(const std::string &tag, RankId re
 
 u32 TransportManager::GetSocketsPerLink(u64 taskNum)
 {
-    if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT &&
+    if (GetExternalInputQpSrcPortConfigPath() != "" &&
         GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
+        return 2;
+    } else if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT &&
+               GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
         return 2;
     }
     u32 socketsPerLink = 1;
@@ -403,27 +496,24 @@ HcclResult TransportManager::CreateLink(const std::string &tag, const ErrContext
     const bool enableUseOneDoorbell, const std::string threadStr,
     const std::vector<std::shared_ptr<HcclSocket> > sockets,
     const DeviceMem inputMem, const DeviceMem outputMem, bool isUsedRdma,
-    std::shared_ptr<Transport> &link, bool isAicpuModeEn)
+    std::shared_ptr<Transport> &link, bool isAicpuModeEn, bool isBackup)
 {
     hrtErrMSetErrorContextPub(error_context);
     // 给当前线程添加名字
-    s32 sRet = pthread_setname_np(pthread_self(), threadStr.c_str());
-    if (sRet != 0) {
-        HCCL_WARNING("err[%d] link[%s] nameSet failed.", sRet, threadStr.c_str());
-    }
+    SetThreadName(threadStr);
     link = nullptr;
     CHK_RET(hrtSetDevice(deviceLogicId_));
 
     MachinePara machinePara;
     CHK_RET(SetMachinePara(tag, machineType, serverId, remoteRank, supportDataReceivedAck, linkMode, sockets,
-        inputMem, outputMem, isAicpuModeEn, machinePara));
+        inputMem, outputMem, isAicpuModeEn, isBackup, machinePara));
     HCCL_DEBUG("inputMem[%p],outputMem[%p], inputMem size[%llu], outputMem size[%llu]", inputMem.ptr(), outputMem.ptr(),
         inputMem.size(), outputMem.size());
     HCCL_INFO("[createLink para]rank[%u]-localUserrank[%u]-localIpAddr[%s], linkMode[%d] "
-              "dst_rank[%u]-remoteUserrank[%u]-remote_ip_addr[%s], machineType[%d], serverId[%s], nicDeploy[%d] ",
+              "dst_rank[%u]-remoteUserrank[%u]-remote_ip_addr[%s], machineType[%d], serverId[%s], nicDeploy[%d], isBackup[%d]",
         userRank_, rankInfoList_[userRank_].worldRank, rankInfoList_[userRank_].serverId.c_str(), machinePara.linkMode,
         remoteRank, rankInfoList_[remoteRank].worldRank, rankInfoList_[remoteRank].serverId.c_str(),
-        machinePara.machineType, machinePara.serverId.c_str(), machinePara.nicDeploy);
+        machinePara.machineType, machinePara.serverId.c_str(), machinePara.nicDeploy, isBackup);
     // transport初始化
     HcclResult ret = TransportInit(remoteRank, machinePara, link, enableUseOneDoorbell, isUsedRdma);
     if (ret != HCCL_SUCCESS) {
@@ -459,25 +549,45 @@ HcclResult TransportManager::SetMachinePara(const std::string &tag, MachineType 
     const std::string &serverId, u32 dstRank,
     const bool supportDataReceivedAck, const LinkMode linkMode,
     const std::vector<std::shared_ptr<HcclSocket> > &socketList,
-    const DeviceMem &inputMem, const DeviceMem &outputMem, bool isAicpuModeEn, MachinePara &machinePara)
+    const DeviceMem &inputMem, const DeviceMem &outputMem, bool isAicpuModeEn, 
+    bool isBackup, MachinePara &machinePara)
 {
     machinePara.linkMode = linkMode;
     machinePara.machineType = machineType;
     machinePara.serverId = serverId;
-    machinePara.localIpAddr = rankInfoList_[userRank_].nicIp[0];
-    machinePara.remoteIpAddr = rankInfoList_[dstRank].nicIp[0];
     machinePara.localUserrank = rankInfoList_[userRank_].userRank;
     machinePara.remoteUserrank = rankInfoList_[dstRank].userRank;
     machinePara.localWorldRank = rankInfoList_[userRank_].worldRank;
     machinePara.remoteWorldRank = rankInfoList_[dstRank].worldRank;
     machinePara.collectiveId = identifier_;
-    machinePara.localDeviceId = rankInfoList_[userRank_].devicePhyId;
-    machinePara.remoteDeviceId = rankInfoList_[dstRank].devicePhyId;
     machinePara.deviceType = static_cast<DevType>(rankInfoList_[dstRank].deviceType);
     machinePara.inputMem = inputMem;
     machinePara.outputMem = outputMem;
     machinePara.linkAttribute = 0x03; /* 0x03同时支持目的端和源端发起 */
     machinePara.tag = tag;
+    if (isBackup) {
+        machinePara.localIpAddr = rankInfoList_[userRank_].backupNicIp[0];
+        machinePara.remoteIpAddr = rankInfoList_[dstRank].backupNicIp[0];
+        u32 localDevBackUpPhyId;
+        CHK_RET(hrtGetPairDevicePhyId(rankInfoList_[userRank_].devicePhyId, localDevBackUpPhyId));
+        machinePara.localDeviceId = static_cast<s32>(localDevBackUpPhyId);
+        u32 remoteDevBackUpPhyId;
+        CHK_RET(hrtGetPairDevicePhyId(rankInfoList_[dstRank].devicePhyId, remoteDevBackUpPhyId));
+        machinePara.remoteDeviceId = static_cast<s32>(remoteDevBackUpPhyId);
+        HCCL_DEBUG("[%s]isBackup[%d], machinePara.localIpAddr[%s], machinePara.remoteIpAddr[%s], "
+            "machinePara.localDeviceId[%d],  machinePara.remoteDeviceId[%d]", __func__,
+            isBackup, machinePara.localIpAddr.GetReadableIP(), machinePara.remoteIpAddr.GetReadableIP(),
+            machinePara.localDeviceId, machinePara.remoteDeviceId);
+    } else {
+        machinePara.localIpAddr = rankInfoList_[userRank_].nicIp[0];
+        machinePara.remoteIpAddr = rankInfoList_[dstRank].nicIp[0];
+        machinePara.localDeviceId = rankInfoList_[userRank_].devicePhyId;
+        machinePara.remoteDeviceId = rankInfoList_[dstRank].devicePhyId;
+        HCCL_DEBUG("[%s]isBackup[%d], machinePara.localIpAddr[%s], machinePara.remoteIpAddr[%s], "
+            "machinePara.localDeviceId[%d],  machinePara.remoteDeviceId[%d]", __func__,
+            isBackup, machinePara.localIpAddr.GetReadableIP(), machinePara.remoteIpAddr.GetReadableIP(),
+            machinePara.localDeviceId, machinePara.remoteDeviceId);
+    }
     // 把原来的两层vector变成一层, 方便后继调用
     if (socketList.size() > 0) {
         std::map <u32, std::vector<std::shared_ptr<HcclSocket> > > socketsMap;
@@ -488,14 +598,25 @@ HcclResult TransportManager::SetMachinePara(const std::string &tag, MachineType 
             socketsMap, dstRankToUserRank));
         machinePara.sockets = socketList;
     }
-
     machinePara.supportDataReceivedAck = supportDataReceivedAck; /* NeedDataReceivedAck(); */
     machinePara.nicDeploy = nicDeployment_;
     machinePara.localSocketPort = rankInfoList_[userRank_].hostPort;
     machinePara.remoteSocketPort = rankInfoList_[dstRank].hostPort;
-    machinePara.deviceLogicId = deviceLogicId_;
-    machinePara.udpSport = 0x0; /* 0代表默认不配置 */
+    if (isBackup) {
+        u32 tempDevBackUpPhyId;
+        CHK_RET(hrtGetPairDevicePhyId(rankInfoList_[userRank_].devicePhyId, tempDevBackUpPhyId));
+        u32 tempDevBackUpLogicId;
+        CHK_RET(hrtGetDeviceIndexByPhyId(tempDevBackUpPhyId, tempDevBackUpLogicId));
+        machinePara.deviceLogicId = static_cast<s32>(tempDevBackUpLogicId);
+        HCCL_DEBUG("[%s]isBackup[%d], machinePara.deviceLogicId[%d]", __func__, isBackup, machinePara.deviceLogicId);
+    } else {
+        machinePara.deviceLogicId = deviceLogicId_;
+        HCCL_DEBUG("[%s]isBackup[%d], machinePara.deviceLogicId[%d]", __func__, isBackup, machinePara.deviceLogicId);
+    }
+    
+    machinePara.srcPorts = std::vector<u32>(1, 0); /* 默认填充一个元素，0代表默认不配置 */
     machinePara.isAicpuModeEn = isAicpuModeEn;
+
     return HCCL_SUCCESS;
 }
 
@@ -565,6 +686,11 @@ HcclResult TransportManager::TransportInit(const u32 dstRank, MachinePara &machi
     if (type == TransportType::TRANS_TYPE_P2P) {
         link.reset(new (std::nothrow) Transport(type, para, dispatcher_, notifyPool_, machinePara));
     } else if (type == TransportType::TRANS_TYPE_IBV_EXP) {
+        if (GetExternalInputQpSrcPortConfigPath() != "" &&
+            GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
+            CHK_RET(LoadMultiQpSrcPortFromFile());
+            CHK_RET(GetConfigSrcPorts(machinePara));
+        }
         link.reset(new (std::nothrow) Transport(type, para, dispatcher_, notifyPool_, machinePara));
     } else if (type == TransportType::TRANS_TYPE_HOST_TCP) {
         para.nicDeploy = nicDeployment_;
@@ -682,6 +808,242 @@ HcclResult TransportManager::MakeRemoteLinkInfo(const u32 remoteRank, bool isInt
         remoteLinkInfo.socketsPerLink = socketsPerLink;
     }
 
+    return HCCL_SUCCESS;
+}
+
+HcclResult TransportManager::SetStopFlag(bool value)
+{
+    stopFlag_.store(value);
+    return HCCL_SUCCESS;
+}
+
+bool TransportManager::GetStopFlag()
+{
+    return stopFlag_.load();
+}
+
+std::vector<std::string> Split(std::string &s, std::string delimiter)
+{
+    size_t pos_start = 0;
+    size_t pos_end = s.find(delimiter, pos_start);
+    std::vector<std::string> res;
+
+    while(pos_end != std::string::npos) {
+        std::string token = s.substr(pos_start, pos_end - pos_start);
+        res.push_back(token);
+        pos_start = pos_end + delimiter.length();
+        pos_end = s.find(delimiter, pos_start);
+    }
+
+    res.push_back(s.substr(pos_start));
+    return res;
+}
+
+HcclResult GetIpPairFromString(std::string &s, std::string &ipPair, u32 lineCnt, std::string &lineAvator)
+{
+    std::vector<std::string> strIps = Split(s, ",");
+    CHK_PRT_RET(strIps.size() != MULTI_QP_CONFIG_IP_NUM,
+        HCCL_ERROR("[TransportManager][LoadMultiQpSrcPortFromFile][line: %u]invalid Ip format.[%s]",
+                    lineCnt, lineAvator.c_str()),
+        HCCL_E_PARA);
+    
+    HcclIpAddress ipAddr{};
+    // 解析源ip
+    auto ret = ipAddr.SetReadableAddress(strIps[0]);
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[TransportManager][LoadMultiQpSrcPortFromFile][line: %u]invalid srcIp format.[%s]",
+                    lineCnt, lineAvator.c_str()),
+        HCCL_E_PARA);
+
+    // 解析目的ip
+    ret = ipAddr.SetReadableAddress(strIps[1]);
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[TransportManager][LoadMultiQpSrcPortFromFile][line: %u]invalid dstIp format.[%s]",
+                    lineCnt, lineAvator.c_str()),
+        HCCL_E_PARA);
+
+    // 记录ip对
+    ipPair = s;
+    return HCCL_SUCCESS;
+}
+
+HcclResult GetSrcPortsFromString(std::string &s, std::vector<u32> &srcPorts,
+                                        u32 lineCnt, std::string &lineAvator)
+{
+    std::vector<std::string> strPorts = Split(s, ",");
+    srcPorts.resize(strPorts.size(), 0);
+    CHK_PRT_RET(strPorts.size() > MULTI_QP_CONFIG_SRC_PORT_NUM_MAX,
+        HCCL_ERROR("[TransportManager][LoadMultiQpSrcPortFromFile][line: %u]config ports num[%u] more than the "
+        "threshold[%u].[%s]", lineCnt, strPorts.size(), MULTI_QP_CONFIG_SRC_PORT_NUM_MAX, lineAvator.c_str()),
+        HCCL_E_PARA);
+
+    for (u32 i = 0; i < strPorts.size(); i++) {
+        // 检查端口号是否为全数字的字符串
+        CHK_RET(IsAllDigit(strPorts[i].c_str()));
+        CHK_RET(SalStrToULong(strPorts[i].c_str(), HCCL_BASE_DECIMAL, srcPorts[i]));
+        CHK_PRT_RET((srcPorts[i] == 0) || (srcPorts[i] > MULTI_QP_CONFIG_SRC_PORT_ID_MAX),
+            HCCL_ERROR("[TransportManager][LoadMultiQpSrcPortFromFile][line: %u]src port[%u] out of range[1, %u].[%s]",
+            lineCnt, srcPorts[i], MULTI_QP_CONFIG_SRC_PORT_ID_MAX, lineAvator.c_str()), HCCL_E_PARA);
+    }
+
+    return HCCL_SUCCESS;
+}
+
+HcclResult TransportManager::LoadMultiQpSrcPortFromFile()
+{
+    std::lock_guard<std::mutex> lock(loadCfgFileMutex_); // 加锁避免多线程访问时修改mapIpPairSrcPorts_冲突
+    // 判断是否已经读取过配置文件
+    if (isCfgFileRead_) {
+        HCCL_DEBUG("[TransportManager][LoadMultiQpSrcPortFromFile] file has been read.");
+        return HCCL_SUCCESS;
+    }
+
+    // 读取配置文件
+    std::string fileStr = GetExternalInputQpSrcPortConfigPath() + "/MultiQpSrcPort.cfg";
+    char realFile[PATH_MAX] = {0};
+    if (realpath(fileStr.c_str(), realFile) == nullptr) {
+        const std::string  CFG_FILE_PATH_ERROR = "[TransportManager][LoadMultiQpSrcPortFromFile]file path " +
+            fileStr + " is invalid.";
+        RPT_INPUT_ERR(true, "EI0001", std::vector<std::string>({"env", "tips"}),
+            std::vector<std::string>({fileStr, CFG_FILE_PATH_ERROR}));
+        HCCL_ERROR("[TransportManager][LoadMultiQpSrcPortFromFile]file[%s] path invalid.", fileStr.c_str());
+        return HCCL_E_PARA;
+    }
+
+    std::ifstream inFile(fileStr.c_str(), std::ifstream::in);
+    if (!inFile) {
+        const std::string  CFG_FILE_OPEN_ERROR = "[TransportManager][LoadMultiQpSrcPortFromFile]open file " +
+            fileStr + " failed.";
+        RPT_INPUT_ERR(true, "EI0001", std::vector<std::string>({"env", "tips"}),
+            std::vector<std::string>({fileStr, CFG_FILE_OPEN_ERROR}));
+        HCCL_ERROR("[TransportManager][LoadMultiQpSrcPortFromFile]open config file[%s] failed.", fileStr.c_str());
+        return HCCL_E_PARA;
+    }
+    HCCL_INFO("[TransportManager][LoadMultiQpSrcPortFromFile]open config file[%s] success.", fileStr.c_str());
+    
+    // 逐行解析配置文件
+    u32 lineCnt = 1;
+    std::string line;
+    while(std::getline(inFile, line)) {
+        std::string lineAvator = line; // 每行内容的快照, 用于dfx
+        //去除空格和tab
+        line.erase(std::remove(line.begin(), line.end(), ' '), line.end());
+        line.erase(std::remove(line.begin(), line.end(), '\t'), line.end());
+
+        // 去除注释
+        std::string lineInfo = Split(line, "#")[0]; // 只保留#号前的内容
+        if(lineInfo.empty()) {
+            HCCL_DEBUG("[TransportManager][LoadMultiQpSrcPortFromFile][line: %u]commet line, do not parse.[%s]",
+                        lineCnt, lineAvator.c_str());
+            lineCnt++;
+            continue;
+        }
+
+        // 切分字符串, 检查配置格式
+        std::vector<std::string> strIpPort = Split(lineInfo, "=");
+        if (strIpPort.size() != MULTI_QP_CONFIG_IP_NUM) {
+            const std::string  CFG_FORMAT_ERROR = "[TransportManager][LoadMultiQpSrcPortFromFile][line: " +
+                std::to_string(lineCnt) + "] invalid format, " + std::to_string(strIpPort.size() - 1)
+                + "[=] in line but only [1] allowed.";
+            RPT_INPUT_ERR(true, "EI0001", std::vector<std::string>({"env", "tips"}),
+                std::vector<std::string>({fileStr, CFG_FORMAT_ERROR}));
+            HCCL_ERROR("[TransportManager][LoadMultiQpSrcPortFromFile][line: %u]invalid format, [%llu][=] in line "
+                       "but only [1] allowed.[%s]", lineCnt, strIpPort.size() - 1, lineAvator.c_str());
+            inFile.close();
+            return HCCL_E_PARA;
+        }
+
+        // 解析ip对
+        std::string ipPair;
+        auto ret = GetIpPairFromString(strIpPort[0], ipPair, lineCnt, lineAvator);
+        if (ret != HCCL_SUCCESS) {
+            const std::string  IP_FORMAT_ERROR = "[TransportManager][LoadMultiQpSrcPortFromFile][line: " +
+                std::to_string(lineCnt) + "] invalid IP format.";
+            RPT_INPUT_ERR(true, "EI0001", std::vector<std::string>({"env", "tips"}),
+                std::vector<std::string>({fileStr, IP_FORMAT_ERROR}));
+            inFile.close();
+            return ret;
+        }
+
+        // 解析源端口号
+        std::vector<u32> srcPorts;
+        ret = GetSrcPortsFromString(strIpPort[1], srcPorts, lineCnt, lineAvator);
+        if (ret != HCCL_SUCCESS) {
+            const std::string  PORT_FORMAT_ERROR = "[TransportManager][LoadMultiQpSrcPortFromFile][line: " +
+                std::to_string(lineCnt) + "] invalid src port format.";
+            RPT_INPUT_ERR(true, "EI0001", std::vector<std::string>({"env", "tips"}),
+                std::vector<std::string>({fileStr, PORT_FORMAT_ERROR}));
+            inFile.close();
+            return ret;
+        }
+
+        // 配置源端口号
+        if (mapIpPairSrcPorts_.find(ipPair) != mapIpPairSrcPorts_.end()) {
+            const std::string  DUPLICATE_IPPAIR_ERROR = "[TransportManager][LoadMultiQpSrcPortFromFile][line: " +
+                std::to_string(lineCnt) + "] ip pair: " + ipPair + " has existed.";
+            RPT_INPUT_ERR(true, "EI0001", std::vector<std::string>({"env", "tips"}),
+                std::vector<std::string>({fileStr, DUPLICATE_IPPAIR_ERROR}));
+            HCCL_ERROR("[TransportManager][LoadMultiQpSrcPortFromFile][line: %u]ip pair[%s] has existed.[%s]",
+                        lineCnt, ipPair.c_str(), lineAvator.c_str());
+            inFile.close();
+            return HCCL_E_PARA;
+        }
+        mapIpPairSrcPorts_[ipPair] = srcPorts;
+
+        // 判断文件行数是否超过上限
+        if (lineCnt >= MULTI_QP_CONFIG_FILE_LINE_MAX) {
+            HCCL_RUN_INFO("[TransportManager][LoadMultiQpSrcPortFromFile]config file is too large.");
+            break;
+        }
+        lineCnt++;
+    }
+    
+    inFile.close();
+    isCfgFileRead_ = true;
+    return HCCL_SUCCESS;
+}
+
+HcclResult TransportManager::GetConfigSrcPorts(MachinePara &machinePara)
+{
+    std::string srcIp = std::string(machinePara.localIpAddr.GetReadableIP());
+    std::string dstIp = std::string(machinePara.remoteIpAddr.GetReadableIP());
+    std::string ipPair;
+    std::vector<u32> &srcPorts = machinePara.srcPorts;
+
+    // 匹配sip和dip
+    ipPair = srcIp + std::string(",") + dstIp;
+    auto iter = mapIpPairSrcPorts_.find(ipPair);
+    CHK_PRT_RET(iter != mapIpPairSrcPorts_.end(), srcPorts = iter->second, HCCL_SUCCESS);
+
+    // 匹配dip
+    if (machinePara.localIpAddr.GetFamily() == AF_INET) {
+        ipPair = std::string("0.0.0.0,") + dstIp;
+    } else {
+        ipPair = std::string("::/128,") + dstIp;
+    }
+    iter = mapIpPairSrcPorts_.find(ipPair);
+    CHK_PRT_RET(iter != mapIpPairSrcPorts_.end(), srcPorts = iter->second, HCCL_SUCCESS);
+
+    // 匹配sip
+    if (machinePara.localIpAddr.GetFamily() == AF_INET) {
+        ipPair = srcIp + std::string(",0.0.0.0");
+    } else {
+        ipPair = srcIp + std::string(",::/128");
+    }
+    iter = mapIpPairSrcPorts_.find(ipPair);
+    CHK_PRT_RET(iter != mapIpPairSrcPorts_.end(), srcPorts = iter->second, HCCL_SUCCESS);
+
+    // 通配
+    if (machinePara.localIpAddr.GetFamily() == AF_INET) {
+        ipPair = std::string("0.0.0.0,0.0.0.0");
+    } else {
+        ipPair = std::string("::/128,::/128");
+    }
+    iter = mapIpPairSrcPorts_.find(ipPair);
+    CHK_PRT_RET(iter != mapIpPairSrcPorts_.end(), srcPorts = iter->second, HCCL_SUCCESS);
+
+    // 匹配不到，直接返回
+    HCCL_DEBUG("[TransportManager][GetConfigSrcPorts]ip pair[%s] not found.", ipPair.c_str());
     return HCCL_SUCCESS;
 }
 

@@ -14,7 +14,7 @@
 #include <cmath>
 
 #include "nonuniform_hierarchical_ring_base_pub.h"
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 
 #include "mem_host_pub.h"
 #include "mem_device_pub.h"

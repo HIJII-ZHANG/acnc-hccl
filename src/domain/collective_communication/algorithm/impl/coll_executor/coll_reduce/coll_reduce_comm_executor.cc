@@ -71,25 +71,25 @@ HcclResult CollReduceCommExecutor::KernelRun(const OpParam &param, ExecMem &exec
 
     u64 reduceAttr = GetReduceAttr(execMem.inputMem, execMem.outputMem, param.DataDes.dataType, param.reduceType);
 
-    std::unique_ptr<ExecutorBase> executor;
-    executor.reset(new (std::nothrow) ReduceRing(dispatcher_, reduceAttr));
+    std::unique_ptr<AlgTemplateBase> tempAlg;
+    tempAlg.reset(new (std::nothrow) ReduceRing(dispatcher_, reduceAttr));
     HCCL_INFO("Reduce comm: using ring algo inter-server.");
-    CHK_SMART_PTR_NULL(executor);
+    CHK_SMART_PTR_NULL(tempAlg);
 
     // 获取root
     u32 root = 0;
     CHK_RET(GetRankByUserRank(commPlane, COMM_INDEX_0, param.root, root));
 
     u32 rankSize = combinedCommInfo.localRankSize;
-    CHK_RET(executor->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
+    CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
         param.DataDes.dataType, param.stream, param.reduceType,
         root, std::vector<Slice>(0), 0));
 
-    CHK_RET(executor->RegisterProfiler(
+    CHK_RET(tempAlg->RegisterProfiler(
         (rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) +
         combinedCommInfo.localRank, PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-    CHK_RET(RunTemplate(executor, combinedCommInfo));
+    CHK_RET(RunTemplate(tempAlg, combinedCommInfo));
     HCCL_INFO("[CollReduceCommExecutor] ReduceCommExecutor run success");
     return HCCL_SUCCESS;
 }

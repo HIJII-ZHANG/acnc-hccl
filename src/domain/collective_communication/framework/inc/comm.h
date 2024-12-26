@@ -33,6 +33,23 @@ enum class HcclTopoLevel {
 };
 
 namespace hccl {
+enum class HcclCommState {
+    IDLE = 0,   // 初始化完成，未使用
+    BUILDING,   // 正在使用，且在建链
+    INUSE,      // 正在使用，建链完成或未建链
+    RESERVED
+};
+
+inline const char* HcclCommStateToString(HcclCommState state) {
+    switch (state) {
+        case HcclCommState::IDLE: return "IDLE";
+        case HcclCommState::BUILDING: return "BUILDING";
+        case HcclCommState::INUSE: return "INUSE";
+        case HcclCommState::RESERVED: return "RESERVED";
+        default: return "UNKNOWN";
+    }
+}
+
 using HcclCommConnections = struct HcclCommConnectionsDef {
     bool isRoot{false};
     std::shared_ptr<HcclSocket> agentConnection{nullptr};

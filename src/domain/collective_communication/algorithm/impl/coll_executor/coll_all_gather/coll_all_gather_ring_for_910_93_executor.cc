@@ -24,7 +24,7 @@ HcclResult CollAllGatherRingFor91093Executor::CalcStreamNum(u32& streamNum)
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
         totalStreamNum *= STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
     }
-    if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB && 
+    if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB &&
         GetExternalInputEnableRdmaSdmaConcurrent()) {
         totalStreamNum += (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) ? OUTER_PLANE_NUM_IN_NPRING_DOUBLE :
         OUTER_PLANE_NUM_IN_NPRING_SINGLE;
@@ -81,7 +81,8 @@ HcclResult CollAllGatherRingFor91093Executor::CalcLevel2CommInfo(TransportMemTyp
 
 u64 CollAllGatherRingFor91093Executor::CalcLoopMaxCount(const u64 cclBuffSize, const u32 unitSize)
 {
-    u64 maxCountPerLoop = cclBuffSize / (topoAttr_.userRankSize * unitSize);
+    u64 maxCountPerLoop = cclBuffSize / topoAttr_.userRankSize / HCCL_MIN_SLICE_ALIGN
+        * HCCL_MIN_SLICE_ALIGN / unitSize;
     return maxCountPerLoop;
 }
 
@@ -162,7 +163,7 @@ HcclResult CollAllGatherRingFor91093Executor::KernelRun(const OpParam &param, Ex
         }
     }
     if (level2RankSize > 1) {
-        std::unique_ptr<ExecutorBase> level2AGExecutor;
+        std::unique_ptr<AlgTemplateBase> level2AGExecutor;
         level2AGExecutor.reset(new (std::nothrow) AllGatherRing(dispatcher_));
         HCCL_INFO("allgather ring: using ring algo inter-server.");
         CHK_SMART_PTR_NULL(level2AGExecutor);
@@ -198,7 +199,7 @@ HcclResult CollAllGatherRingFor91093Executor::KernelRun(const OpParam &param, Ex
                 level1DataSegsSlice.push_back(level1Slice);
             }
         }
-        
+
         if (GetExternalInputEnableRdmaSdmaConcurrent() && (inputMemSize >= HCCL_SPLIT_SIZE_INTER_SERVER) 
             && !aicpuUnfoldMode_) {
             u32 syncTrans = (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) ? BEST_SPLIT_VALUE_DR :
@@ -206,7 +207,7 @@ HcclResult CollAllGatherRingFor91093Executor::KernelRun(const OpParam &param, Ex
             CHK_RET(Level1AllGatherConcurrent(execMem.inputMem, execMem.outputMem, execMem.count, param.DataDes.dataType,
                 param.stream, PROF_STAGE_1, level1DataSegsSlice, syncTrans));
         } else {
-            std::unique_ptr<ExecutorBase> level1AGExecutor;
+            std::unique_ptr<AlgTemplateBase> level1AGExecutor;
             if (UseInterServerRingAlgo(algType_)) {
                 level1AGExecutor.reset(new (std::nothrow) AllGatherRing(dispatcher_));
                 HCCL_INFO("allgather ring: using ring algo inter-server.");

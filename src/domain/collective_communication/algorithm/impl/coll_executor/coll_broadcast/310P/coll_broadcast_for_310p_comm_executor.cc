@@ -42,23 +42,23 @@ HcclResult CollBroadcastFor310PCommExecutor::KernelRun(const OpParam &param, Exe
 {
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
     SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
-    std::unique_ptr<ExecutorBase> executor;
+    std::unique_ptr<AlgTemplateBase> tempAlg;
 
-    executor.reset(new (std::nothrow) BroadcastRing(dispatcher_));
-    CHK_SMART_PTR_NULL(executor);
+    tempAlg.reset(new (std::nothrow) BroadcastRing(dispatcher_));
+    CHK_SMART_PTR_NULL(tempAlg);
     // 获取root
     u32 rootRank = 0;
     CHK_RET(GetRankByUserRank(COMM_LEVEL0, COMM_INDEX_0, param.root, rootRank));
 
-    CHK_RET(executor->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
+    CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
                               param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, param.root));
 
     u32 rankSize = outerCommInfo.localRankSize;
-    CHK_RET(executor->RegisterProfiler(
+    CHK_RET(tempAlg->RegisterProfiler(
         (rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + outerCommInfo.localRank,
         PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-    CHK_RET(RunTemplate(executor, outerCommInfo));
+    CHK_RET(RunTemplate(tempAlg, outerCommInfo));
     return HCCL_SUCCESS;
 }
 

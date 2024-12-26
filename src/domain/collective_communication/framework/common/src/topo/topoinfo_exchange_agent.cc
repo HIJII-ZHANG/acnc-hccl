@@ -478,9 +478,10 @@ HcclResult TopoInfoExchangeAgent::VerifyClusterBackupDeviceIP(RankTable_t &clust
             }
             std::string backupIpStr = std::string(backupDevIp.GetReadableIP());
             if (devIp2PhyId.find(backupIpStr) == devIp2PhyId.end()) {
-                backupDevIp.clear();
-                HCCL_RUN_INFO("[Verify][ClusterBackupDeviceIP] unknown backup devIp[%s] for devicePhyId[%d]. "
-                    "Fail to find relative device info, backup device ip is set to empty.",
+                HCCL_RUN_WARNING("[Verify][ClusterBackupDeviceIP]"
+                    "backup devIp[%s] for devicePhyId[%d] is not in this comm. "
+                    "The validation of this backup ip could not be verified! "
+                    "Please notice it might be an invalid backup ip!",
                     backupIpStr.c_str(), rankInfo.deviceInfo.devicePhyId);
                 continue;
             }

@@ -11,10 +11,10 @@
 #ifndef ALL_REDUCE_DOUBLING_DIRECT_PUB_H
 #define ALL_REDUCE_DOUBLING_DIRECT_PUB_H
 
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 
 namespace hccl {
-class AllReduceDoublingDirect : public ExecutorBase {
+class AllReduceDoublingDirect : public AlgTemplateBase {
 public:
     explicit AllReduceDoublingDirect(
         const HcclDispatcher dispatcher, const u64 reduceAttrBitMap, const HcomCollOpInfo *opInfo);

@@ -121,7 +121,7 @@ HcclResult hcclComm::init(HcclCommParams &params, const RankTable_t &rankTable)
         CHK_RET(communicator_->InitCCLbuffer(inCCLbufferSize_, outCCLbufferSize_));
     }
 
-    HCCL_RUN_INFO("hcclCommInitInfo:commId[%s], rank[%u], totalRanks[%u], serverId[%s], deviceType[%d]," \
+    HCCL_USER_CRITICAL_LOG("hcclCommInitInfo:commId[%s], rank[%u], totalRanks[%u], serverId[%s], deviceType[%d]," \
         "logicDevId[%d], identifier[%s]", params.id.internal, params.rank, params.totalRanks, params.serverId.c_str(),
         params.deviceType, params.logicDevId, params.identifier.c_str());
     return HCCL_SUCCESS;
@@ -134,7 +134,7 @@ HcclResult hcclComm::init(HcclCommParams &params, const std::vector<RankInfo> &r
     /* 强行将最后一个字符置0, 确保其可以做字符串操作 */
     params.id.internal[HCCL_ROOT_INFO_BYTES - 1] = '\0';
 
-    HCCL_INFO("rootInfo[%s], rank[%u], totalRanks[%u], chip[%d], logicDevId[%d]", params.id.internal,
+    HCCL_USER_CRITICAL_LOG("rootInfo[%s], rank[%u], totalRanks[%u], chip[%d], logicDevId[%d]", params.id.internal,
         params.rank, params.totalRanks, params.deviceType, params.logicDevId);
 
     HCCL_INFO("rootInfo init group workmode[%d]", params.commWorkMode);
@@ -217,7 +217,7 @@ HcclResult hcclComm::CreateGroup(const std::string &group, const u32 &groupRank,
 HcclResult hcclComm::DestroyGroup(const std::string &group) const
 {
     /* 增加输出日志关键字 */
-    HCCL_DEBUG("start destroy group[%s]", group.c_str());
+    HCCL_DEBUG("start destroy group: group[%s]", group.c_str());
     return HCCL_SUCCESS;
 }
 
@@ -1063,6 +1063,30 @@ bool hcclComm::GetCommResource(void *&commContext)
 {
     HCCL_INFO("HCCL_KEY_INFO: GetCommResource commContext[%p]", commContext);
     return communicator_->GetCommResource(commContext);
+}
+
+HcclResult hcclComm::SetStopFlag(bool value)
+{
+    if (communicator_ != nullptr) {
+        return communicator_->SetStopFlag(value);
+    }
+    return HCCL_SUCCESS;
+}
+
+HcclResult hcclComm::SetState(HcclCommState state)
+{
+    if (communicator_ != nullptr) {
+        return communicator_->SetState(state);
+    }
+    return HCCL_SUCCESS;
+}
+
+HcclCommState hcclComm::GetState()
+{
+    if (communicator_ != nullptr) {
+        return communicator_->GetState();
+    }
+    return HcclCommState::IDLE;
 }
 
 HcclResult hcclComm::AllocComResourceByTiling(const std::string &algConfig,

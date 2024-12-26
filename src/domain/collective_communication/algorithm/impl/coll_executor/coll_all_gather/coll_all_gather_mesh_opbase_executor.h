@@ -28,6 +28,7 @@ private:
     /* *************** 算法编排 *************** */
     u64 CalcLoopMaxCount(const u64 cclBuffSize, const u32 unitSize) override;
     bool IsHugeData(const u64 curSize) override;
+    bool IsSmallData(const u64 size) override;
     HcclResult KernelRun(const OpParam &param, ExecMem &execMem) override;
 };
 

@@ -142,11 +142,15 @@ HcclResult CollNativeExecutorBase::CalcLevel1CommInfo(TransportMemType inputType
     CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel1, opTransport[commParaLevel1.commPlane], inputType, outputType));
     HCCL_INFO("[CollNativeExecutorBase][COMM_LEVEL1]tag[%s] Calc CommInfo Finish", tag_.c_str());
     if (topoMatcher_->GetExternalInputEnableRdmaSdmaConcurrent()) {
-        CommParaInfo commParaLevel1Rdma(COMM_LEVEL1_RDMA, CommType::COMM_TAG_RING_INNER);
-        commParaLevel1Rdma.forceRdma = true;
-        CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel1Rdma, opTransport[COMM_LEVEL1_RDMA], inputType,
+        CommParaInfo commParaLevel1Sdma(COMM_LEVEL1_ANYPATH_SDMA, CommType::COMM_TAG_RING_INNER);
+        commParaLevel1Sdma.forceRdma = false;
+        CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel1Sdma, opTransport[COMM_LEVEL1_ANYPATH_SDMA], inputType,
         outputType));
-        HCCL_INFO("[CollNativeExecutorBase][COMM_LEVEL1_RDMA]tag[%s] Calc CommInfo Finish", tag_.c_str());
+        CommParaInfo commParaLevel1Rdma(COMM_LEVEL1_ANYPATH_RDMA, CommType::COMM_TAG_RING_INNER);
+        commParaLevel1Rdma.forceRdma = true;
+        CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel1Rdma, opTransport[COMM_LEVEL1_ANYPATH_RDMA], inputType,
+        outputType));
+        HCCL_INFO("[CollNativeExecutorBase][COMM_LEVEL1_ANYPATH]tag[%s] Calc CommInfo Finish", tag_.c_str());
     }
     HCCL_INFO("[CollNativeExecutorBase][CalcInnerCommInfo]tag[%s] Calc CommInfo Finish", tag_.c_str());
 
@@ -288,10 +292,6 @@ HcclResult CollNativeExecutorBase::SendRecvSignalOnLinks(OpParam &param, ExecMem
             HCCL_DEBUG("[CollNativeExecutorBase][SendRecvSignalOnLinks]links[%zu] == nullptr.", i);
             continue;
         }
-        if (!links[i]->IsValid()) {
-            HCCL_DEBUG("[CollNativeExecutorBase][SendRecvSignalOnLinks]links[%zu]!links[i]->IsValid().", i);
-            continue;
-        }
         HCCL_INFO("[CollNativeExecutorBase][SendRecvSignalOnLinks]links[%zu].", i);
         CHK_RET(links[i]->TxAck(param.stream));
         CHK_RET(links[i]->RxAck(param.stream));
@@ -302,12 +302,8 @@ HcclResult CollNativeExecutorBase::SendRecvSignalOnLinks(OpParam &param, ExecMem
             HCCL_DEBUG("[CollNativeExecutorBase][SendRecvSignalOnLinks]links[%zu] == nullptr.", i);
             continue;
         }
-        if (!links[i]->IsValid()) {
-            HCCL_DEBUG("[CollNativeExecutorBase][SendRecvSignalOnLinks]links[%zu]!links[i]->IsValid().", i);
-            continue;
-        }
         HCCL_INFO("[CollNativeExecutorBase][SendRecvSignalOnLinks]links[%zu] start memcopy.", i);
-        u64 size = HCCL_INPLACE_MEMCOPY_SIZE; // 传1M数据量占满所有端口
+        u64 size = std::min(execMem.inputMem.size(), HCCL_INPLACE_MEMCOPY_SIZE); // 传1M数据量占满所有端口
         CHK_RET(links[i]->TxAsync(UserMemType::INPUT_MEM, 0, execMem.inputMem.ptr(), size, param.stream));
         CHK_RET(links[i]->RxAsync(UserMemType::INPUT_MEM, 0, execMem.inputMem.ptr(), size, param.stream));
         CHK_RET(links[i]->PostFinAck(param.stream));
@@ -319,11 +315,9 @@ HcclResult CollNativeExecutorBase::SendRecvSignalOnLinks(OpParam &param, ExecMem
             HCCL_DEBUG("[CollNativeExecutorBase][SendRecvSignalOnLinks]links[%zu] == nullptr.", i);
             continue;
         }
-        if (!links[i]->IsValid()) {
-            HCCL_DEBUG("[CollNativeExecutorBase][SendRecvSignalOnLinks]links[%zu]!links[i]->IsValid().", i);
-            continue;
-        }
         HCCL_INFO("[CollNativeExecutorBase][SendRecvSignalOnLinks]links[%zu].", i);
+        CHK_RET(links[i]->TxAck(param.stream));
+        CHK_RET(links[i]->RxAck(param.stream));
         CHK_RET(links[i]->TxDataSignal(param.stream));
         CHK_RET(links[i]->RxDataSignal(param.stream));
     }

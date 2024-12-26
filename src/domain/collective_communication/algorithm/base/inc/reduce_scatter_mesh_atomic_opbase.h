@@ -11,10 +11,10 @@
 #ifndef REDUCE_SCATTER_MESH_DIRECT_H
 #define REDUCE_SCATTER_MESH_DIRECT_H
 
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 
 namespace hccl {
-class ReduceScatterMeshDirect : public ExecutorBase {
+class ReduceScatterMeshDirect : public AlgTemplateBase {
 public:
     explicit ReduceScatterMeshDirect(const HcclDispatcher dispatcher, const u64 reduceAttrBitMap,
         std::vector<Stream> &meshStreams, const std::vector<std::shared_ptr<LocalNotify>> &meshSignal,

@@ -12,13 +12,13 @@
 #define NONUNIFORM_BRUCK_BASE_PUB_H
 
 #include <cmath>
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 
 namespace hccl {
 
 constexpr u64 NB_ALLREDUCE_SMALL_SIZE = 128 * 1024; // server间allreduce数据大小128k及以下不切片
 
-class NBBase : public ExecutorBase {
+class NBBase : public AlgTemplateBase {
 public:
     explicit NBBase(const HcclDispatcher dispatcher);
     ~NBBase() override;

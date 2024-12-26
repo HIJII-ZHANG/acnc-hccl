@@ -22,8 +22,7 @@ namespace hccl {
 const u32 TOPO_EXCHANGE_SERVER_STATUS_IDLE = 0;
 const u32 TOPO_EXCHANGE_SERVER_STATUS_RUNING = 1;
 const u32 TOPO_EXCHANGE_SERVER_STATUS_ERROR = 2;
-map<u32, volatile u32> TopoInfoDetect::topoExchangeServerStatus_;
-HcclIpAddress TopoInfoDetect::bootstrapHostIP_;
+UniversalConcurrentMap<u32, volatile u32> TopoInfoDetect::g_topoExchangeServerStatus_;
 
 TopoInfoDetect::TopoInfoDetect() : deviceLogicID_(INVALID_INT), localRankInfo_(), clusterTopoInfo_()
 {
@@ -60,11 +59,13 @@ void TopoInfoDetect::SetupTopoExchangeServer(s32 devicePhysicID, s32 deviceLogic
     bool isMasterInfo)
 {
     //给当前线程添加名字
-    SetThreadName("Hccl_TopoInfoDetect");
+    SetThreadName("Hccl_TopoDetect");
 
     HcclResult ret = hrtSetDevice(deviceLogicID);
     if (ret != HCCL_SUCCESS) {
-        topoExchangeServerStatus_[hostPort] = TOPO_EXCHANGE_SERVER_STATUS_ERROR;
+        g_topoExchangeServerStatus_.EmplaceAndUpdate(hostPort, [] (volatile u32 &status) {
+            status = TOPO_EXCHANGE_SERVER_STATUS_ERROR;
+        });
         HCCL_ERROR("[Setup][TopoExchangeServer]set device[%d] failed, ret[%u]", deviceLogicID, ret);
         return;
     }
@@ -72,23 +73,31 @@ void TopoInfoDetect::SetupTopoExchangeServer(s32 devicePhysicID, s32 deviceLogic
     pTopoExchangeServer_.reset(new (nothrow) TopoInfoExchangeServer(hostIP, hostPort, whitelist, netDevCtx,
         listenSocket, rootInfo_.identifier));
     if (!pTopoExchangeServer_) {
-        topoExchangeServerStatus_[hostPort] = TOPO_EXCHANGE_SERVER_STATUS_ERROR;
+        g_topoExchangeServerStatus_.EmplaceAndUpdate(hostPort, [] (volatile u32 &status) {
+            status = TOPO_EXCHANGE_SERVER_STATUS_ERROR;
+        });
         HCCL_ERROR("[Setup][TopoExchangeServer]build topoExchangeServer failed. ");
     } else {
         ret = isMasterInfo ? pTopoExchangeServer_->SetupByMasterInfo() : pTopoExchangeServer_->Setup();
         if (ret != HCCL_SUCCESS) {
-            topoExchangeServerStatus_[hostPort] = TOPO_EXCHANGE_SERVER_STATUS_ERROR;
+            g_topoExchangeServerStatus_.EmplaceAndUpdate(hostPort, [] (volatile u32 &status) {
+                status = TOPO_EXCHANGE_SERVER_STATUS_ERROR;
+            });
             HCCL_ERROR("[Setup][TopoExchangeServer]setup topoExchangeServer failed, ret[%u]", ret);
         }
     }
 
     ret = hrtResetDevice(deviceLogicID);
     if (ret != HCCL_SUCCESS) {
-        topoExchangeServerStatus_[hostPort] = TOPO_EXCHANGE_SERVER_STATUS_ERROR;
+        g_topoExchangeServerStatus_.EmplaceAndUpdate(hostPort, [] (volatile u32 &status) {
+            status = TOPO_EXCHANGE_SERVER_STATUS_ERROR;
+        });
         HCCL_ERROR("[Setup][TopoExchangeServer]reset device[%d] failed, ret[%u]", deviceLogicID, ret);
         return;
     }
-    topoExchangeServerStatus_[hostPort] = TOPO_EXCHANGE_SERVER_STATUS_IDLE;
+    g_topoExchangeServerStatus_.EmplaceAndUpdate(hostPort, [] (volatile u32 &status) {
+        status = TOPO_EXCHANGE_SERVER_STATUS_IDLE;
+    });
 }
 HcclResult TopoInfoDetect::SetupServerByMasterInfo(const HcclIpAddress& masterIP, u32 masterPort, const HcclRootHandle &rootInfo)
 {
@@ -101,7 +110,10 @@ HcclResult TopoInfoDetect::SetupServerByMasterInfo(const HcclIpAddress& masterIP
     rootInfo_ = rootInfo;
     CHK_RET(HcclNetInit(NICDeployment::NIC_DEPLOYMENT_HOST, devicePhysicID_, deviceLogicID_, true));
     CHK_RET(StartRootNetwork(whitelist, masterIP, masterPort));
-    topoExchangeServerStatus_[GetExternalInputMasterInfo().port] = TOPO_EXCHANGE_SERVER_STATUS_RUNING;
+    u32 hostPort = GetExternalInputMasterInfo().port;
+    g_topoExchangeServerStatus_.EmplaceAndUpdate(hostPort, [] (volatile u32 &status) {
+        status = TOPO_EXCHANGE_SERVER_STATUS_RUNING;
+    });
 
     thread threadHandle(&TopoInfoDetect::SetupTopoExchangeServer, this, devicePhysicID_, deviceLogicID_,
         masterIP, GetExternalInputMasterInfo().port, whitelist, serverPortCtx_, listenSocket_, true);
@@ -119,7 +131,7 @@ HcclResult TopoInfoDetect::SetupServer(HcclRootHandle &rootInfo)
         CHK_RET(ReadHostSocketWhitelist(whitelist));
     }
     HcclIpAddress hostIP = GetBootstrapHostIP();
-    CHK_RET(hrtGetDevicePhyIdByIndex(deviceLogicID_, devicePhysicID_));
+    CHK_RET(hrtGetDevicePhyIdByIndex(deviceLogicID_, devicePhysicID_, true));
     HCCL_INFO("[Setup][hcclIfBasePort]deviceLogicID_[%u], devicePhysicID_[%u]", deviceLogicID_, devicePhysicID_);
 
     // true代表感知白名单disable配置
@@ -142,7 +154,9 @@ HcclResult TopoInfoDetect::SetupServer(HcclRootHandle &rootInfo)
     }
     CHK_RET(GenerateRootInfo(hostIP, hostPort, devicePhysicID_, rootInfo_));
     CHK_RET(StartRootNetwork(whitelist, hostIP, hostPort));
-    topoExchangeServerStatus_[hostPort] = TOPO_EXCHANGE_SERVER_STATUS_RUNING;
+    g_topoExchangeServerStatus_.EmplaceAndUpdate(hostPort, [] (volatile u32 &status) {
+        status = TOPO_EXCHANGE_SERVER_STATUS_RUNING;
+    });
     exchangeServerThreadPtr_.reset(new (nothrow) thread(&TopoInfoDetect::SetupTopoExchangeServer, this, devicePhysicID_,
         deviceLogicID_, hostIP, hostPort, whitelist, serverPortCtx_, listenSocket_, false));
     CHK_SMART_PTR_NULL(exchangeServerThreadPtr_);
@@ -200,16 +214,21 @@ HcclResult TopoInfoDetect::WaitTopoExchangeServerCompelte(u32 idx) const
 {
     const auto start = chrono::steady_clock::now();
     const auto timeout = chrono::seconds(GetExternalInputHcclLinkTimeOut());
-    auto iter = topoExchangeServerStatus_.find(idx);
-    if (iter == topoExchangeServerStatus_.end()) {
+    auto iter = g_topoExchangeServerStatus_.Find(idx);
+    if (!iter.second) {
         return HCCL_SUCCESS;
     }
+    u32 status = TOPO_EXCHANGE_SERVER_STATUS_RUNING;
     while (true) {
-        if (topoExchangeServerStatus_[idx] == TOPO_EXCHANGE_SERVER_STATUS_ERROR) {
+        auto it = g_topoExchangeServerStatus_.Find(idx);
+        if (it.second) {
+            status = it.first->second;
+        }
+        if (status == TOPO_EXCHANGE_SERVER_STATUS_ERROR) {
             HCCL_ERROR("[Wait][TopoExchangeServerCompelte]topo detect failed. topoExchangeServer port[%u] failed.",
                 idx);
             return HCCL_E_INTERNAL;
-        } else if (topoExchangeServerStatus_[idx] == TOPO_EXCHANGE_SERVER_STATUS_IDLE) {
+        } else if (status == TOPO_EXCHANGE_SERVER_STATUS_IDLE) {
             HCCL_INFO("topoExchangeServer[%u] compeleted.", idx);
             return HCCL_SUCCESS;
         } else {
@@ -240,7 +259,7 @@ HcclResult TopoInfoDetect::SetupAgent(u32 rankSize, u32 myrank, const HcclRootHa
 
     HcclIpAddress rootIP(rootInfo.ip);
     CHK_PRT_RET(rootIP.IsInvalid(), HCCL_ERROR("string[%s] is invalid ip", rootInfo.ip), HCCL_E_PARA);
-    CHK_RET(hrtGetDevicePhyIdByIndex(deviceLogicID_, devicePhysicID_));
+    CHK_RET(hrtGetDevicePhyIdByIndex(deviceLogicID_, devicePhysicID_, true));
 
     CHK_RET(HcclNetInit(NICDeployment::NIC_DEPLOYMENT_HOST, devicePhysicID_, deviceLogicID_, true));
 
@@ -564,19 +583,20 @@ HcclResult TopoInfoDetect::GenerateLocalRankInfo(u32 rankSize, u32 rankID, HcclB
         // 此处不知道拓扑形态，无法判断是否需要backupIp，只能从硬件类型和重执行开关判断一下
         bool useSuperPodMode = false;
         CHK_RET(IsSuperPodMode(useSuperPodMode));
-        if (useSuperPodMode && GetExternalInputInterSuperPodRetryEnable()) {
+        if (useSuperPodMode && GetExternalInputHcclAicpuUnfold() && GetExternalInputInterSuperPodRetryEnable()) {
             std::vector<std::vector<HcclIpAddress>> chipDeviceIPs;
             CHK_RET(hrtRaGetDeviceAllNicIP(chipDeviceIPs));
             if (chipDeviceIPs.size() != 2U) {
-                // 910A3场景下一个chip上有两组deviceIP
-                HCCL_RUN_INFO("[TopoInfoDetect][GenerateLocalRankInfo]Fail to load backup device ip!");
+                // 910A3场景一个chip上有两组deviceIP
+                HCCL_RUN_WARNING("[TopoInfoDetect][GenerateLocalRankInfo]Fail to load backup device ip!"
+                    "Please check the driver version!");
             } else {
                 // 取到一组backup ip，按照devPhyId排序，ipv4在前，ipv6在后，每个网卡的ip顺序一一对应
                 // 取其中对端网卡的ip作为备用网卡ip
                 u32 ipIdex = 1U - (localRankInfo.devicePhysicID % 2U);
                 CHK_RET(FilterDevIPs(chipDeviceIPs[ipIdex], localRankInfo.backupDeviceIP));
                 HCCL_INFO("[TopoInfoDetect][GenerateLocalRankInfo]devicePhysicID[%u], backupDeviceIP[0]:[%s]",
-                    localRankInfo.devicePhysicID, localRankInfo.backupDeviceIP[0].GetReadableIP());
+                    localRankInfo.devicePhysicID, localRankInfo.backupDeviceIP[0].GetReadableAddress());
             }
         }
     }
@@ -638,7 +658,7 @@ HcclResult TopoInfoDetect::GetLocalRankInfo(HcclBasicRankInfo &rankInfo)
     return HCCL_SUCCESS;
 }
 
-void TopoInfoDetect::SetBootstrapHostIP(HcclIpAddress& ip) const
+void TopoInfoDetect::SetBootstrapHostIP(HcclIpAddress& ip)
 {
     bootstrapHostIP_ = ip;
 }
@@ -667,6 +687,10 @@ HcclResult TopoInfoDetect::TransformDeviceList(const RankTable_t &clusterInfo,
             if (clusterInfo.nicDeploy == NICDeployment::NIC_DEPLOYMENT_DEVICE && it->deviceInfo.deviceIp.size() != 0 &&
                 !it->deviceInfo.deviceIp[0].IsInvalid()) {
                 perDeviceJson[PROP_DEV_IP] = std::string(it->deviceInfo.deviceIp[0].GetReadableIP());
+            }
+            if (clusterInfo.nicDeploy == NICDeployment::NIC_DEPLOYMENT_DEVICE &&
+                it->deviceInfo.backupDeviceIp.size() != 0 && !it->deviceInfo.backupDeviceIp[0].IsInvalid()) {
+                perDeviceJson[PROP_BACKUP_DEV_IP] = std::string(it->deviceInfo.backupDeviceIp[0].GetReadableIP());
             }
             if (!it->hostIp.IsInvalid()) {
                 perServerJson[PROP_HOST_IP] = std::string(it->hostIp.GetReadableIP());

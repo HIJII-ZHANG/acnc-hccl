@@ -79,7 +79,8 @@ HcclResult CollAllGatherExecutor::Orchestrate(OpParam& param, AlgResourceRespons
 u64 CollAllGatherExecutor::CalcLoopMaxCount(const u64 cclBuffSize, const u32 unitSize)
 {
     // 中转内存单次最多能够接受的output count
-    u64 maxCountPerLoop = cclBuffSize / (unitSize * topoAttr_.userRankSize);
+    u64 maxCountPerLoop = cclBuffSize / topoAttr_.userRankSize / HCCL_MIN_SLICE_ALIGN
+        * HCCL_MIN_SLICE_ALIGN / unitSize;
     HCCL_WARNING("[CollAllGatherExecutor][CalcLoopMaxCount]" \
         "using default maxCountPerLoop[%llu] as CCLBuffSize / unitSize.", maxCountPerLoop);
     return maxCountPerLoop;
@@ -87,21 +88,15 @@ u64 CollAllGatherExecutor::CalcLoopMaxCount(const u64 cclBuffSize, const u32 uni
 
 bool CollAllGatherExecutor::IsHugeData(const u64 curSize)
 {
-    if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT) {
-        return true;
-    }
     bool hugeData = curSize * topoAttr_.userRankSize / HCCL_INTERNODE_MAX_DATA_RATE > RDMA_SEND_MAX_SIZE ||
             curSize > SDMA_SEND_MAX_SIZE;
     return hugeData;
 }
 
-bool CollAllGatherExecutor::IsAllGatherSmallData(const u64 curSize)
+bool CollAllGatherExecutor::IsSmallData(const u64 size)
 {
-    if ((topoAttr_.serverNum == 1) && (topoAttr_.deviceType == DevType::DEV_TYPE_910_93)) {
-        return curSize <= HCCL_SMALL_COUNT_2_MB;
-    } else {
-        return false;
-    }
+    HCCL_INFO("[CollAllGatherExecutor][IsSmallData]opMeta is using the default option: not small data.");
+    return false;
 }
 
 bool CollAllGatherExecutor::IsDataSplitForRdmaSdmaConcurrent(const u64 curSize)
@@ -130,7 +125,7 @@ HcclResult CollAllGatherExecutor::RunLoop(OpParam &param, AlgResourceResponse &a
             param.tag.c_str(), topoAttr_.userRankSize, maxCountPerLoop),
         HCCL_E_PARA);
 
-    bool smallData = IsAllGatherSmallData(param.DataDes.count * unitSize);
+    bool smallData = IsSmallData(param.DataDes.count * unitSize);
     for (u64 countLeft = param.DataDes.count, curCount = 0, inputOffset = 0, outputOffset = 0;
             countLeft > 0; countLeft -= curCount) {
         curInputPtr += inputOffset;
@@ -146,7 +141,7 @@ HcclResult CollAllGatherExecutor::RunLoop(OpParam &param, AlgResourceResponse &a
         if (!is310P3Common_) {
             /* 设置子图复用标志 */
             auto autoSelectedAlgTypeLevel1 = static_cast<u32>(algType_) >> HCCL_LEVEL_ALGO_WIDTH;
-            bool hugeData = IsHugeData(curSize);    // override    
+            bool hugeData = IsHugeData(curSize);    // override
             bool dataSplit = IsDataSplitForRdmaSdmaConcurrent(curSize);
             auto opMeta = HcclOpMetaInfo::GetOneForAllGather(autoSelectedAlgTypeLevel1, hugeData, smallData,
                 CopyPattern::BCOPY, dataSplit);
@@ -269,7 +264,7 @@ HcclResult CollAllGatherExecutor::AllGatherLevel2(const std::string &tag, Device
     u32 level0ServerIndex = outerCommInfo.localRank;
     u32 level1ServerIndex = innerCommInfo.localRank;
 
-    std::unique_ptr<ExecutorBase> level2AGExecutor;
+    std::unique_ptr<AlgTemplateBase> level2AGExecutor;
     level2AGExecutor.reset(new (std::nothrow) AllGatherRing(dispatcher_));
     HCCL_INFO("allgather ring: using ring algo inter-server.");
     CHK_SMART_PTR_NULL(level2AGExecutor);
@@ -299,7 +294,7 @@ HcclResult CollAllGatherExecutor::AllGatherLevel2(const std::string &tag, Device
         level1RankSize);
 
     if (level1RankSize > 1) {
-        std::unique_ptr<ExecutorBase> level1AGExecutor;
+        std::unique_ptr<AlgTemplateBase> level1AGExecutor;
         if (UseInterServerRingAlgo(algType_)) {
             level1AGExecutor.reset(new (std::nothrow) AllGatherRing(dispatcher_));
             HCCL_INFO("allgather ring: using ring algo inter-server.");

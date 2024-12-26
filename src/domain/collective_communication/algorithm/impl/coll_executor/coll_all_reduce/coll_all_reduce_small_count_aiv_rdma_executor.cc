@@ -15,6 +15,7 @@ constexpr s32 INTRA_RS_STEP = 0;
 constexpr s32 INTER_AR_STEP = 1;
 constexpr s32 INTRA_AG_STEP = 2;
 constexpr u32 A_X_AGGR_SIZE = 2;
+constexpr u32 A_X_SIZE = 16;
 constexpr u64 HALF_OFFSET = 16 * 1024 * 1024;
 
 u64 CollAllReduceSmallCountAivRdmaExecutor::allreduceSmallDataAivRdmaCount_ = 0;
@@ -133,13 +134,13 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::InterServerHDOneshot(const Op
     CHK_SMART_PTR_NULL(reducerInfo);
     u32 hdStepNum = static_cast<u32>(log2(interRankSize));
     HCCL_INFO("[CollAllReduceSmallCountAivRdmaExecutor] Find interlink type for cross-aggregation link[%d].",
-        interLinks[(interRankId + 1) % A_X_AGGR_SIZE]->GetLinkType());
+        interLinks[(interRankId + 1) % A_X_AGGR_SIZE  + interRankId- interRankId % A_X_AGGR_SIZE]->GetLinkType());
     u32 sliceSize = sliceCount * SIZE_TABLE[param.DataDes.dataType];
     auto opMeta = HcclOpMetaInfo::GetOneForAllReduce(0, param.DataDes.dataType, ReduceType::INLINE_REDUCE,
                 true, 0, false, hccl::CopyPattern::BCOPY, 1, true);
     CHK_RET(InitTask(dispatcher_, const_cast<Stream&>(param.stream), opMeta.isEnableCache, opMeta.GetCacheKey()));
     for (u32 step = 1; step <= hdStepNum; step++) {
-        u32 peerMask = 1 << (hdStepNum - step);
+        u32 peerMask = 1 << (step - 1);
         u32 peer = interRankId ^ peerMask;
         HCCL_INFO("[CollAllReduceSmallCountAivRdmaExecutor][InterServerHDOneshot] Step %u, peer %u.", step, peer);
         if (step == 1 && interLinks[peer]->GetLinkType() == LinkType::LINK_PCIE) {
@@ -151,13 +152,11 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::InterServerHDOneshot(const Op
                 interRankId - interRankId % A_X_AGGR_SIZE, execMem.inputMem, execMem.outputMem, interLinks, dataBuffers,
                 flagBuffers, UserMemType::INPUT_MEM, UserMemType::OUTPUT_MEM, HCCL_SMALL_COUNT_2_MB + dbOffset, 0));
             CHK_RET(ExecuteKernelLaunch(HcclCMDType::HCCL_CMD_ALLREDUCE, nullptr, arOutput, sliceCount,
-                param.DataDes.dataType, param.reduceType, interRankId, interRankSize, 0, dataBuffers, flagBuffers,
-                param.tag, param.stream.ptr(), isOpbase, execMem.inputMem.size(), INTER_AR_STEP, true));
+                param.DataDes.dataType, param.reduceType, interRankId % A_X_AGGR_SIZE, A_X_AGGR_SIZE, 0, dataBuffers,
+                flagBuffers, param.tag, param.stream.ptr(), isOpbase, execMem.inputMem.size(), INTER_AR_STEP, true,
+                nullptr, topoAttr_.isDiffDeviceModule ? topoAttr_.devicePhyId : A_X_SIZE));
         } else {
             // 其他情况走RDMA
-            auto opMeta = HcclOpMetaInfo::GetOneForAllReduce(0, param.DataDes.dataType, ReduceType::INLINE_REDUCE,
-                true, step, false, hccl::CopyPattern::BCOPY, 1, true);
-            CHK_RET(InitTask(dispatcher_, const_cast<Stream&>(param.stream), opMeta.isEnableCache, opMeta.GetCacheKey()));
             u32 sliceForReadOffset = HCCL_SMALL_COUNT_2_MB + (step - 1) * sliceSize + dbOffset;
             u32 sliceForWriteOffset = HCCL_SMALL_COUNT_2_MB + step * sliceSize + dbOffset;
             DeviceMem src = execMem.inputMem.range(sliceForReadOffset, sliceSize);
@@ -188,7 +187,7 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::InterServerHDOneshot(const Op
 
 HcclResult CollAllReduceSmallCountAivRdmaExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollAllReduceSmallCountAivRdmaExecutor][KernelRun]allreduce aiv enter.");
+    HCCL_INFO("[CollAllReduceSmallCountAivRdmaExecutor][KernelRun]allreduce aiv enter");
     HcclWorkflowMode workflow = workflowMode_;
     bool isOpbase = (workflow == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
 
@@ -224,7 +223,8 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::KernelRun(const OpParam &para
     void* rsOutput = static_cast<u8 *>(execMem.inputMem.ptr()) + HCCL_SMALL_COUNT_2_MB;
     CHK_RET(ExecuteKernelLaunch(HcclCMDType::HCCL_CMD_ALLREDUCE, execMem.inputPtr, rsOutput, execMem.count,
         param.DataDes.dataType, param.reduceType, intraRankId, intraRankSize, 0, dataBuffers, flagBuffers, param.tag,
-        param.stream.ptr(), isOpbase, execMem.inputMem.size(), INTRA_RS_STEP, true));
+        param.stream.ptr(), isOpbase, execMem.inputMem.size(), INTRA_RS_STEP, true,
+        nullptr, topoAttr_.isDiffDeviceModule ? topoAttr_.devicePhyId : A_X_SIZE));
 
     // use hd algo
     u32 arOutputOffset = 0;  // 跨机allreduce的结果的位置，相对于inputMem的偏移
@@ -238,7 +238,8 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::KernelRun(const OpParam &para
         0));
     CHK_RET(ExecuteKernelLaunch(HcclCMDType::HCCL_CMD_ALLREDUCE, arOutput, execMem.outputPtr, execMem.count,
         param.DataDes.dataType, param.reduceType, intraRankId, intraRankSize, 0, dataBuffers, flagBuffers, param.tag,
-        param.stream.ptr(), isOpbase, execMem.inputMem.size(), INTRA_AG_STEP, true));
+        param.stream.ptr(), isOpbase, execMem.inputMem.size(), INTRA_AG_STEP, true,
+        nullptr, topoAttr_.isDiffDeviceModule ? topoAttr_.devicePhyId : A_X_SIZE));
 
     HCCL_INFO("[CollAllReduceSmallCountAivRdmaExecutor][KernelRun]allreduce aiv run success");
     return HCCL_SUCCESS;

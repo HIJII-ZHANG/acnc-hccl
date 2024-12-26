@@ -13,8 +13,8 @@ set(hccl_include_list
     ${HCCL_BASE_DIR}/algorithm/pub_inc
     ${HCCL_BASE_DIR}/pub_inc
     ${HCCL_BASE_DIR}/pub_inc/hccl
-    ${HCCL_BASE_DIR}/algorithm/base/executor
-    ${HCCL_BASE_DIR}/algorithm/base/executor/component/inc
+    ${HCCL_BASE_DIR}/algorithm/base/alg_template
+    ${HCCL_BASE_DIR}/algorithm/base/alg_template/component/inc
     ${HCCL_BASE_DIR}/algorithm/base/communicator
     ${HCCL_BASE_DIR}/algorithm/base/communicator/legacy
     ${HCCL_BASE_DIR}/algorithm/impl
@@ -28,6 +28,7 @@ set(hccl_include_list
     ${HCCL_BASE_DIR}/framework/common/src/topo
     ${HCCL_BASE_DIR}/framework/common/src/task
     ${HCCL_BASE_DIR}/framework/common/src/exception
+    ${HCCL_BASE_DIR}/framework/common/src/thread
     ${HCCL_BASE_DIR}/framework/communicator/impl/
     ${HCCL_BASE_DIR}/framework/communicator/impl/resource_manager
     ${HCCL_BASE_DIR}/framework/communicator/impl/one_sided_service

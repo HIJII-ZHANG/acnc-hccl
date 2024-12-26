@@ -1,3 +1,4 @@
+
 /*
  * Copyright (c) 2024 Huawei Technologies Co., Ltd.
  * This file is a part of the CANN Open Software.

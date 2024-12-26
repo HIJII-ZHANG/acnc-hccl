@@ -15,7 +15,7 @@ OpBaseStreamManager::OpBaseStreamManager() : master_()
 {
     slaves_.reserve(MAX_SUBSTREAM_NUM);
     slaveDevices_.reserve(MAX_SUBSTREAM_NUM);
-    HCCL_DEBUG("[OpBaseStreamManager]reserve slaves[%llu]", MAX_SUBSTREAM_NUM);
+    HCCL_DEBUG("[OpBaseStreamManager]reserve slaves[%u]", MAX_SUBSTREAM_NUM);
 }
 
 OpBaseStreamManager::~OpBaseStreamManager() = default;
@@ -54,13 +54,13 @@ HcclResult OpBaseStreamManager::AllocMaster(const StreamType streamType)
         return HCCL_E_INTERNAL;
     }
     master_ = stream;
-    HCCL_DEBUG("[OpBaseStreamManager][AllocMaster]alloc master stream[%p] success.", master_.ptr());
+    HCCL_INFO("[OpBaseStreamManager][AllocMaster]alloc master stream[%p] success.", master_.ptr());
     lock.unlock();
     return HCCL_SUCCESS;
 }
 std::vector<Stream> OpBaseStreamManager::AllocSlaves(const StreamType streamType, u32 num)
 {
-    HCCL_DEBUG("[OpBaseStreamManager][AllocSlaves]requesting for [%u] slave streams.", num);
+    HCCL_INFO("[OpBaseStreamManager][AllocSlaves]requesting for [%u] slave streams.", num);
     std::unique_lock<std::mutex> masterLock(masterMutex_);
     if (!master_ || !master_.ptr()) {
         HCCL_ERROR("[OpBaseStreamManager][AllocSlaves]master not found, alloc slave stream failed.");
@@ -69,7 +69,8 @@ std::vector<Stream> OpBaseStreamManager::AllocSlaves(const StreamType streamType
     std::vector<Stream> *slavesPtr;
     slavesPtr = (streamType == StreamType::STREAM_TYPE_ONLINE) ? &slaves_ : &slaveDevices_;
     if (slavesPtr->capacity() < num) {
-        HCCL_ERROR("[OpBaseStreamManager][AllocSlaves]request number exceed max substream num, alloc failed.");
+        HCCL_ERROR("[OpBaseStreamManager][AllocSlaves]request number[%u] exceed max substream num[%u], alloc failed.",
+            num, slavesPtr->capacity());
         return std::vector<Stream>();
     }
     std::unique_lock<std::mutex> slaveLock(slavesMutex_);

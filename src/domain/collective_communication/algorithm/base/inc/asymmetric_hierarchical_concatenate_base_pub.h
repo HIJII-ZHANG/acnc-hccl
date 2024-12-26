@@ -15,7 +15,7 @@
 
 #include <cmath>
 #include <algorithm>
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 #include "all_gather_ring_pub.h"
 #include "all_reduce_ring_pub.h"
 #include "reduce_scatter_ring_pub.h"
@@ -52,7 +52,7 @@ public:
 
     u32 GetIntraRank(const u32 rank);
     u32 GetInterRank(const u32 rank);
-    HcclResult GetExecutorOpInstance(const HcclCMDType opType, std::unique_ptr<ExecutorBase> &executor,
+    HcclResult GetExecutorOpInstance(const HcclCMDType opType, std::unique_ptr<AlgTemplateBase> &tempAlg,
         const HcclDispatcher &dispatcher, const u64 reduceAttr);
 protected:
     u32 minSubGroupIdx_; // 第一层分组最小的分组下标
@@ -121,7 +121,7 @@ private:
     u32 totalSliceSegment_; // 切片总大小，分组数的最小公倍数
 };
 
-class AHCExecutorBase : public ExecutorBase {
+class AHCExecutorBase : public AlgTemplateBase {
 public:
     explicit AHCExecutorBase(const HcclDispatcher dispatcher, const u64 reduceAttrBitMap,
         const u64 totalCount, const std::vector<std::vector<u32>> &subGroups);
@@ -135,7 +135,7 @@ protected:
     HcclResult PrepareRunAsync(const u32 rank, const u32 rankSize, const std::vector<LINK> &links) override;
     HcclResult FftsRsetPhase(const std::vector<Slice> &slices);
     HcclResult RunInstance(const u32 rank, const std::vector<LINK> &links, const std::vector<Slice> &slices,
-        std::unique_ptr<ExecutorBase> &executor, HcclCMDType opType);
+        std::unique_ptr<AlgTemplateBase> &tempAlg, HcclCMDType opType);
     
     u32 rankSize_;
     const u64 reduceAttr_;

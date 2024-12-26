@@ -88,7 +88,7 @@ HcclResult CollBroadCastRingFor91093::KernelRun(const OpParam &param, ExecMem &e
     // 按ranksize得到内存切分slice数
     u32 sliceNum = outerCommInfo.localRankSize;
     // 将根节点数据切分成sliceNum份
-    CHK_RET(ExecutorBase::PrepareSliceData(execMem.count, perDataSize, sliceNum, 0, dataSegsSlice));
+    CHK_RET(AlgTemplateBase::PrepareSliceData(execMem.count, perDataSize, sliceNum, 0, dataSegsSlice));
     HCCL_DEBUG("[CollBroadCastRingFor91093][KernelRun]ringNum[%u] sliceNum[%u]", ringNum, sliceNum);
 
     /* 节点内 scatter */
@@ -136,34 +136,34 @@ HcclResult CollBroadCastRingFor91093::KernelRun(const OpParam &param, ExecMem &e
     if (topoAttr_.superPodNum <= 1) {
         HCCL_INFO("Broadcast double ring No level2.");
         /* step2: server间 broadcast */
-        std::unique_ptr<ExecutorBase> innerExecutor;
+        std::unique_ptr<AlgTemplateBase> innerTempAlg;
         u64 curSize = execMem.count * SIZE_TABLE[param.DataDes.dataType];
         if (UseInterServerNHRAlgo(algType_)) {
             HCCL_DEBUG("broadcast ring: curSize[%llu] deviceNumPerAggregation[%u] commOuterSize[%u]",
                 curSize, topoAttr_.deviceNumPerAggregation, outerCommInfo.localRankSize);
             if (curSize / topoAttr_.deviceNumPerAggregation <= NHR_BCAST_SMALL_SIZE) {
-                innerExecutor.reset(new (std::nothrow) BroadcastNHROneshot(dispatcher_));
+                innerTempAlg.reset(new (std::nothrow) BroadcastNHROneshot(dispatcher_));
             } else {
-                innerExecutor.reset(new (std::nothrow) BroadcastNHR(dispatcher_));
+                innerTempAlg.reset(new (std::nothrow) BroadcastNHR(dispatcher_));
             }
             HCCL_INFO("broadcast ring: using nhr algo inter-server.");
         } else if (UseInterServerNHRV1Algo(algType_)) {
-            innerExecutor.reset(new (std::nothrow) BroadcastNHRV1(dispatcher_));
+            innerTempAlg.reset(new (std::nothrow) BroadcastNHRV1(dispatcher_));
             HCCL_INFO("broadcast ring: using nhr_v1 algo inter-server.");
         } else if (UseInterServerNBAlgo(algType_)) {
             const u32 innerRankSize = innerCommInfo.localRankSize;
             if (ShouldUseBinaryBroadcastOfNB(curSize / topoAttr_.deviceNumPerAggregation, innerRankSize,
                                              topoAttr_.userRankSize, topoAttr_.deviceNumPerAggregation)) {
-                innerExecutor.reset(new (std::nothrow) BroadcastNBBinary(dispatcher_));
+                innerTempAlg.reset(new (std::nothrow) BroadcastNBBinary(dispatcher_));
             } else {
-                innerExecutor.reset(new (std::nothrow) BroadcastNB(dispatcher_));
+                innerTempAlg.reset(new (std::nothrow) BroadcastNB(dispatcher_));
             }
             HCCL_INFO("broadcast ring: using nonuniform-bruck algo inter-server.");
         } else {
-            innerExecutor.reset(new (std::nothrow) BcastRecursiveHalvingDoubling(dispatcher_));
+            innerTempAlg.reset(new (std::nothrow) BcastRecursiveHalvingDoubling(dispatcher_));
             HCCL_INFO("broadcast ring: using Recursive halving-doubling algo inter-server.");
         }
-        CHK_SMART_PTR_NULL(innerExecutor);
+        CHK_SMART_PTR_NULL(innerTempAlg);
 
         u32 subUserrankRoot = topoMatcher_->GetSubRootUserRank(topoAttr_.userRank, param.root);
         CHK_PRT_RET(subUserrankRoot == INVALID_VALUE_RANKID,
@@ -173,14 +173,14 @@ HcclResult CollBroadCastRingFor91093::KernelRun(const OpParam &param, ExecMem &e
         CHK_RET(GetRankByUserRank(COMM_LEVEL1, commIndex, subUserrankRoot, planeRoot));
         u32 ranksize = innerCommInfo.localRankSize;
         // 节点间的hd 使用环0来记录
-        CHK_RET(innerExecutor->Prepare(execMem.inputMem, execMem.inputMem, execMem.outputMem, level1DataCount, 
+        CHK_RET(innerTempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.outputMem, level1DataCount, 
             param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, planeRoot, std::vector<Slice>(0),
             dataSegsSlice[segmentIdx].offset));
 
-        CHK_RET(innerExecutor->RegisterProfiler((ranksize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + innerCommInfo.localRank,
+        CHK_RET(innerTempAlg->RegisterProfiler((ranksize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + innerCommInfo.localRank,
             PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-        CHK_RET(RunTemplate(innerExecutor, innerCommInfo));
+        CHK_RET(RunTemplate(innerTempAlg, innerCommInfo));
 
         HCCL_INFO("Broadcast double ring stage1 run success");
     } else {
@@ -189,7 +189,7 @@ HcclResult CollBroadCastRingFor91093::KernelRun(const OpParam &param, ExecMem &e
         // 按level1RankSize得到内存切分slice数
         u32 level1RankSize = innerCommInfo.localRankSize;
         u64 level1Offset = dataSegsSlice[segmentIdx].offset;
-        CHK_RET(ExecutorBase::PrepareSliceData(level1DataCount, perDataSize, level1RankSize, 0, dataSegsSlice));
+        CHK_RET(AlgTemplateBase::PrepareSliceData(level1DataCount, perDataSize, level1RankSize, 0, dataSegsSlice));
 
         DeviceMem level1InputMem = execMem.inputMem.range(level1Offset, level1DataSize);
         CHK_SMART_PTR_NULL(level1InputMem);
@@ -197,18 +197,18 @@ HcclResult CollBroadCastRingFor91093::KernelRun(const OpParam &param, ExecMem &e
         CHK_SMART_PTR_NULL(level1OutputMem);
 
         if (level1RankSize > 1) {
-            std::unique_ptr<ExecutorBase> level1Executor;
+            std::unique_ptr<AlgTemplateBase> level1TempAlg;
             if (UseInterServerNHRAlgo(algType_)) {
-                level1Executor.reset(new (std::nothrow) ScatterNHR(dispatcher_));
+                level1TempAlg.reset(new (std::nothrow) ScatterNHR(dispatcher_));
                 HCCL_INFO("broadcast ring: using nhr algo inter-server.");
             } else if (UseInterServerNBAlgo(algType_)) {
-                level1Executor.reset(new (std::nothrow) ScatterNB(dispatcher_));
+                level1TempAlg.reset(new (std::nothrow) ScatterNB(dispatcher_));
                 HCCL_INFO("broadcast ring: using nonuniform-bruck algo inter-server.");
             } else {
                 HCCL_ERROR("broadcast level1 only supports NB/NHR algo. not support algType[%u]", algType_);
                 return HCCL_E_NOT_SUPPORT;
             }
-            CHK_SMART_PTR_NULL(level1Executor);
+            CHK_SMART_PTR_NULL(level1TempAlg);
 
             /* 获取每个超节点内的subroot */
             u32 subPodRoot = topoMatcher_->GetSubRootWithSuperPod(topoAttr_.userRank, param.root);
@@ -220,14 +220,14 @@ HcclResult CollBroadCastRingFor91093::KernelRun(const OpParam &param, ExecMem &e
             CHK_PRT_RET(level1RootRank == INVALID_VALUE_RANKID,
                 HCCL_ERROR("[CollBroadCastRingFor91093][KernelRun] get rootRank IDX in level1 failed."), HCCL_E_PARA);
 
-            CHK_RET(level1Executor->Prepare(level1InputMem, level1InputMem, level1InputMem, level1DataCount,
+            CHK_RET(level1TempAlg->Prepare(level1InputMem, level1InputMem, level1InputMem, level1DataCount,
                 param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, level1RootRank, dataSegsSlice,
                 level1Offset));
-            CHK_RET(level1Executor->RegisterProfiler(
+            CHK_RET(level1TempAlg->RegisterProfiler(
                 (level1RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + innerCommInfo.localRank,
                 PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-            CHK_RET(RunTemplate(level1Executor, innerCommInfo));
+            CHK_RET(RunTemplate(level1TempAlg, innerCommInfo));
             HCCL_INFO("Broadcast double ring [superpod] level1 run success");
         }
 
@@ -245,48 +245,48 @@ HcclResult CollBroadCastRingFor91093::KernelRun(const OpParam &param, ExecMem &e
         HCCL_DEBUG("level2 get root info as: subUserrankRootSupperPod[%u], planeRootSupperPod[%u]",
             subUserrankRootSupperPod, planeRootSupperPod);
 
-        std::unique_ptr<ExecutorBase> level2Executor;
-        level2Executor.reset(new (std::nothrow) BcastRecursiveHalvingDoubling(dispatcher_));
+        std::unique_ptr<AlgTemplateBase> level2TempAlg;
+        level2TempAlg.reset(new (std::nothrow) BcastRecursiveHalvingDoubling(dispatcher_));
         HCCL_INFO("[superpod]Broadcast level2-broadcast: using Recursive halving-doubling algo inter-superPod.");
 
-        CHK_SMART_PTR_NULL(level2Executor);
+        CHK_SMART_PTR_NULL(level2TempAlg);
         u64 bcastCount = dataSegsSlice[localRank].size / perDataSize;
 
-        CHK_RET(level2Executor->Prepare(execMem.inputMem, execMem.inputMem, execMem.outputMem, bcastCount,
+        CHK_RET(level2TempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.outputMem, bcastCount,
             param.DataDes.dataType, param.stream, HcclReduceOp::HCCL_REDUCE_RESERVED, planeRootSupperPod,
             std::vector<Slice>(0), dataSegsSlice[localRank].offset + level1Offset));
         HCCL_DEBUG("[superpod]Broadcast level2-broadcast : dataSegsSlice[localRank].offset[%llu]" \
             "dataSegsSlice[localRank].size[%llu] level1Offset[%llu]",
             dataSegsSlice[localRank].offset, dataSegsSlice[localRank].size, level1Offset);
 
-        CHK_RET(level2Executor->RegisterProfiler(
+        CHK_RET(level2TempAlg->RegisterProfiler(
             (level2RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level2CommInfo.localRank,
             PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
-        CHK_RET(RunTemplate(level2Executor, level2CommInfo));
+        CHK_RET(RunTemplate(level2TempAlg, level2CommInfo));
         HCCL_INFO("[CollBroadCastRingFor91093][superpod]Broadcast level2-broadcast run success");
 
         /* step4: 节点间 allgather */
         if (level1RankSize > 1) {
-            std::unique_ptr<ExecutorBase> level1AGExecutor;
+            std::unique_ptr<AlgTemplateBase> level1AGTempAlg;
             if (UseInterServerNBAlgo(algType_)) {
-                level1AGExecutor.reset(new (std::nothrow) AllGatherNB(dispatcher_));
+                level1AGTempAlg.reset(new (std::nothrow) AllGatherNB(dispatcher_));
                 HCCL_INFO("allgather ring: using nonuniform-bruck algo inter-server.");
             } else if (UseInterServerNHRAlgo(algType_)) {
-                level1AGExecutor.reset(new (std::nothrow) AllGatherNHR(dispatcher_));
+                level1AGTempAlg.reset(new (std::nothrow) AllGatherNHR(dispatcher_));
                 HCCL_INFO("allgather ring: using nonuniform-hierarchical-ring algo inter-server.");
             } else {
                 HCCL_ERROR("allgather ring: algType[%u] is not supported.", algType_);
                 return HCCL_E_NOT_SUPPORT;
             }
 
-            CHK_SMART_PTR_NULL(level1AGExecutor);
-            CHK_RET(level1AGExecutor->Prepare(level1InputMem, level1OutputMem, level1OutputMem, bcastCount,
+            CHK_SMART_PTR_NULL(level1AGTempAlg);
+            CHK_RET(level1AGTempAlg->Prepare(level1InputMem, level1OutputMem, level1OutputMem, bcastCount,
                 param.DataDes.dataType, param.stream,
                 HcclReduceOp::HCCL_REDUCE_RESERVED, OUTER_BRIDGE_RANK_ID, dataSegsSlice, level1Offset));
-            CHK_RET(level1AGExecutor->RegisterProfiler(
+            CHK_RET(level1AGTempAlg->RegisterProfiler(
                 (level1RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + innerCommInfo.localRank,
                 PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
-            CHK_RET(RunTemplate(level1AGExecutor, innerCommInfo));
+            CHK_RET(RunTemplate(level1AGTempAlg, innerCommInfo));
             HCCL_INFO("[CollBroadCastRingFor91093]broadcast [superpod] level1 allgather run success");
         }
     }
@@ -340,29 +340,29 @@ HcclResult CollBroadCastRingFor91093::DoubleRingScatter(const std::string &tag, 
         CHK_RET(GetRankOrder(multiRingsOrder, ringIndex, rankOrder));
         doubleRingsOrders.push_back(rankOrder);
     }
-    std::unique_ptr<ExecutorBase> executor;
-    executor.reset(new (std::nothrow) ScatterDoubleRingDirect(dispatcher_, opInfo, topoAttr_.userRank,
+    std::unique_ptr<AlgTemplateBase> tempAlg;
+    tempAlg.reset(new (std::nothrow) ScatterDoubleRingDirect(dispatcher_, opInfo, topoAttr_.userRank,
         outerCommInfo1.localRank, algResResp_->slaveStreams, algResResp_->notifiesM2S,
         algResResp_->notifiesS2M, doubleRingsOrders, multRingsSliceZero, doubleRingUserMemInputSlices));
 
-    CHK_SMART_PTR_NULL(executor);
+    CHK_SMART_PTR_NULL(tempAlg);
 
     u32 rootRank = 0;
     ret = GetRankByUserRank(COMM_LEVEL0, COMM_INDEX_0, root, rootRank);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollBroadCastRingFor91093][DoubleRingScatter]invalid root [%u] to get userrank", root), ret);
-    ret = executor->Prepare(inputMem, inputMem, outputMem, count, dataType, stream, HCCL_REDUCE_RESERVED,
+    ret = tempAlg->Prepare(inputMem, inputMem, outputMem, count, dataType, stream, HCCL_REDUCE_RESERVED,
         rootRank, std::vector<Slice>(0), baseOffset);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollBroadCastRingFor91093][DoubleRingScatter]scatter(ring) prepare failed, return[%d]", ret), ret);
 
     u32 rankSize = outerCommInfo.localRankSize;
-    ret = executor->RegisterProfiler((rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + outerCommInfo.localRank,
+    ret = tempAlg->RegisterProfiler((rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + outerCommInfo.localRank,
         PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, stream);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollBroadCastRingFor91093][DoubleRingScatter]scatter(ring) register profiler failed,return[%d]", ret), ret);
 
-    ret = RunTemplate(executor, outerCommInfo);
+    ret = RunTemplate(tempAlg, outerCommInfo);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollBroadCastRingFor91093][DoubleRingScatter]scatter(ring) run failed, return[%d]", ret), ret);
 

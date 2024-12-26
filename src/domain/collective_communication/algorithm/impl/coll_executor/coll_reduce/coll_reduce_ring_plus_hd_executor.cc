@@ -95,7 +95,7 @@ HcclResult CollReduceRingPlusHdExecutor::KernelRun(const OpParam &param, ExecMem
 
     // 按ranksize得到内存切分slice数为8
     u32 sliceNum = outerCommInfo.localRankSize;
-    CHK_RET(ExecutorBase::PrepareSliceData(execMem.count, perDataSize, sliceNum, 0, dataSegsSlice));
+    CHK_RET(AlgTemplateBase::PrepareSliceData(execMem.count, perDataSize, sliceNum, 0, dataSegsSlice));
 
     /* 外层:reducescatter */
     // 将每slice再切分成4份，按各ring的dev顺序排列
@@ -134,13 +134,13 @@ HcclResult CollReduceRingPlusHdExecutor::KernelRun(const OpParam &param, ExecMem
 
     u64 reduceAttr = GetReduceAttr(reduceInput, reduceOutput, param.DataDes.dataType, param.reduceType);
 
-    std::unique_ptr<ExecutorBase> innerExecutor;
+    std::unique_ptr<AlgTemplateBase> innerTempAlg;
     if (UseInterServerRingAlgo(algType_)) {
-        innerExecutor.reset(new (std::nothrow) ReduceRing(dispatcher_, reduceAttr));
+        innerTempAlg.reset(new (std::nothrow) ReduceRing(dispatcher_, reduceAttr));
     } else {
-        innerExecutor.reset(new (std::nothrow) ReduceRecursiveHalvingDoubling(dispatcher_, reduceAttr));
+        innerTempAlg.reset(new (std::nothrow) ReduceRecursiveHalvingDoubling(dispatcher_, reduceAttr));
     }
-    CHK_SMART_PTR_NULL(innerExecutor);
+    CHK_SMART_PTR_NULL(innerTempAlg);
 
     u32 subUserrankRoot = topoMatcher_->GetSubRootUserRank(topoAttr_.userRank, param.root);
     CHK_PRT_RET(subUserrankRoot == INVALID_VALUE_RANKID,
@@ -152,13 +152,13 @@ HcclResult CollReduceRingPlusHdExecutor::KernelRun(const OpParam &param, ExecMem
 
     u32 ranksize = innerCommInfo.localRankSize;
     // 节点间的hd 使用环0来记录
-    CHK_RET(innerExecutor->Prepare(reduceInput, reduceOutput, reduceOutput, hdCount, param.DataDes.dataType,
+    CHK_RET(innerTempAlg->Prepare(reduceInput, reduceOutput, reduceOutput, hdCount, param.DataDes.dataType,
         param.stream, param.reduceType, planeRoot, std::vector<Slice>(0), dataSegsSlice[segmentIdx].offset));
 
-    CHK_RET(innerExecutor->RegisterProfiler((ranksize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + innerCommInfo.localRank, \
+    CHK_RET(innerTempAlg->RegisterProfiler((ranksize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + innerCommInfo.localRank, \
         PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-    CHK_RET(RunTemplate(innerExecutor, innerCommInfo));
+    CHK_RET(RunTemplate(innerTempAlg, innerCommInfo));
 
     HCCL_INFO("reduce 8PringHD stage1 run success");
 

@@ -36,7 +36,7 @@ public:
     // batchsendrecv需要增量建链
     virtual HcclResult CalcIncreLinkRequest(const OpParam& param, AlgResourceRequest &resourceRequest);
 
-    static HcclResult RunTemplate(const std::unique_ptr<ExecutorBase> &executor, const SubCommInfo &commInfo);
+    static HcclResult RunTemplate(const std::unique_ptr<AlgTemplateBase> &tempAlg, const SubCommInfo &commInfo);
 
     //batchsendrecv retry使用
     virtual HcclResult CreatePairWiseList(HcclSendRecvItem *sendRecvInfo, u32 itemNum);

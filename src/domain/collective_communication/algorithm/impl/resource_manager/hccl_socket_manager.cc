@@ -789,7 +789,7 @@ void HcclSocketManager::GetSocketsByRankIP(const HcclIpAddress &remoteIp, u32 so
 
 // private
 // 同步接口，更新连接状态，并返回连接成功的连接数量
-HcclResult HcclSocketManager::WaitLinkEstablish(std::shared_ptr<HcclSocket> socket)
+HcclResult HcclSocketManager::WaitLinkEstablish(std::shared_ptr<HcclSocket> socket, std::function<bool()> needStop)
 {
     CHK_SMART_PTR_NULL(socket);
     u32 count = 0;
@@ -797,6 +797,8 @@ HcclResult HcclSocketManager::WaitLinkEstablish(std::shared_ptr<HcclSocket> sock
     auto timeout = std::chrono::seconds(GetExternalInputHcclLinkTimeOut());
     HCCL_DEBUG("[Wait][LinkEstablish]waiting for sockets link up...");
     while (true) {
+        CHK_PRT_RET(needStop(), HCCL_ERROR("Terminating operation due to external request"), HCCL_E_INTERNAL);
+
         if ((std::chrono::steady_clock::now() - startTime) >= timeout) {
             HCCL_ERROR("[Wait][LinkEstablish]wait socket establish timeout, role[%u] rank[%u] timeout[%lld]",
                 static_cast<u32>(socket->GetLocalRole()), userRank_, timeout);
@@ -849,11 +851,33 @@ HcclResult HcclSocketManager::WaitLinksEstablishCompleted(HcclSocketRole localRo
     for (auto iter = rankSocketsMap.begin(); iter != rankSocketsMap.end(); iter++) {
         auto rankSockets = iter->second;
         for (u32 i = 0; i < rankSockets.size(); i++) {
-            HcclResult ret = WaitLinkEstablish(rankSockets[i]);
+            HcclResult ret = WaitLinkEstablish(rankSockets[i], [this]() -> bool {return this->GetStopFlag(); });
             CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[Wait][LinksEstablishCompleted] is failed. ret[%d].",
                 ret), ret);
         }
     }
     return HCCL_SUCCESS;
 }
+
+HcclResult HcclSocketManager::SetStopFlag(bool value)
+{
+    stopFlag_.store(value);
+
+    std::unique_lock<std::mutex> lock(socketsMapMutex_);
+    for (auto& socketsMap : commSocketsMap_) {  // map
+        for (auto& socketMap : socketsMap.second) { // map
+            for (auto& socket : socketMap.second) { // vector
+                CHK_RET(socket->SetStopFlag(value));
+            }
+        }
+    }
+
+    return HCCL_SUCCESS;
+}
+
+bool HcclSocketManager::GetStopFlag()
+{
+    return stopFlag_.load();
+}
+
 }  // namespace hccl

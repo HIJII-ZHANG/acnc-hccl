@@ -97,6 +97,7 @@ protected:
     bool meshSinglePlane_ = false;
     bool isAllRankSamePlane_ = false;
     bool is310PDuoCard_;
+    s32 hccsPortNum_;
     bool isSupportRdmaLite_ = false;    // 是否支持rdma lite
     bool useSuperPodMode_ = false;
     u32 userRank_; // 本group中的userrank

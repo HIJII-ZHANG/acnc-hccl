@@ -16,19 +16,20 @@
 namespace hccl {
 const uint32_t ALLTOALLV_DIRECT_FULLMESH_SDMA_CONCURRENT_SIZE =  16; // SDMA链路上的并发数量
 const uint32_t ALLTOALLV_DIRECT_FULLMESH_RDMA_CONCURRENT_SIZE =  1; // RDMA链路上的并发数量
+const uint32_t RANK_SET_COMPUTE_CONST = 2; // 计算对端Rank用到的常量
 
-class AlltoAllVDirectFullMesh : public ExecutorBase {
+class AlltoAllVDirectFullMesh : public AlgTemplateBase {
 public:
     explicit AlltoAllVDirectFullMesh(const HcclDispatcher dispatcher, Stream &mainStream,
         u32 userRank, u32 userRankSize, const std::vector<LINK> &links,
-        const SendRecvInfo &tmpRankSendRecvInfo, u32 podNum, u32 devNumInlocalPod,
+        const SendRecvInfo &tmpRankSendRecvInfo, u32 devNumInlocalPod,
         u32 rankIdxInPod);
     ~AlltoAllVDirectFullMesh() override;
     HcclResult Prepare(DeviceMem &userInput, DeviceMem &userOutput, DeviceMem &cclInMem,
         DeviceMem &cclOutMem, HcclWorkflowMode workMode,
         std::vector<Stream> &subStreams,
         const std::vector<std::shared_ptr<LocalNotify>> &meshSignalMainToSub,
-        const std::vector<std::shared_ptr<LocalNotify>> &meshSignalSubToMain);
+        const std::vector<std::shared_ptr<LocalNotify>> &meshSignalSubToMain, bool isSuPodAsym = false);
     HcclResult RunAsync();
 
 protected:
@@ -44,13 +45,13 @@ private:
     HcclResult SDMAwithRemoteRankAndNotifyEnd(u32 step);
     HcclResult SendRecvData(u32 step);
 
-    void UpdateCurrRankSendInfo(u32 destRank, std::vector<SendDataBlock>& sendInfo, u32 maxSendStep);
-    void UpdateCurrRankRecvInfo(u32 destRank, std::vector<ReadDataBlock>& readInfo, u32 maxRecvStep);
-    void UpdateOpBaseSubStreamInfo();
-    void UpdatePartialCommunicationRankSet(u64 roundIdx, u32 groupRankSize);
+    void UpdateCurrRankSendInfo(u32 roundIdx, u32 side, u32 destRank, std::vector<SendDataBlock>& sendInfo, u32 maxSendStep);
+    void UpdateCurrRankRecvInfo(u32 roundIdx, u32 side, u32 destRank, std::vector<ReadDataBlock>& readInfo, u32 maxRecvStep);
+    void UpdateOpBaseSubStreamInfo(u32 roundIdx);
+    void UpdatePartialCommunicationRankSet(u32 roundIdx, u32 groupRankSize);
     HcclResult PrepareIntraData(u32 step);
     HcclResult LocalCopy();
-    HcclResult RunGroupFullMeshAlltoall(u32 step);
+    HcclResult RunGroupFullMeshAlltoall(u32 roundIdx, u32 step);
     HcclResult RunSDMA(HcclOpMetaInfoDef &opMeta);
 
     // RDMA处理相关函数
@@ -84,6 +85,7 @@ private:
     u32 devNumInlocalPod_;
     u32 rankIdxInPod_;
     u32 totalRdmaRankNum_; // 需要通信的rdma对端
+    bool isSuPodAsym_;
 
     DeviceMem userInput_;
     DeviceMem userOutput_;
@@ -98,7 +100,7 @@ private:
     std::unordered_map<u32, u32> sendNumSubStep_;                       // 需要向对应对端rank发几次数据
     std::unordered_map<u32, u32> recvNumSubStep_;                       // 需要从对应对端rank收几次数据
     u32 sdmaConcurrentNum_; // 分组mesh-每组group的ranksize
-    std::vector<std::pair<u32,u32>> partialCommRankSet_;  // 参与通信的rank组合
+    std::vector<std::vector<std::pair<u32,u32>>> partialCommRankSet_;  // 参与通信的rank组合, 第0、1、2个vector分别存放左、右、中的rank
 
     // SDMA处理相关
     std::vector<Stream> sdmaSubStream_;

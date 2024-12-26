@@ -10,6 +10,7 @@
 
 #include "reduce_scatter_operator.h"
 #include "device_capacity.h"
+#include "hccl_aiv.h"
 
 namespace hccl {
 ReduceScatterOperator::ReduceScatterOperator(AlgConfigurator* algConfigurator, CCLBufferManager &cclBufferManager,
@@ -100,6 +101,18 @@ HcclResult ReduceScatterOperator::SelectAlgfor910B(const OpParam& param, std::st
 
     u64 dataSize = param.DataDes.count * unitSize; // 单位：字节
     u64 cclBufferSize = cclBufferManager_.GetInCCLbufferSize() / userRankSize_;
+    bool isAivMode = GetExternalInputHcclAivMode() && IsSupportAIVReduce(param.DataDes.dataType, param.reduceType) &&
+        topoMatcher_->GetDeterministicConfig() == DETERMINISTIC_CONFIG_DISABLE && isSingleMeshAggregation_;
+    if (isAivMode) {
+        if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && dataSize <= AIV_REDUCE_SCATTER_BIG_SIZE) {
+            algName = "ReduceScatterMeshAivSmallCountExecutor"; 
+            HCCL_INFO("[SelectAlgfor910BAIV] ReduceScatterSelectAlgfor910B is algName [%s]", algName.c_str());
+        } else {
+            algName = "ReduceScatterMeshAivExecutor"; 
+            HCCL_INFO("[SelectAlgfor910BAIV] ReduceScatterSelectAlgfor910B is algName [%s]", algName.c_str());
+        }
+        return HCCL_SUCCESS;
+    }
     if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
         bool isInlineReduce = IsSupportSDMAReduce(cclBufferManager_.GetInCCLbuffer().ptr(),
             cclBufferManager_.GetOutCCLbuffer().ptr(), param.DataDes.dataType, param.reduceType);
@@ -162,17 +175,36 @@ HcclResult ReduceScatterOperator::SelectAlgfor910B(const OpParam& param, std::st
 
 HcclResult ReduceScatterOperator::SelectAlgfor91093(const OpParam& param, std::string& algName)
 {
-    bool smallCountOptim91093 =
+    bool smallCountOptimSingleServer =
         (!param.retryEnable) &&
         (serverNum_ == 1) &&
         ((workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) ||
         (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && !param.aicpuUnfoldMode)) &&
         IsSupportSDMAReduce(param.inputPtr, param.outputPtr, param.DataDes.dataType, param.reduceType) &&
         (deviceNumPerAggregation_ > HCCL_DEVICE_NUM_TWO) &&
-        (param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] <= HCCL_SMALL_COUNT_2_MB);
-    if (multiModuleDiffDeviceNumMode_ || multiSuperPodDiffServerNumMode_) {
+        (param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] <= HCCL_SMALL_COUNT_2_MB) &&
+        !GetExternalInputInterHccsDisable();
+    bool isPowOfTwo = ((userRankSize_ - 1) & userRankSize_) == 0;
+    void *commInputPtr = nullptr;
+    u64 commInputSize = 0;
+    CHK_RET(cclBufferManager_.GetInCCLbuffer(commInputPtr, commInputSize));
+    bool dmaReduceLimit = (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) && isPowOfTwo &&
+        ((commInputSize * HCCL_DEVICE_NUM_TWO < param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] * userRankSize_) ||
+        param.retryEnable);
+    bool smallCountOptimMultiServer =
+        IsSupportSDMAReduce(param.inputPtr, param.outputPtr, param.DataDes.dataType, param.reduceType) &&
+        (deviceNumPerAggregation_ > HCCL_DEVICE_NUM_TWO) && (serverNum_ != 1) && (superPodNum_ == 1) &&
+        !dmaReduceLimit && !GetExternalInputInterHccsDisable();
+    if (multiModuleDiffDeviceNumMode_ || multiSuperPodDiffServerNumMode_ || 
+        (smallCountOptimMultiServer && !isPowOfTwo &&
+        (param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] <= HCCL_SMALL_COUNT_256_KB))) {
         algName = "ReduceScatterComm";
-    } else if (smallCountOptim91093) {
+        if (smallCountOptimMultiServer) {
+            CHK_RET(SetInterServerNHRAlgo(algType_));
+        }
+    } else if (smallCountOptimSingleServer || 
+        (smallCountOptimMultiServer && isPowOfTwo&&
+        (param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] <= HCCL_SMALL_COUNT_512_KB))) {
         algName = "ReduceScatterDeterExecutor";
     } else if (topoType_ == TopoType::TOPO_TYPE_NP_SINGLE_RING) {
         algName = "ReduceScatterRingFor91093Executor";
@@ -189,8 +221,8 @@ HcclResult ReduceScatterOperator::SelectAlgfor91093(const OpParam& param, std::s
             }
             algName = "ReduceScatterDoubleRingConcurrentExecutor";
         } else {
-            if (GetExternalInputHcclAlgoConfig(HcclCMDType::HCCL_CMD_REDUCE_SCATTER)[HCCL_ALGO_LEVEL_0] ==
-                HcclAlgoType::HCCL_ALGO_TYPE_FAST_DOUBLE_RING) {
+            s32 HCCS_PORT_NUM_910_93_7 = 7;
+            if (hccsPortNum_ == HCCS_PORT_NUM_910_93_7) {
                 algName = "ReduceScatterFastDoubleRingFor91093Executor";
             } else {
                 algName = "AlignedReduceScatterDoubleRingFor91093Executor";

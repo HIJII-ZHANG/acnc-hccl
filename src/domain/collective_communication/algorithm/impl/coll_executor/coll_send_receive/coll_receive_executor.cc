@@ -16,6 +16,7 @@ CollReceiveExecutor::CollReceiveExecutor(const HcclDispatcher dispatcher,
                                          std::unique_ptr<TopoMatcher> &topoMatcher)
     : CollNativeExecutorBase(dispatcher, topoMatcher)
 {
+    DMAReduceFlag_ = workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE;
 }
 
 HcclResult CollReceiveExecutor::Orchestrate(OpParam& param, AlgResourceResponse& algRes)
@@ -121,17 +122,29 @@ HcclResult CollReceiveExecutor::RunLoop(OpParam &param, AlgResourceResponse &alg
         u64 curSize = curCount * unitSize; // 单位 byte
         HCCL_DEBUG("RecvOutPlace:curOutputPtr[%p], curCount[%llu], curSize[%llu]", curOutputPtr, curCount, curSize);
 
-        DeviceMem cclOutputMem(algRes.cclOutputMem.ptr(), curSize);
-        ret = RunTemplate(param, cclOutputMem);
-        CHK_PRT_RET(ret != HCCL_SUCCESS,
-            HCCL_ERROR("errNo[0x%016llx] RecvOutPlace: recv error, tag[%s], ptr[%p], count[%llu], dataType[%d]",
-            HCCL_ERROR_CODE(ret), param.tag.c_str(), curOutputPtr, curCount, param.DataDes.dataType),
-            ret);
+        if(topoAttr_.deviceType != DevType::DEV_TYPE_910_93 ||
+            (topoAttr_.superPodNum > 1 || (topoAttr_.moduleNum > 1 && topoMatcher_->GetExternalInputInterHccsDisable()))) {
+            // 非A3场景不做DMA消减；A3的RDMA场景，recv端也不做消减
+            DeviceMem outCommMem(algRes.cclOutputMem.ptr(), curSize);
+            DeviceMem outMem(curOutputPtr, curSize);
+            ret = RunTemplate(param, outCommMem);
+            CHK_PRT_RET(ret != HCCL_SUCCESS,
+                HCCL_ERROR("errNo[0x%016llx] RecvOutPlace: recv error, tag[%s], ptr[%p], count[%llu], dataType[%d]",
+                HCCL_ERROR_CODE(ret), param.tag.c_str(), curOutputPtr, curCount, param.DataDes.dataType),
+                ret);
+            CHK_RET(HcclD2DMemcpyAsync(dispatcher_, outMem, outCommMem, param.stream));
+            HCCL_DEBUG("[CollReceiveExecutor][RunLoop]copy from ccl output to user output.");
+        } else {
+            // A3的SDMA场景，recv端做消减
+            DeviceMem outMem(curOutputPtr, curSize);
+            ret = RunTemplate(param, outMem);
+            CHK_PRT_RET(ret != HCCL_SUCCESS,
+                HCCL_ERROR("errNo[0x%016llx] RecvOutPlace: recv error, tag[%s], ptr[%p], count[%llu], dataType[%d]",
+                HCCL_ERROR_CODE(ret), param.tag.c_str(), curOutputPtr, curCount, param.DataDes.dataType),
+                ret);
+            HCCL_DEBUG("[CollReceiveExecutor][RunLoop]copy from ccl input to user output.");
+        }
 
-        DeviceMem outCommMem(cclOutputMem.ptr(), curSize);
-        DeviceMem outMem(curOutputPtr, curSize);
-
-        CHK_RET(HcclD2DMemcpyAsync(dispatcher_, outMem, outCommMem, param.stream));
         CHK_PRT_RET((curCount == 0), HCCL_ERROR("In OP_BASE curCount is zero"), HCCL_E_PARA);
         countLeft -= curCount;
         outputOffset = curSize;

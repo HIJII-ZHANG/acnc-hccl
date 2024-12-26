@@ -51,19 +51,19 @@ HcclResult CollAlignedReduceScatterDoubleRingFor91093Executor::DoubleRingReduceS
     std::vector<std::vector<u32>> rankOrders;
     CHK_RET(CollectMultiRingsRankOrder(ringNum, multiRingsOrder, rankOrders));
     // 初始化executor
-    std::unique_ptr<ExecutorBase> executor;
-    executor.reset(new (std::nothrow) AlignedReduceScatterDoubleRing(
+    std::unique_ptr<AlgTemplateBase> tempAlg;
+    tempAlg.reset(new (std::nothrow) AlignedReduceScatterDoubleRing(
         dispatcher_, reduceAttr, opInfo, topoAttr_.userRank, algResResp_->slaveStreams,
         algResResp_->notifiesM2S, algResResp_->notifiesS2M, rankOrders, userMemInputSlicesOfDoubleRing));
-    CHK_SMART_PTR_NULL(executor);
-    ret = executor->Prepare(inputMem, inputMem, outputMem, count, dataType, stream, multRingsSliceZero,
+    CHK_SMART_PTR_NULL(tempAlg);
+    ret = tempAlg->Prepare(inputMem, inputMem, outputMem, count, dataType, stream, multRingsSliceZero,
         reductionOp, OUTER_BRIDGE_RANK_ID, baseOffset, retryEnable);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAlignedReduceScatterDoubleRingFor91093Executor][DoubleRingReduceScatter] Double ring reduce scatter failed"
         "failed,return[%d]", ret), ret);
     u32 ringIndexOp = COMM_INDEX_0;
     u32 rankSize = outerRingCommInfo.localRankSize;
-    ret = executor->RegisterProfiler(
+    ret = tempAlg->RegisterProfiler(
         ((ringIndexOp + 1) << PROF_RINGINDEX_OFFSET_OF_PLANEID) +
         (rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + outerRingCommInfo.localRank,
         profStage, HCCL_EXEC_STEP_NOT_SET, stream);
@@ -71,13 +71,13 @@ HcclResult CollAlignedReduceScatterDoubleRingFor91093Executor::DoubleRingReduceS
         HCCL_ERROR("[CollAlignedReduceScatterDoubleRingFor91093Executor][DoubleRingReduceScatter] Double ring reduce scatter failed "
         "failed,return[%d]", ret), ret);
 
-    CHK_RET(ExecutorBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
-    ret = RunTemplate(executor, outerRingCommInfo);
+    CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
+    ret = RunTemplate(tempAlg, outerRingCommInfo);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAlignedReduceScatterDoubleRingFor91093Executor][DoubleRingReduceScatter] Double ring reduce scatter failed "
         "failed,return[%d]", ret), ret);
 
-    CHK_RET(ExecutorBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
+    CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     return HCCL_SUCCESS;
 }
 

@@ -31,6 +31,13 @@ using HcclOpInfoCtx = struct HcclInfoTag {
     std::map<std::string, std::shared_ptr<hccl::TopoInfoDetect>> hcclCommTopoInfoDetectServer;
     std::map<std::string, std::shared_ptr<hccl::TopoInfoDetect>> hcclCommTopoInfoDetectAgent;
     HcclInfoTag() :isUsed(false) {}
+
+    ~HcclInfoTag() {
+        pComm = nullptr;
+        opGroup2CommMap.clear();
+        hcclCommTopoInfoDetectServer.clear();
+        hcclCommTopoInfoDetectAgent.clear();
+    }
 };
 
 HcclOpInfoCtx &GetHcclOpInfoCtx(void);
@@ -78,4 +85,14 @@ HcclResult HcclDeviceRefresh(void);
 
 HcclResult HcclSetIfProfile(void);
 
+#ifdef __cplusplus
+extern "C" {
+#endif // __cplusplus
+
+HcclResult HcclCommInitClusterInfoMemConfig(const char *rankTableString, uint32_t rank,
+                                            HcclCommConfig *config, HcclComm *comm);
+
+#ifdef __cplusplus
+}
+#endif // __cplusplus
 #endif  // OP_BASE_H

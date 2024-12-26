@@ -133,7 +133,8 @@ HcclResult CollBroadcastExecutor::RunLoopInner(OpParam &param, ExecMem &execMem)
     bool isDMATopoOn91093 = originalAlgTypeLevel0 == AlgTypeLevel0::ALG_LEVEL0_NP_SINGLE_RING ||
                             originalAlgTypeLevel0 == AlgTypeLevel0::ALG_LEVEL0_NP_DOUBLE_RING;
     bool isDMAreduceOn91093 = (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE
-                              && (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) && isDMATopoOn91093);
+                              && (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) && isDMATopoOn91093)
+                              && DMAReduceFlag_;
     HCCL_DEBUG("[CollBroadcastExecutor][RunLoopInner]inputMem[%p], outputMem[%p]" \
         "intputPtr[%p], curCount[%llu], curSize[%llu]",
         execMem.inputMem.ptr(), execMem.outputMem.ptr(), execMem.inputPtr, execMem.count, curSize);
@@ -145,14 +146,14 @@ HcclResult CollBroadcastExecutor::RunLoopInner(OpParam &param, ExecMem &execMem)
     bool isSmallData = IsBroadcastSmallData(curSize, totalSize);
     u64 sliceNum = 0;
     CHK_RET(GetSliceNum(curSize, isSmallData, sliceNum));
-    auto meta = HcclOpMetaInfo::GetOneForBroadcast(isRootRank, param.root, hugeData, isSmallData, sliceNum);
+    CopyPattern copy =  DMAReduceFlag_? CopyPattern::ZCOPY : CopyPattern::BCOPY;
+    auto meta = HcclOpMetaInfo::GetOneForBroadcast(isRootRank, param.root, hugeData, isSmallData, sliceNum, copy);
     CHK_RET(InitTask(dispatcher_, param.stream, meta.isEnableCache, meta.GetCacheKey()));
     HCCL_INFO("RunLoopInner:curPtr[%p], curCount[%llu], curSize[%llu], isSmallData[%u]," \
               "deviceNumPerAggregation[%u]", curPtr, execMem.count, curSize, isSmallData,
               topoAttr_.deviceNumPerAggregation);
 
     // 执行
-
     HcclResult ret;
 
     // isDMAreduceOn91093场景
@@ -224,7 +225,7 @@ HcclResult CollBroadcastExecutor::GetSliceNum(const u64 totalSize, const bool is
 
     if (UseInterServerNHRAlgo(algType_)) {
         u64 sliceSize = (actualSize + (actualRankSize - 1)) / actualRankSize;
-        u64 sliceSizeAligned = ExecutorBase::RoundUpWithDivisor(sliceSize, HCCL_MIN_SLICE_ALIGN);
+        u64 sliceSizeAligned = AlgTemplateBase::RoundUpWithDivisor(sliceSize, HCCL_MIN_SLICE_ALIGN);
         sliceNum = isSmallData ? 1 : static_cast<u64>(std::ceil(actualSize * 1.0f / sliceSizeAligned));
     }
     return HCCL_SUCCESS;
@@ -241,7 +242,8 @@ bool CollBroadcastExecutor::IsBroadcastSmallData(u64 size, u64 totalSize)
         return totalSize <= topoAttr_.userRankSize * HCCL_SMALL_COUNT_2_MB;
     }
 
-    if (algLevel0 == AlgTypeLevel0::ALG_LEVEL0_RESERVED) {
+    if (algLevel0 == AlgTypeLevel0::ALG_LEVEL0_RESERVED ||
+        (topoAttr_.deviceType == DevType::DEV_TYPE_910_93 && DMAReduceFlag_ == false)) {
         // level0算法配null走单层拓扑场景
         actualSize = size;
         actualRankSize = topoAttr_.userRankSize;
@@ -291,7 +293,7 @@ HcclResult CollBroadcastExecutor::GetRankSliceSize(HcclDataType dataType, const 
         align += 1;
     }
 
-    u64 sliceSize = ExecutorBase::RoundUpWithDivisor(align, HCCL_MIN_SLICE_ALIGN);
+    u64 sliceSize = AlgTemplateBase::RoundUpWithDivisor(align, HCCL_MIN_SLICE_ALIGN);
     u64 residueSize = count * perDataSize;
 
     for (u32 i = 0; i < rankSize; i++) {

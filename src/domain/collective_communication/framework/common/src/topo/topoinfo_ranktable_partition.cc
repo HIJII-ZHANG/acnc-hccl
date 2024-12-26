@@ -120,30 +120,21 @@ HcclResult TopoinfoRanktablePartition::TransformRankInfo(const RankTable_t &clus
         !rankInfo.deviceInfo.deviceIp[0].IsInvalid()) {
         perRankJson[PROP_DEV_IP] = std::string(rankInfo.deviceInfo.deviceIp[0].GetReadableIP());
     }
+    if (clusterInfo.nicDeploy == NICDeployment::NIC_DEPLOYMENT_DEVICE &&
+        rankInfo.deviceInfo.backupDeviceIp.size() != 0 && !rankInfo.deviceInfo.backupDeviceIp[0].IsInvalid()) {
+        perRankJson[PROP_BACKUP_DEV_IP] = std::string(rankInfo.deviceInfo.backupDeviceIp[0].GetReadableIP());
+    }
     return HCCL_SUCCESS;
 }
 
 HcclResult TopoinfoRanktablePartition::TransformServerList(const RankTable_t &clusterInfo,
-    nlohmann::json &serverListJson)
+    nlohmann::json &rankListJson)
 {
-    auto rankInfo = clusterInfo.rankList;
-    std::map<std::string, std::set<u32>> serverMap;
-    for (u32 i = 0; i < rankInfo.size(); i++) {
-        serverMap.emplace(rankInfo[i].serverId, std::set<u32>());
-        serverMap[rankInfo[i].serverId].emplace(i);
-    }
-    for (auto it = serverMap.begin(); it != serverMap.end(); ++it) {
-        nlohmann::json serverIdJson;
-        serverIdJson[PROP_SERVER_ID] = it->first;
-        nlohmann::json rankListJson;
-        for (auto rankIter = it->second.begin(); rankIter != it->second.end(); ++rankIter) {
-            nlohmann::json perRankJson;
-            CHK_RET(TransformRankInfo(clusterInfo, perRankJson, *rankIter));
-            perRankJson[PROP_RANK_ID] = perRankJson;
-            rankListJson.push_back(perRankJson);
-        }
-        serverIdJson[PROP_RANK_LIST] = rankListJson;
-        serverListJson.push_back(serverIdJson);
+    for (size_t i = 0; i < clusterInfo.rankList.size(); i++) {
+        nlohmann::json perRankJson;
+        CHK_RET(TransformRankInfo(clusterInfo, perRankJson, i));
+        perRankJson[PROP_RANK_ID] = perRankJson;
+        rankListJson.push_back(perRankJson);
     }
     return HCCL_SUCCESS;
 }
@@ -156,9 +147,9 @@ HcclResult TopoinfoRanktablePartition::Struct2JsonRankTable(const RankTable_t &c
     ClusterJson[PROP_RANK_NUM] = std::to_string(clusterInfo.rankNum);
     ClusterJson[PROP_DEV_NUM] = std::to_string(clusterInfo.deviceNum);
 
-    nlohmann::json serverListJson;
-    CHK_RET(TransformServerList(clusterInfo, serverListJson));
-    ClusterJson[PROP_SERVER_LIST] = serverListJson;
+    nlohmann::json rankListJson;
+    CHK_RET(TransformServerList(clusterInfo, rankListJson));
+    ClusterJson[PROP_RANK_LIST] = rankListJson;
 
     ClusterJson[PROP_STATUS] = "completed";
     ClusterJson[PROP_VERSION] = (deviceType == DevType::DEV_TYPE_910_93) ? "1.2" : "1.0";

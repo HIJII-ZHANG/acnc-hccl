@@ -20,7 +20,7 @@
 #include "hccl_common.h"
 #include "hccl_socket_manager.h"
 #include "transport_pub.h"
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 #include "common.h"
 
 
@@ -108,8 +108,8 @@ public:
         const std::vector<std::shared_ptr<HcclSocket> > &sockets); // 节点内建链起线程
     HcclResult CreateInterThread(const u32 role, u32 dstRank,
         const std::vector<std::shared_ptr<HcclSocket> > &sockets); // 节点间建链起线程
-    HcclResult RunExecutor(const std::unique_ptr<ExecutorBase> &executor);
-    HcclResult RunExecutorStaged(const std::unique_ptr<ExecutorBase> &executor, const RunStage &stage);
+    HcclResult RunTemplateAlg(const std::unique_ptr<AlgTemplateBase> &tempAlg);
+    HcclResult RunTemplateAlgStaged(const std::unique_ptr<AlgTemplateBase> &tempAlg, const RunStage &stage);
     std::shared_ptr<Transport> &GetTrasportInfoByVTransportInfoIndex(u32 index);
     HcclResult BuildAsync(u32& status);
     HcclResult BuildQuerry(u32& status);

@@ -12,7 +12,7 @@
 #define NONUNIFORM_HIERARCHICAL_RING_V1_BASE_PUB_H
 
 #include <cmath>
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 
 namespace hccl {
 
@@ -45,7 +45,7 @@ private:
     u32 rowSize_{};
 };
 
-class NHRV1Base : public ExecutorBase {
+class NHRV1Base : public AlgTemplateBase {
 public:
     explicit NHRV1Base(const HcclDispatcher dispatcher);
     ~NHRV1Base() override;

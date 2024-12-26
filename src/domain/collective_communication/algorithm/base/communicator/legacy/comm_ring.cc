@@ -109,8 +109,11 @@ u32 CommRing::GetSocketsPerLink()
 {
     bool multiQpDevType = paraVector_[rank_].deviceType == DevType::DEV_TYPE_910B ||
                 paraVector_[rank_].deviceType  == DevType::DEV_TYPE_910_93;
-    if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT &&
+    if (GetExternalInputQpSrcPortConfigPath() != "" &&
         GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && multiQpDevType) {
+        return 2;
+    } else if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT &&
+               GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && multiQpDevType) {
         return 2;
     }
     const u32 rdmaTaskNumRatio = 4; // server间ring算法每个link上rdma task数为 4*rank size

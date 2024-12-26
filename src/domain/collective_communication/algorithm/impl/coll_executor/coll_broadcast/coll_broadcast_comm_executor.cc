@@ -70,39 +70,39 @@ HcclResult CollBroadcastCommExecutor::KernelRun(const OpParam &param, ExecMem &e
     CHK_RET(CheckCommSize(commPlane, COMM_INDEX_0 + 1));
     SubCommInfo combinedCommInfo = GetSubCommInfo(commPlane, COMM_INDEX_0);
 
-    std::unique_ptr<ExecutorBase> executor;
+    std::unique_ptr<AlgTemplateBase> tempAlg;
     u64 curSize = execMem.count * SIZE_TABLE[param.DataDes.dataType];
     if (UseInterServerNHRAlgo(algType_)) {
         if (curSize <= NHR_BCAST_SMALL_SIZE) {
-            executor.reset(new (std::nothrow) BroadcastNHROneshot(dispatcher_));
+            tempAlg.reset(new (std::nothrow) BroadcastNHROneshot(dispatcher_));
         } else {
-            executor.reset(new (std::nothrow) BroadcastNHR(dispatcher_));
+            tempAlg.reset(new (std::nothrow) BroadcastNHR(dispatcher_));
         }
         HCCL_INFO("broadcast comm: using nhr algo inter-server.");
     } else if (UseInterServerNHRV1Algo(algType_)) {
-        executor.reset(new (std::nothrow) BroadcastNHRV1(dispatcher_));
+        tempAlg.reset(new (std::nothrow) BroadcastNHRV1(dispatcher_));
         HCCL_INFO("broadcast comm: using nhr_v1 algo inter-server.");
     } else if (UseInterServerNBAlgo(algType_)) {
         if (ShouldUseBinaryBroadcastOfNB(curSize, combinedCommInfo.localRankSize, topoAttr_.userRankSize,
                 topoAttr_.deviceNumPerAggregation)) {
-            executor.reset(new (std::nothrow) BroadcastNBBinary(dispatcher_));
+            tempAlg.reset(new (std::nothrow) BroadcastNBBinary(dispatcher_));
         } else {
-            executor.reset(new (std::nothrow) BroadcastNB(dispatcher_));
+            tempAlg.reset(new (std::nothrow) BroadcastNB(dispatcher_));
         }
         HCCL_INFO("broadcast comm: using nonuniform-bruck algo inter-server.");
     } else {
-        executor.reset(new (std::nothrow) BroadcastRing(dispatcher_));
+        tempAlg.reset(new (std::nothrow) BroadcastRing(dispatcher_));
         HCCL_INFO("broadcast comm: using ring algo inter-server.");
     }
-    CHK_SMART_PTR_NULL(executor);
+    CHK_SMART_PTR_NULL(tempAlg);
 
     // 获取root
     u32 rootRank = 0;
     CHK_RET(GetRankByUserRank(commPlane, COMM_INDEX_0, param.root, rootRank));
 
-    CHK_RET(executor->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
+    CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
                 param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, rootRank));
-    CHK_RET(RunTemplate(executor, combinedCommInfo));
+    CHK_RET(RunTemplate(tempAlg, combinedCommInfo));
 
     return HCCL_SUCCESS;
 }

@@ -97,9 +97,9 @@ HcclResult CollScatterRingExecutor::KernelRun(const OpParam &param, ExecMem &exe
     DeviceMem scatterRingOutput = execMem.inputMem.range(serverSliceOffset, serverSliceSize);
     CHK_SMART_PTR_NULL(scatterRingOutput);
 
-    std::unique_ptr<ExecutorBase> outerExecutor;
-    outerExecutor.reset(new (std::nothrow) ScatterRing(dispatcher_));
-    CHK_SMART_PTR_NULL(outerExecutor);
+    std::unique_ptr<AlgTemplateBase> outerTempAlg;
+    outerTempAlg.reset(new (std::nothrow) ScatterRing(dispatcher_));
+    CHK_SMART_PTR_NULL(outerTempAlg);
 
     // 偏移需要带入prepare
     u32 rootRankOuter = 0;
@@ -109,10 +109,10 @@ HcclResult CollScatterRingExecutor::KernelRun(const OpParam &param, ExecMem &exe
             rootRankOuter, topoAttr_.userRank, subRoot),
         HCCL_E_INTERNAL);
 
-    CHK_RET(outerExecutor->Prepare(scatterRingInput, scatterRingOutput, execMem.inputMem, execMem.count,
+    CHK_RET(outerTempAlg->Prepare(scatterRingInput, scatterRingOutput, execMem.inputMem, execMem.count,
         param.DataDes.dataType, stream, HCCL_REDUCE_RESERVED, rootRankOuter, dataSegsSlice, serverSliceOffset));
 
-    HcclResult ret = RunTemplate(outerExecutor, level0CommInfo);
+    HcclResult ret = RunTemplate(outerTempAlg, level0CommInfo);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollScatterRingExecutor][KernelRun]scatter(ring) RunTemplate failed,return[%d]", ret),
         ret);

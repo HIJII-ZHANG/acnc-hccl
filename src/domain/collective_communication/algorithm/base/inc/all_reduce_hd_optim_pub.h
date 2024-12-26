@@ -11,13 +11,13 @@
 #ifndef ALL_REDUCE_HD_OPTIM_PUB_H
 #define ALL_REDUCE_HD_OPTIM_PUB_H
 
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 #include "mem_host_pub.h"
 #include "mem_device_pub.h"
 #include "stream_pub.h"
 #include "comm_base_pub.h"
 namespace hccl {
-class AllReduceHDOptim : public ExecutorBase {
+class AllReduceHDOptim : public AlgTemplateBase {
 public:
     explicit AllReduceHDOptim(const HcclDispatcher dispatcher, const u64 reduceAttrBitMap,
         std::vector<Stream> &meshStreams, std::vector<std::shared_ptr<LocalNotify>> &meshSignal,

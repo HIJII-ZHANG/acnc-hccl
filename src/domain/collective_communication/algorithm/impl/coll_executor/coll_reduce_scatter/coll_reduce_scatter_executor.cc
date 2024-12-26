@@ -42,6 +42,10 @@ HcclResult CollReduceScatterExecutor::Orchestrate(OpParam& param, AlgResourceRes
         execMem.outputMem = algRes.paramOutputMem;
         execMem.scratchMem = algRes.scratchMem;
         ret = KernelRun(param, execMem);
+        if (param.isPostSync == true) {
+            // post Sync
+            CHK_RET(InplaceOpSync(param, execMem));
+        }
     } else if (topoAttr_.userRankSize == 1) {
         ExecMem execMem;
         execMem.count = param.DataDes.count;
@@ -84,7 +88,8 @@ HcclResult CollReduceScatterExecutor::Orchestrate(OpParam& param, AlgResourceRes
 u64 CollReduceScatterExecutor::CalcLoopMaxCount(const u32 unitSize)
 {
     // 中转内存单次最多能够接受的output count
-    u64 maxCountPerLoop = inCCLbufferSize_ / (topoAttr_.userRankSize * unitSize);
+    u64 maxCountPerLoop = inCCLbufferSize_ / topoAttr_.userRankSize / HCCL_MIN_SLICE_ALIGN
+        * HCCL_MIN_SLICE_ALIGN / unitSize;
     HCCL_INFO("[CollReduceScatterExecutor][CalcLoopMaxCount]" \
         "using default maxCountPerLoop[%llu] as CCLBuffSize / (userRankSize * unitSize).", maxCountPerLoop);
     return maxCountPerLoop;
@@ -92,9 +97,6 @@ u64 CollReduceScatterExecutor::CalcLoopMaxCount(const u32 unitSize)
 
 bool CollReduceScatterExecutor::IsHugeData(const u64 curSize, OpParam *param)
 {
-    if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT) {
-        return true;
-    }
     bool hugeData = (curSize * topoAttr_.userRankSize / HCCL_INTERNODE_MAX_DATA_RATE > RDMA_SEND_MAX_SIZE) ||
                             (curSize > SDMA_SEND_MAX_SIZE);
     return hugeData;
@@ -274,6 +276,44 @@ std::vector<std::vector<Slice>> CollReduceScatterExecutor::ReduceScatterRingSlic
             multiStreamSlice = PrepareMultiRingSlice(dataSegsSlice, tag, false, topoAttr_.nicList);
         } else {
             multiStreamSlice = PrepareMultiRingSlice(dataSegsSlice, tag, true, topoAttr_.nicList);
+        }
+    } else {
+        multiStreamSlice.push_back(dataSegsSlice);
+    }
+
+    return multiStreamSlice;
+}
+
+std::vector<std::vector<Slice>> CollReduceScatterExecutor::AnyPathReduceScatterRingSlicePrepare(u32 ringNum,
+    u32 sliceNum, bool useInlineReduce, DeviceMem& outputMem, std::vector<Slice>& dataSegsSlice, const std::string &tag)
+{
+    std::vector<std::vector<Slice>> multiStreamSlice;
+    u64 outputMenSize = outputMem.size();
+    dataSegsSlice.clear();
+    Slice sliceTemp;
+    for (u32 i = 0; i < sliceNum; i++) {    // 根据数据量算每个环上数据的偏移和大小
+        sliceTemp.size = outputMenSize;
+        sliceTemp.offset = outputMenSize * i;
+        dataSegsSlice.push_back(sliceTemp);
+    }
+
+    // 再将每个 slice 划分为 ringNum 份
+    if (ringNum == OUTER_PLANE_NUM_IN_8PRING) {
+        if (useInlineReduce) {
+            multiStreamSlice = AnyPathPrepareMultiRingSlice(dataSegsSlice, tag);
+        } else if (outputMem.size() % CCE_REDUCE_ALIGN_SIZE == 0) {
+            multiStreamSlice = AnyPathPrepareMultiRingSlice(dataSegsSlice, tag);
+        } else {
+            multiStreamSlice = AnyPathPrepareMultiRingSlice(dataSegsSlice, tag, true);
+        }
+    } else if (ringNum == OUTER_PLANE_NUM_IN_NPRING_DOUBLE) {
+        // 双环场景，需要传入正确的 niclist (不涉及网口裁剪)
+        if (useInlineReduce) {
+            multiStreamSlice = AnyPathPrepareMultiRingSlice(dataSegsSlice, tag, false, topoAttr_.nicList);
+        } else if (outputMem.size() % CCE_REDUCE_ALIGN_SIZE == 0) {
+            multiStreamSlice = AnyPathPrepareMultiRingSlice(dataSegsSlice, tag, false, topoAttr_.nicList);
+        } else {
+            multiStreamSlice = AnyPathPrepareMultiRingSlice(dataSegsSlice, tag, true, topoAttr_.nicList);
         }
     } else {
         multiStreamSlice.push_back(dataSegsSlice);

@@ -931,8 +931,8 @@ HcclResult HcomDestroyOneDevice(HcomInfo &hcomInfo)
     }
 
     /* 关键状态记录 */
-    HCCL_RUN_INFO("[HCCL_TRACE]hcom destroy complete,take time [%lld]us, rankNum[%u], rank[%u]",
-        DURATION_US(TIME_NOW() - startut), hcomInfo.rankTable.rankNum, hcomInfo.params.rank);
+    HCCL_USER_CRITICAL_LOG("hcom destroy complete,take time [%lld]us, group[%s], rankNum[%u], rank[%u]",
+        DURATION_US(TIME_NOW() - startut), hcomInfo.params.identifier.c_str(), hcomInfo.rankTable.rankNum, hcomInfo.params.rank);
 
     return HCCL_SUCCESS;
 }

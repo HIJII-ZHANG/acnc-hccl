@@ -43,7 +43,7 @@ HcclResult CollRunAlltoAllDirectFullmesh::Orchestrate(OpParam& param, AlgResourc
 
     HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());
 
-    HCCL_INFO("tag[%s], AlltoAllDirectFullmesh executor orchestrate success, take time [%lld]us.",
+    HCCL_INFO("tag[%s], AlltoAllDirectFullmesh tempAlg orchestrate success, take time [%lld]us.",
         param.tag.c_str(), DURATION_US(TIME_NOW() - startut));
 
     return HCCL_SUCCESS;
@@ -56,22 +56,34 @@ HcclOpMetaInfo CollRunAlltoAllDirectFullmesh::GetOpMeta(HcclCMDType opType, cons
     return opMeta;
 }
 
+HcclResult CollRunAlltoAllDirectFullmesh::GetLocalSDMAGroupInfo(const u32 userRank,
+    u32& devNumInlocalPod, u32& rankIdxInPod)
+{
+    (void) userRank;
+    if (topoMatcher_->GetExternalInputInterHccsDisable()) {
+        CHK_RET(topoMatcher_->GetLocalServerRankSize(topoAttr_.userRank, devNumInlocalPod, rankIdxInPod));
+    } else {
+        CHK_RET(topoMatcher_->GetLocalSuperPodRankSize(topoAttr_.userRank, devNumInlocalPod, rankIdxInPod));
+    }
+    CHK_PRT_RET(devNumInlocalPod == INVALID_VALUE_RANKSIZE,
+        HCCL_ERROR("[CollRunAlltoAllDirectFullmesh][GetLocalSDMAGroupInfo]get local superPod total ranksize failed."),
+        HCCL_E_PARA);
+    return HCCL_SUCCESS;
+}
+
 HcclResult CollRunAlltoAllDirectFullmesh::CalcStreamNum(u32& streamNum)
 {
     // 每个超节点内的卡数
     u32 devNumInlocalPod = INVALID_VALUE_RANKSIZE;
     u32 rankIdxInPod = INVALID_VALUE_RANKID;
-    CHK_RET(topoMatcher_->GetLocalSuperPodRankSize(topoAttr_.userRank, devNumInlocalPod, rankIdxInPod));
-    CHK_PRT_RET(devNumInlocalPod == INVALID_VALUE_RANKSIZE,
-        HCCL_ERROR("[CollRunAlltoAllDirectFullmesh][KernelRun]get local superPod total ranksize failed."),
-        HCCL_E_PARA);
+    CHK_RET(GetLocalSDMAGroupInfo(topoAttr_.userRank, devNumInlocalPod, rankIdxInPod));
 
     // 单超节点场景需要的从流数量
     streamNum = (devNumInlocalPod > ALLTOALLV_DIRECT_FULLMESH_SDMA_CONCURRENT_SIZE) ?
         (ALLTOALLV_DIRECT_FULLMESH_SDMA_CONCURRENT_SIZE) : (devNumInlocalPod);
 
     // 多超节点场景下，RDMA会设置独立的并发度
-    if (topoAttr_.superPodNum > 1) {
+    if ((topoAttr_.userRankSize - devNumInlocalPod) > 0) {
         streamNum += 1; // 一条从流专门用来管理超节点间的RDMA通信
         u32 totalRdmaRankNum = topoAttr_.userRankSize - devNumInlocalPod;
         streamNum += (totalRdmaRankNum > ALLTOALLV_DIRECT_FULLMESH_RDMA_CONCURRENT_SIZE) ?
@@ -245,10 +257,7 @@ HcclResult CollRunAlltoAllDirectFullmesh::KernelRun(const OpParam &param, ExecMe
     // 获取当前超节点内总卡数
     u32 devNumInlocalPod = INVALID_VALUE_RANKSIZE;
     u32 rankIdxInPod = INVALID_VALUE_RANKID;
-    CHK_RET(topoMatcher_->GetLocalSuperPodRankSize(topoAttr_.userRank, devNumInlocalPod, rankIdxInPod));
-    CHK_PRT_RET(devNumInlocalPod == INVALID_VALUE_RANKSIZE,
-        HCCL_ERROR("[CollRunAlltoAllDirectFullmesh][KernelRun]get local superPod total ranksize failed."),
-        HCCL_E_PARA);
+    CHK_RET(GetLocalSDMAGroupInfo(topoAttr_.userRank, devNumInlocalPod, rankIdxInPod));
 
     // 获取通信域
     CHK_RET(CheckCommSize(COMM_COMBINE_ORDER, COMM_INDEX_0 + 1));
@@ -256,20 +265,26 @@ HcclResult CollRunAlltoAllDirectFullmesh::KernelRun(const OpParam &param, ExecMe
 
     CHK_RET(AddSubStreamToProfiling());
 
+    bool isSuPodAsym = false;
+    if (topoAttr_.superPodNum > 1) {
+        isSuPodAsym = (topoAttr_.multiModuleDiffDeviceNumMode || topoAttr_.multiSuperPodDiffServerNumMode);
+    } else {
+        isSuPodAsym = topoMatcher_->GetExternalInputInterHccsDisable() && topoAttr_.multiModuleDiffDeviceNumMode;
+    }
+
     // 执行
-    std::unique_ptr<AlltoAllVDirectFullMesh> executor = nullptr;
-    executor.reset(new (std::nothrow) AlltoAllVDirectFullMesh(dispatcher_, const_cast<Stream&>(param.stream),
-        topoAttr_.userRank,
-        topoAttr_.userRankSize, outerCommInfo.links, localSendRecvInfo_,
-        topoAttr_.superPodNum, devNumInlocalPod, rankIdxInPod));
+    std::unique_ptr<AlltoAllVDirectFullMesh> tempAlg = nullptr;
+    tempAlg.reset(new (std::nothrow) AlltoAllVDirectFullMesh(dispatcher_, const_cast<Stream&>(param.stream),
+        topoAttr_.userRank, topoAttr_.userRankSize, outerCommInfo.links, localSendRecvInfo_,
+        devNumInlocalPod, rankIdxInPod));
 
-    CHK_SMART_PTR_NULL(executor);
+    CHK_SMART_PTR_NULL(tempAlg);
 
-    CHK_RET(executor->Prepare(algResResp_->paramInputMem, algResResp_->paramOutputMem, execMem.inputMem,
+    CHK_RET(tempAlg->Prepare(algResResp_->paramInputMem, algResResp_->paramOutputMem, execMem.inputMem,
         execMem.outputMem, workflowMode_,algResResp_->slaveStreams, algResResp_->notifiesM2S,
-        algResResp_->notifiesS2M));
+        algResResp_->notifiesS2M, isSuPodAsym));
 
-    CHK_RET(executor->RunAsync());
+    CHK_RET(tempAlg->RunAsync());
 
     HCCL_INFO("[CollRunAlltoAllDirectFullmesh] excutor run success.");
     if (param.isPostSync == true) {

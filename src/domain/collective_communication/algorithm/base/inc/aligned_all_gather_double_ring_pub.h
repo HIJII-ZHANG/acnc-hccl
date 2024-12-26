@@ -11,10 +11,10 @@
 #ifndef ALIGNED_ALL_GATHER_DOUBLE_RING_PUB_H
 #define ALIGNED_ALL_GATHER_DOUBLE_RING_PUB_H
 
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 
 namespace hccl {
-class AlignedAllGatherDoubleRing : public ExecutorBase {
+class AlignedAllGatherDoubleRing : public AlgTemplateBase {
 public:
     explicit AlignedAllGatherDoubleRing(const HcclDispatcher dispatcher, const HcomCollOpInfo *opInfo,
                                            const u32 userRank, std::vector<Stream> &subStreams,

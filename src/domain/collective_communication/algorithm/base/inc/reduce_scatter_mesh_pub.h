@@ -11,12 +11,12 @@
 #ifndef REDUCE_SCATTER_MESH_PUB_H
 #define REDUCE_SCATTER_MESH_PUB_H
 
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 #include "reducer_pub.h"
 #include "sender_pub.h"
 
 namespace hccl {
-class ReduceScatterMesh : public ExecutorBase {
+class ReduceScatterMesh : public AlgTemplateBase {
 public:
     explicit ReduceScatterMesh(const HcclDispatcher dispatcher,
                                 const u64 reduceAttrBitMap,

@@ -218,8 +218,8 @@ HcclResult AlltoAllOperator::SelectAlgforAlltoAll(const OpParam& param, std::str
     if (userRankSize_ == 1 && GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && !param.aicpuUnfoldMode) {
         algName = "RunAlltoAllSingleExecutor";
         return HCCL_SUCCESS ;
-    } else if ((IsSupportDirectFullmeshForAlltoallv(param, deviceType_, useSuperPodMode_, serverNum_,
-        isSingleMeshAggregation_, userRankSize_) || param.aicpuUnfoldMode) && !IsDirectFullMeshNotSupportAsym()) {
+    } else if (IsSupportDirectFullmeshForAlltoallv(param, deviceType_, useSuperPodMode_, serverNum_,
+        isSingleMeshAggregation_, userRankSize_) || param.aicpuUnfoldMode) {
         algName = "RunAlltoAllDirectFullmesh";
         HCCL_INFO("[SelectAlgforAlltoAll] all_to_all algName is [%s]", algName.c_str());
         return HCCL_SUCCESS;
@@ -261,8 +261,8 @@ HcclResult AlltoAllOperator::SelectAlg(const std::string& tag, const OpParam& pa
         HCCL_ERROR("[SelectAlgforAlltoAll][SelectAlg]tag[%s], Alltoall failed, return[%d]", tag.c_str(), ret), ret);
 
     if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-        if ((IsSupportDirectFullmeshForAlltoallv(param, deviceType_, useSuperPodMode_, serverNum_,
-            isSingleMeshAggregation_, userRankSize_) || param.aicpuUnfoldMode) && !IsDirectFullMeshNotSupportAsym()) {
+        if (IsSupportDirectFullmeshForAlltoallv(param, deviceType_, useSuperPodMode_, serverNum_,
+            isSingleMeshAggregation_, userRankSize_) || param.aicpuUnfoldMode) {
             newTag = tag + algName;
         } else {
             newTag = tag + algName + copyMode;
@@ -273,10 +273,9 @@ HcclResult AlltoAllOperator::SelectAlg(const std::string& tag, const OpParam& pa
     }
     HCCL_INFO("[SelectAlg] Alltoall newTag is [%s]", newTag.c_str());
 
-    if ((!IsSatisfyAlltoAllAivCondition(param) &&
+    if (!IsSatisfyAlltoAllAivCondition(param) &&
          !IsSupportDirectFullmeshForAlltoallv(param, deviceType_, useSuperPodMode_, serverNum_,
-            isSingleMeshAggregation_, userRankSize_) && !param.aicpuUnfoldMode) ||
-         IsDirectFullMeshNotSupportAsym()) {
+            isSingleMeshAggregation_, userRankSize_) && !param.aicpuUnfoldMode) {
         CHK_RET(SetExcutorExtraInfo(algName, param));
     }
     return ret;
@@ -351,8 +350,8 @@ bool AlltoAllOperator::JudgeIfNeedPreProcessAndGetParam(const OpParam& param,
     std::unique_ptr<PreProcessMetaInfo> &preMetaInfo)
 {
     if (param.opType == HcclCMDType::HCCL_CMD_ALLTOALLV && !IsSatisfyAlltoAllAivCondition(param)) {
-        if ((IsSupportDirectFullmeshForAlltoallv(param, deviceType_, useSuperPodMode_, serverNum_,
-            isSingleMeshAggregation_, userRankSize_) || param.aicpuUnfoldMode) && !IsDirectFullMeshNotSupportAsym()) {
+        if (IsSupportDirectFullmeshForAlltoallv(param, deviceType_, useSuperPodMode_, serverNum_,
+            isSingleMeshAggregation_, userRankSize_) || param.aicpuUnfoldMode) {
             return false;
         }
         CHK_RET(PrepareAlltoAllAddrInfo(param.All2AllDataDes.sendCounts, param.All2AllDataDes.sdispls,
@@ -415,16 +414,14 @@ bool AlltoAllOperator::IsSatisfyAlltoallPipelineCondition()
     bool multiRankPerServer = meshAggregationRankSize_ > 1;
     bool isMultiServer = ((userRankSize_ > meshAggregationRankSize_) &&
         (userRankSize_ % meshAggregationRankSize_) == 0);
-    const u32 algLevel1 = static_cast<u32>(algType_) >> HCCL_LEVEL_ALGO_WIDTH;
-    bool satisfyAlgType = (static_cast<AlgTypeLevel1>(algLevel1) == AlgTypeLevel1::ALG_LEVEL1_PIPELINE) &&
-        CalcContextNumForPipeline(HcclCMDType::HCCL_CMD_ALLTOALL) <= HCCL_FFTS_CAPACITY;
+    bool satisfyContextNum = CalcContextNumForPipeline(HcclCMDType::HCCL_CMD_ALLTOALL) <= HCCL_FFTS_CAPACITY;
     HCCL_DEBUG("[AlltoAllOperator][IsSatisfyAlltoallPipelineCondition]multiRankPerServer %u, "
-        "isMultiServer %u, satisfyAlgType, %u, multiModuleDiffDeviceNumMode_ %u", multiRankPerServer,
-        isMultiServer, satisfyAlgType, multiModuleDiffDeviceNumMode_);
-    bool res = (deviceType_ == DevType::DEV_TYPE_910B && satisfyAlgType && multiRankPerServer &&
+        "isMultiServer %u, satisfyContextNum, %u, multiModuleDiffDeviceNumMode_ %u", multiRankPerServer,
+        isMultiServer, satisfyContextNum, multiModuleDiffDeviceNumMode_);
+    bool res = (deviceType_ == DevType::DEV_TYPE_910B && satisfyContextNum && multiRankPerServer &&
         GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && isMultiServer &&
         !multiModuleDiffDeviceNumMode_ && cclBigEnough);
-    if (satisfyAlgType && !res) {
+    if (satisfyContextNum && !res) {
         HCCL_WARNING("alltoall algo type is set to pipeline, but cclBigEnough is %u, multiRankPerServer is %u, "
             "isMultiServer is %u", cclBigEnough, multiRankPerServer, isMultiServer);
     }
@@ -484,11 +481,6 @@ HcclResult AlltoAllOperator::GetAlltoAllStagedWorkSpaceMemSize(
 
     // 计算结果
     return HCCL_SUCCESS;
-}
-
-bool AlltoAllOperator::IsDirectFullMeshNotSupportAsym()
-{
-    return (multiModuleDiffDeviceNumMode_ || multiSuperPodDiffServerNumMode_) && (superPodNum_ > 1);
 }
 
 REGISTER_OP(HcclCMDType::HCCL_CMD_ALLTOALLV, AlltoAllV, AlltoAllOperator);

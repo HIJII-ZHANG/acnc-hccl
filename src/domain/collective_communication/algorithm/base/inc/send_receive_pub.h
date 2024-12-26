@@ -11,15 +11,16 @@
 #ifndef SEND_RECEIVE_PUB_H
 #define SEND_RECEIVE_PUB_H
 
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 
 namespace hccl {
-class SendReceive : public ExecutorBase {
+class SendReceive : public AlgTemplateBase {
 public:
     explicit SendReceive(const HcclDispatcher dispatcher,
                          const std::shared_ptr<Transport>& link,
                          const u32 peerRank = INVALID_VALUE_RANKID,
-                         const u64 chunkNum = HCCL_CHUNK_SIZE);
+                         const u64 chunkNum = HCCL_CHUNK_SIZE,
+                         bool retryEnable = false);
 
     ~SendReceive() override;
 
@@ -58,6 +59,8 @@ private:
     const u64 chunkSize_;  /** 单次操作的最大buffer size(字节) */
 
     // u32 srTag_;               /** send receive使用的标签 */
+
+    bool retryEnable_;    /** 判断重执行场景是否开启 */
 };
 } // namespace hccl
 

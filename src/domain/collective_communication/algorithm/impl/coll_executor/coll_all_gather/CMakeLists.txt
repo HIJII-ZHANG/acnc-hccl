@@ -9,6 +9,9 @@ set(src_list
   ${CMAKE_CURRENT_SOURCE_DIR}/coll_all_gather_single_rank_executor.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/coll_all_gather_double_ring_concurrent_executor.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/coll_aligned_all_gather_double_ring_for_910_93_executor.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/coll_all_gather_small_count_executor.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/coll_all_gather_mesh_aiv_executor.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/coll_all_gather_mesh_aiv_smallcount_executor.cc
 )
 
 target_sources(hccl_alg PRIVATE

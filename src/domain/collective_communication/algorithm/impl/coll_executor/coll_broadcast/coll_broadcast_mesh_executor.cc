@@ -73,18 +73,18 @@ HcclResult CollBroadcastMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
 {
     u32 perDataSize = SIZE_TABLE[param.DataDes.dataType];
 
-    std::unique_ptr<ExecutorBase> outer1Executor;
-    std::unique_ptr<ExecutorBase> innerExecutor;
-    std::unique_ptr<ExecutorBase> outer2Executor;
+    std::unique_ptr<AlgTemplateBase> outer1TempAlg;
+    std::unique_ptr<AlgTemplateBase> innerTempAlg;
+    std::unique_ptr<AlgTemplateBase> outer2TempAlg;
 
     SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
     u32 commIndex = outerCommInfo.localRank;
     CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
 
-    outer1Executor.reset(
+    outer1TempAlg.reset(
         new (std::nothrow) ScatterMesh(dispatcher_, outerCommInfo.localRank, outerCommInfo.localRankSize));
-    CHK_SMART_PTR_NULL(outer1Executor);
-    outer1Executor->CloseBarrier();
+    CHK_SMART_PTR_NULL(outer1TempAlg);
+    outer1TempAlg->CloseBarrier();
 
     /* 内层topo:all_reduce */
     /* 外层所有rank均参与内层的broadcast计算，所以此处对rank不作限制，但是每个rank需找到自己所在的内层通信域 */
@@ -101,42 +101,42 @@ HcclResult CollBroadcastMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
         HCCL_DEBUG("broadcast mesh: curSize[%llu] deviceNumPerAggregation[%u] commOuterSize[%u]",
             curSize, topoAttr_.deviceNumPerAggregation, outerCommInfo.localRankSize);
         if (curSize / topoAttr_.deviceNumPerAggregation <= NHR_BCAST_SMALL_SIZE) {
-            innerExecutor.reset(new (std::nothrow) BroadcastNHROneshot(dispatcher_));
+            innerTempAlg.reset(new (std::nothrow) BroadcastNHROneshot(dispatcher_));
         } else {
-            innerExecutor.reset(new (std::nothrow) BroadcastNHR(dispatcher_));
+            innerTempAlg.reset(new (std::nothrow) BroadcastNHR(dispatcher_));
         }
         HCCL_INFO("broadcast mesh: using nhr algo inter-server.");
     } else if (UseInterServerNHRV1Algo(algType_)) {
-        innerExecutor.reset(new (std::nothrow) BroadcastNHRV1(dispatcher_));
+        innerTempAlg.reset(new (std::nothrow) BroadcastNHRV1(dispatcher_));
         HCCL_INFO("broadcast mesh: using nhr_v1 algo inter-server.");
     } else if (UseInterServerNBAlgo(algType_)) {
         const u32 innerRankSize = innerCommInfo.localRankSize;
         if (ShouldUseBinaryBroadcastOfNB(curSize / topoAttr_.deviceNumPerAggregation, innerRankSize,
                 topoAttr_.userRankSize, topoAttr_.deviceNumPerAggregation)) {
-            innerExecutor.reset(new (std::nothrow) BroadcastNBBinary(dispatcher_));
+            innerTempAlg.reset(new (std::nothrow) BroadcastNBBinary(dispatcher_));
         } else {
-            innerExecutor.reset(new (std::nothrow) BroadcastNB(dispatcher_));
+            innerTempAlg.reset(new (std::nothrow) BroadcastNB(dispatcher_));
         }
         HCCL_INFO("broadcast mesh: using nonuniform-bruck algo inter-server.");
     } else {
-        innerExecutor.reset(new (std::nothrow) BcastRecursiveHalvingDoubling(dispatcher_));
+        innerTempAlg.reset(new (std::nothrow) BcastRecursiveHalvingDoubling(dispatcher_));
         HCCL_INFO("broadcast mesh: using Recursive halving-doubling algo inter-server.");
     }
-    CHK_SMART_PTR_NULL(innerExecutor);
+    CHK_SMART_PTR_NULL(innerTempAlg);
 
     /* 外层topo:all_gather */
     if (topoAttr_.deviceType == DevType::DEV_TYPE_910B) {
-        outer2Executor.reset(
+        outer2TempAlg.reset(
             new (std::nothrow) AllGatherMeshAtomic(dispatcher_, algResResp_->slaveStreams,
             algResResp_->notifiesM2S, algResResp_->notifiesS2M, outerCommInfo.localRank, outerCommInfo.localRankSize,
             topoAttr_.userRank));
     } else {
-        outer2Executor.reset(
+        outer2TempAlg.reset(
             new (std::nothrow) AllGatherMesh(dispatcher_, algResResp_->slaveStreams, algResResp_->notifiesM2S,
             algResResp_->notifiesS2M, outerCommInfo.localRank, outerCommInfo.localRankSize,
             topoAttr_.userRank));
     }
-    CHK_SMART_PTR_NULL(outer2Executor);
+    CHK_SMART_PTR_NULL(outer2TempAlg);
 
     /* 节点内执行器 stage0 */
     u32 rootRank = 0;
@@ -145,15 +145,15 @@ HcclResult CollBroadcastMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
         HCCL_ERROR("[BroadCastOperator][BroadCastMeshExecutor]invalid root[%u] to get userrank", param.root), ret);
 
     if (ret == HCCL_SUCCESS) {
-        CHK_RET(outer1Executor->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
+        CHK_RET(outer1TempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
                 param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, rootRank, slice));
 
         u32 rankSize = outerCommInfo.localRankSize;
-        CHK_RET(outer1Executor->RegisterProfiler(
+        CHK_RET(outer1TempAlg->RegisterProfiler(
             (0 << PROF_RINGINDEX_OFFSET_OF_PLANEID)+(rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) +
             outerCommInfo.localRank, PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-        CHK_RET(RunTemplate(outer1Executor, outerCommInfo));
+        CHK_RET(RunTemplate(outer1TempAlg, outerCommInfo));
     } else {
         HCCL_ERROR("[BroadCastOperator][BroadCastMeshExecutor]invalid root[%u] to get userrank", param.root);
     }
@@ -171,16 +171,16 @@ HcclResult CollBroadcastMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
     CHK_RET(GetRankByUserRank(COMM_LEVEL1, commIndex, subUserrankRoot, subRoot));
 
     // 增加偏移参数
-    CHK_RET(innerExecutor->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, hdCount,
+    CHK_RET(innerTempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, hdCount,
                                    param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, subRoot,
                                    std::vector<Slice>(0), slice[outerCommInfo.localRank].offset));
 
     u32 rankSize = innerCommInfo.localRankSize;
-    CHK_RET(innerExecutor->RegisterProfiler((0 << PROF_RINGINDEX_OFFSET_OF_PLANEID) +
+    CHK_RET(innerTempAlg->RegisterProfiler((0 << PROF_RINGINDEX_OFFSET_OF_PLANEID) +
         (rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + innerCommInfo.localRank,
         PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-    CHK_RET(RunTemplate(innerExecutor, innerCommInfo));
+    CHK_RET(RunTemplate(innerTempAlg, innerCommInfo));
     HCCL_INFO("[BroadCastOperator][BroadCastMeshExecutor] stage1 run success");
 
     /* 节点内执行器 stage2 */
@@ -191,15 +191,15 @@ HcclResult CollBroadcastMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
                     algResResp_->slaveStreams[streamIndex].ptr(), param.stream.ptr()));
             }
         }
-        CHK_RET(outer2Executor->Prepare(execMem.outputMem, execMem.outputMem, execMem.outputMem, execMem.count,
+        CHK_RET(outer2TempAlg->Prepare(execMem.outputMem, execMem.outputMem, execMem.outputMem, execMem.count,
                                         param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, OUTER_BRIDGE_RANK_ID, slice));
 
         u32 rankSize = outerCommInfo.localRankSize;
-        CHK_RET(outer2Executor->RegisterProfiler((0 << PROF_RINGINDEX_OFFSET_OF_PLANEID) +
+        CHK_RET(outer2TempAlg->RegisterProfiler((0 << PROF_RINGINDEX_OFFSET_OF_PLANEID) +
             (rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + outerCommInfo.localRank,
             PROF_STAGE_2, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-        CHK_RET(RunTemplate(outer2Executor, outerCommInfo));
+        CHK_RET(RunTemplate(outer2TempAlg, outerCommInfo));
     }
 
     HCCL_INFO("[BroadCastOperator][BroadCastMeshExecutor] stage2 run success");

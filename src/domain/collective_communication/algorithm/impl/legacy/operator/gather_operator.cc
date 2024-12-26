@@ -60,11 +60,11 @@ HcclResult GatherOperator::Gather(const std::string &tag, void *inputPtr, void *
 HcclResult GatherOperator::GatherStarExecutor(const std::string &tag, DeviceMem &inputMem, DeviceMem &outputMem,
     u64 count, HcclDataType dataType, HcclReduceOp op, u32 root, Stream &stream)
 {
-    std::unique_ptr<ExecutorBase> gstarExecutor(new (std::nothrow) GatherStar(dispatcher_, userRank_));
-    CHK_SMART_PTR_NULL(gstarExecutor);
+    std::unique_ptr<AlgTemplateBase> gstarTemplate(new (std::nothrow) GatherStar(dispatcher_, userRank_));
+    CHK_SMART_PTR_NULL(gstarTemplate);
 
     std::vector<u32> nicRankList{0, 1};
-    CHK_RET(gstarExecutor->Prepare(inputMem, outputMem, inputMem, count, dataType, stream, op, root,
+    CHK_RET(gstarTemplate->Prepare(inputMem, outputMem, inputMem, count, dataType, stream, op, root,
         std::vector<Slice>(0), 0, nicRankList));
 
     CommInfo *currComm;
@@ -72,7 +72,7 @@ HcclResult GatherOperator::GatherStarExecutor(const std::string &tag, DeviceMem 
     CHK_PRT_RET(currComm->commOuter.size() == 0, HCCL_ERROR("commOuter size is zero"), HCCL_E_PARA);
     std::unique_ptr<CommBase> &commOuter = currComm->commOuter[COMM_INDEX_0];
     CHK_SMART_PTR_NULL(commOuter);
-    CHK_RET(commOuter->RunExecutor(gstarExecutor));
+    CHK_RET(commOuter->RunTemplateAlg(gstarTemplate));
     return HCCL_SUCCESS;
 }
 }

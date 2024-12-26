@@ -80,7 +80,7 @@ HcclResult CollBroadcastRingExecutor::KernelRun(const OpParam &param, ExecMem &e
     // 按ranksize得到内存切分slice数
     u32 sliceNum = level0CommInfo.localRankSize;
     // 将根节点数据切分成sliceNum份
-    CHK_RET(ExecutorBase::PrepareSliceData(execMem.count, perDataSize, sliceNum, 0, dataSegsSlice));
+    CHK_RET(AlgTemplateBase::PrepareSliceData(execMem.count, perDataSize, sliceNum, 0, dataSegsSlice));
     HCCL_DEBUG("[CollBroadcastRingExecutor][KernelRun] execMem.count[%llu], perDataSize[%u], sliceNum[%u], ringNum[%u] ",
                 execMem.count, perDataSize, sliceNum, ringNum);
 
@@ -122,33 +122,33 @@ HcclResult CollBroadcastRingExecutor::KernelRun(const OpParam &param, ExecMem &e
         CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
         SubCommInfo level1CommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
         u64 curSize = execMem.count * SIZE_TABLE[param.DataDes.dataType];
-        std::unique_ptr<ExecutorBase> innerExecutor;
+        std::unique_ptr<AlgTemplateBase> innerTempAlg;
         if (UseInterServerNHRAlgo(algType_)) {
             HCCL_DEBUG("broadcast ring: curSize[%llu] deviceNumPerAggregation[%u] commOuterSize[%u]",
                 curSize, topoAttr_.deviceNumPerAggregation, level0CommInfo.localRankSize);
             if (curSize / topoAttr_.deviceNumPerAggregation <= NHR_BCAST_SMALL_SIZE) {
-                innerExecutor.reset(new (std::nothrow) BroadcastNHROneshot(dispatcher_));
+                innerTempAlg.reset(new (std::nothrow) BroadcastNHROneshot(dispatcher_));
             } else {
-                innerExecutor.reset(new (std::nothrow) BroadcastNHR(dispatcher_));
+                innerTempAlg.reset(new (std::nothrow) BroadcastNHR(dispatcher_));
             }
             HCCL_INFO("broadcast ring: using nhr algo inter-server.");
         } else if (UseInterServerNHRV1Algo(algType_)) {
-            innerExecutor.reset(new (std::nothrow) BroadcastNHRV1(dispatcher_));
+            innerTempAlg.reset(new (std::nothrow) BroadcastNHRV1(dispatcher_));
             HCCL_INFO("broadcast ring: using nhr_v1 algo inter-server.");
         } else if (UseInterServerNBAlgo(algType_)) {
             const u32 innerRankSize = level1CommInfo.localRankSize;
             if (ShouldUseBinaryBroadcastOfNB(curSize / topoAttr_.deviceNumPerAggregation, innerRankSize,
                                              topoAttr_.userRankSize, topoAttr_.deviceNumPerAggregation)) {
-                innerExecutor.reset(new (std::nothrow) BroadcastNBBinary(dispatcher_));
+                innerTempAlg.reset(new (std::nothrow) BroadcastNBBinary(dispatcher_));
             } else {
-                innerExecutor.reset(new (std::nothrow) BroadcastNB(dispatcher_));
+                innerTempAlg.reset(new (std::nothrow) BroadcastNB(dispatcher_));
             }
             HCCL_INFO("broadcast ring: using nonuniform-bruck algo inter-server.");
         } else {
-            innerExecutor.reset(new (std::nothrow) BcastRecursiveHalvingDoubling(dispatcher_));
+            innerTempAlg.reset(new (std::nothrow) BcastRecursiveHalvingDoubling(dispatcher_));
             HCCL_INFO("broadcast ring: using Recursive halving-doubling algo inter-server.");
         }
-        CHK_SMART_PTR_NULL(innerExecutor);
+        CHK_SMART_PTR_NULL(innerTempAlg);
 
         u32 subUserrankRoot = topoMatcher_->GetSubRootUserRank(topoAttr_.userRank, param.root);
         CHK_PRT_RET(subUserrankRoot == INVALID_VALUE_RANKID,
@@ -160,13 +160,13 @@ HcclResult CollBroadcastRingExecutor::KernelRun(const OpParam &param, ExecMem &e
         CHK_RET(GetRankByUserRank(COMM_LEVEL1, commIndex, subUserrankRoot, planeRoot));
 
         // 节点间的hd 使用环0来记录
-        CHK_RET(innerExecutor->Prepare(execMem.inputMem, execMem.inputMem, execMem.outputMem, hdCount, param.DataDes.dataType,
+        CHK_RET(innerTempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.outputMem, hdCount, param.DataDes.dataType,
                 param.stream, HCCL_REDUCE_RESERVED, planeRoot, std::vector<Slice>(0), dataSegsSlice[segmentIdx].offset));
 
-        CHK_RET(innerExecutor->RegisterProfiler((level1RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1LocalRank, \
+        CHK_RET(innerTempAlg->RegisterProfiler((level1RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1LocalRank, \
             PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-        CHK_RET(RunTemplate(innerExecutor, level1CommInfo));
+        CHK_RET(RunTemplate(innerTempAlg, level1CommInfo));
     }
     HCCL_INFO("broadcast 8PringHD stage1 run success");
 

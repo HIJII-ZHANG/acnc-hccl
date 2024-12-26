@@ -13,6 +13,7 @@
 #include "rank_consistent.h"
 #include "executor_impl.h"
 #include "coll_alg_op_registry.h"
+#include "hccl_aiv.h"
 
 namespace hccl {
 AllGatherOperator::AllGatherOperator(AlgConfigurator* algConfigurator, CCLBufferManager &cclBufferManager,
@@ -91,6 +92,19 @@ HcclResult AllGatherOperator::SelectAlgfor910B(const OpParam& param, std::string
         topoType_ == TopoType::TOPO_TYPE_2P_MESH || topoType_ == TopoType::TOPO_TYPE_1P_MESH;
     bool isRingTopo = topoType_ == TopoType::TOPO_TYPE_NP_SINGLE_RING;
 
+    bool isAivMode = GetExternalInputHcclAivMode() && isSingleMeshAggregation_ &&
+        IsSupportAIVCopy(param.DataDes.dataType);
+    if (isAivMode) {
+        if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && dataSize <= AIV_ALL_GATHER_BIG_SIZE) {
+            algName = "AllGatherMeshAivSmallCountExecutor"; 
+            HCCL_INFO("[SelectAlgfor910BAIV] AllGather SelectAlgfor910B is algName [%s]", algName.c_str());
+        } else {
+            algName = "AllGatherMeshAivExecutor"; 
+            HCCL_INFO("[SelectAlgfor910BAIV] AllGather SelectAlgfor910B is algName [%s]", algName.c_str());
+        }
+        return HCCL_SUCCESS;
+    }
+
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && !isSingleMeshAggregation_) {
         u64 cclBufferSize = cclBufferManager_.GetOutCCLbufferSize() / userRankSize_;
         std::string algTypeLevel1Tag;
@@ -130,16 +144,40 @@ HcclResult AllGatherOperator::SelectAlgfor910B(const OpParam& param, std::string
     return HCCL_SUCCESS;
 }
 
+bool AllGatherOperator::SmallCountOptimMultiServer(const OpParam& param)
+{
+    u32 unitSize = SIZE_TABLE[param.DataDes.dataType];
+    u64 totalSize = param.DataDes.count * unitSize * userRankSize_;
+    void *commInputPtr = nullptr;
+    u64 commInputSize = 0;
+    CHK_RET(cclBufferManager_.GetInCCLbuffer(commInputPtr, commInputSize));
+    bool dmaReduceLimit= (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) &&
+        (((deviceNumPerAggregation_ % HCCL_DEVICE_NUM_FOUR == 0) && (commInputSize * HCCL_DEVICE_NUM_FOUR < totalSize)) ||
+        ((deviceNumPerAggregation_ % HCCL_DEVICE_NUM_TWO == 0) && (commInputSize * HCCL_DEVICE_NUM_TWO < totalSize)) ||
+        ((deviceNumPerAggregation_ % HCCL_DEVICE_NUM_TWO != 0) && (commInputSize < totalSize)) || param.retryEnable);
+    bool smallCountOptimMultiServer =
+        (deviceNumPerAggregation_ > HCCL_DEVICE_NUM_TWO) && (serverNum_ != 1) && (superPodNum_ == 1) &&
+        (((deviceNumPerAggregation_ % HCCL_DEVICE_NUM_FOUR == 0) && (param.DataDes.count * unitSize <= HCCL_SMALL_COUNT_4_MB)) ||
+        ((deviceNumPerAggregation_ % HCCL_DEVICE_NUM_FOUR != 0) && (param.DataDes.count * unitSize <= HCCL_SMALL_COUNT_1_MB))) &&
+        !dmaReduceLimit && !GetExternalInputInterHccsDisable();
+    return smallCountOptimMultiServer;
+}
+
 HcclResult AllGatherOperator::SelectAlgfor91093(const OpParam& param, std::string& algName)
 {
-    bool smallCountOptim91093 = (serverNum_ == 1) &&
+    u32 unitSize = SIZE_TABLE[param.DataDes.dataType];
+    bool smallCountOptimSingleServer = (serverNum_ == 1) &&
         ((workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) ||
         (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && !param.aicpuUnfoldMode)) &&
-        (param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] <= HCCL_SMALL_COUNT_2_MB) &&
-        (deviceNumPerAggregation_ > HCCL_DEVICE_NUM_TWO);
+        (param.DataDes.count * unitSize <= HCCL_SMALL_COUNT_2_MB) &&
+        (deviceNumPerAggregation_ > HCCL_DEVICE_NUM_TWO) && !GetExternalInputInterHccsDisable();
+    bool smallCountOptimMultiServer = SmallCountOptimMultiServer(param);
+        
     if (multiModuleDiffDeviceNumMode_ || multiSuperPodDiffServerNumMode_) {
         algName = "AllGatherComm";
-    } else if (smallCountOptim91093) {
+    } else if (smallCountOptimMultiServer) {
+        algName = "AllGatherSmallCount";
+    } else if (smallCountOptimSingleServer) {
         if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
             algName = "AllGatherMeshOpbaseExecutor";
         } else {

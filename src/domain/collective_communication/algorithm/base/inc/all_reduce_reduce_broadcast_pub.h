@@ -11,10 +11,10 @@
 #ifndef ALL_REDUCE_REDUCE_BROADCAST_PUB_H
 #define ALL_REDUCE_REDUCE_BROADCAST_PUB_H
 
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 
 namespace hccl {
-class AllReduceReduceBcast : public ExecutorBase {
+class AllReduceReduceBcast : public AlgTemplateBase {
 public:
     explicit AllReduceReduceBcast(const HcclDispatcher dispatcher, const u64 reduceAttrBitMap,
                                   std::vector<Stream> &meshStreams,

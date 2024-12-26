@@ -11,12 +11,12 @@
 #ifndef SCATTER_DOUBLE_RING_DIRECT_PUB_H
 #define SCATTER_DOUBLE_RING_DIRECT_PUB_H
 
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 #include "reducer_pub.h"
 #include "sender_pub.h"
 
 namespace hccl {
-class ScatterDoubleRingDirect : public ExecutorBase {
+class ScatterDoubleRingDirect : public AlgTemplateBase {
 public:
     explicit ScatterDoubleRingDirect(const HcclDispatcher dispatcher, const HcomCollOpInfo *opInfo, const u32 userRank,
                                      const u32 subRingRank, std::vector<Stream> &subStreams,

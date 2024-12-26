@@ -66,9 +66,6 @@ HcclResult CollAllReduceReducePlusBcastExecutor::CalcLevel0CommInfo(TransportMem
 
 bool CollAllReduceReducePlusBcastExecutor::IsHugeData(const u64 curSize)
 {
-    if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT) {
-        return true;
-    }
     bool hugeData = curSize / topoAttr_.deviceNumPerAggregation / HCCL_INTERNODE_MAX_DATA_RATE > RDMA_SEND_MAX_SIZE ||
         curSize > SDMA_SEND_MAX_SIZE;
     return hugeData;
@@ -84,18 +81,18 @@ HcclResult CollAllReduceReducePlusBcastExecutor::KernelRun(const OpParam &param,
 {
     u64 reduceAttr = GetReduceAttr(execMem.inputMem, execMem.outputMem, param.DataDes.dataType, param.reduceType);
 
-    std::unique_ptr<ExecutorBase> reduceExecutor;
-    reduceExecutor.reset(new (std::nothrow) ReduceRecursiveHalvingDoubling(dispatcher_, reduceAttr));
-    CHK_SMART_PTR_NULL(reduceExecutor);
+    std::unique_ptr<AlgTemplateBase> reduceTempAlg;
+    reduceTempAlg.reset(new (std::nothrow) ReduceRecursiveHalvingDoubling(dispatcher_, reduceAttr));
+    CHK_SMART_PTR_NULL(reduceTempAlg);
 
     std::vector<u32> nicRankList{0, 1};
-    CHK_RET(reduceExecutor->Prepare(execMem.inputMem, execMem.outputMem, execMem.inputMem, execMem.count,
+    CHK_RET(reduceTempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.inputMem, execMem.count,
         param.DataDes.dataType, param.stream, param.reduceType, 0,
         std::vector<Slice>(0), 0, nicRankList));
 
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
     SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
-    CHK_RET(RunTemplate(reduceExecutor, outerCommInfo));
+    CHK_RET(RunTemplate(reduceTempAlg, outerCommInfo));
 
     // AllReduce算子实现为input->output, 所以此处将reduce算子的结果从output拷贝到input
     HcclResult ret = HcclD2DMemcpyAsync(dispatcher_,
@@ -107,60 +104,60 @@ HcclResult CollAllReduceReducePlusBcastExecutor::KernelRun(const OpParam &param,
 
     // 执行server间allreduce
     if (topoAttr_.devicePhyId == 0) {
-        std::unique_ptr<ExecutorBase> allreduceExecutor = nullptr;
+        std::unique_ptr<AlgTemplateBase> allreduceTempAlg = nullptr;
         if (UseInterServerRingAlgo(algType_)) {
-            allreduceExecutor.reset(new (std::nothrow) AllReduceRing(dispatcher_, reduceAttr));
+            allreduceTempAlg.reset(new (std::nothrow) AllReduceRing(dispatcher_, reduceAttr));
             HCCL_INFO("allreduce ring: using ring algo inter-server.");
         } else if (UseInterServerNHRAlgo(algType_)) {
             u64 curSize = execMem.count * SIZE_TABLE[param.DataDes.dataType]; // 单位 byte
             HCCL_DEBUG("allreduce recursive hd: curSize[%llu] deviceNumPerAggregation[%u] commOuterSize[%u]",
                 curSize, topoAttr_.deviceNumPerAggregation, outerCommInfo.localRankSize);
             if (curSize / topoAttr_.deviceNumPerAggregation <= NHR_ALLREDUCE_SMALL_SIZE) {
-                allreduceExecutor.reset(new (std::nothrow) AllReduceNHROneshot(dispatcher_, reduceAttr));
+                allreduceTempAlg.reset(new (std::nothrow) AllReduceNHROneshot(dispatcher_, reduceAttr));
             } else {
-                allreduceExecutor.reset(new (std::nothrow) AllReduceNHR(dispatcher_, reduceAttr));
+                allreduceTempAlg.reset(new (std::nothrow) AllReduceNHR(dispatcher_, reduceAttr));
             }
             HCCL_INFO("allreduce recursive hd: using nhr algo inter-server.");
         } else if (UseInterServerNHRV1Algo(algType_)) {
-            allreduceExecutor.reset(new (std::nothrow) AllReduceNHRV1(dispatcher_, reduceAttr));
+            allreduceTempAlg.reset(new (std::nothrow) AllReduceNHRV1(dispatcher_, reduceAttr));
             HCCL_INFO("allreduce recursive hd: using nhr_v1 algo inter-server.");
         } else if (UseInterServerAHCAlgo(algType_)) {
             // 获取通信域分组信息
             std::vector<std::vector<u32>> subGroups;
             CHK_RET(topoMatcher_->GetLevelSubGroups(commPlaneLevel1, subGroups));
-            allreduceExecutor.reset(new (std::nothrow) AllReduceAHC(dispatcher_, reduceAttr, execMem.count, subGroups));
+            allreduceTempAlg.reset(new (std::nothrow) AllReduceAHC(dispatcher_, reduceAttr, execMem.count, subGroups));
             HCCL_INFO("allreduce recursive hd: using ahc algo inter-server.");
         } else if (UseInterServerAHCBrokeAlgo(algType_)) {
             // 获取通信域分组信息
             std::vector<std::vector<u32>> subGroups;
             CHK_RET(topoMatcher_->GetLevelSubGroups(commPlaneLevel1, subGroups));
-            allreduceExecutor.reset(new (std::nothrow) AllReduceAHCBroke(dispatcher_, reduceAttr, execMem.count, subGroups));
+            allreduceTempAlg.reset(new (std::nothrow) AllReduceAHCBroke(dispatcher_, reduceAttr, execMem.count, subGroups));
             HCCL_INFO("allreduce recursive hd: using ahc-broke algo inter-server.");
         } else if (UseInterServerNBAlgo(algType_)) {
-            allreduceExecutor.reset(new (std::nothrow) AllReduceNB(dispatcher_, reduceAttr));
+            allreduceTempAlg.reset(new (std::nothrow) AllReduceNB(dispatcher_, reduceAttr));
             HCCL_INFO("allreduce recursive hd: using nb algo inter-server.");
         } else {
-            allreduceExecutor.reset(new (std::nothrow) AllReduceRecursiveHalvingDoubling(dispatcher_, reduceAttr));
+            allreduceTempAlg.reset(new (std::nothrow) AllReduceRecursiveHalvingDoubling(dispatcher_, reduceAttr));
             HCCL_INFO("allreduce recursive hd: using halving-doubling algo inter-server.");
         }
 
-        CHK_SMART_PTR_NULL(allreduceExecutor);
-        CHK_RET(allreduceExecutor->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
+        CHK_SMART_PTR_NULL(allreduceTempAlg);
+        CHK_RET(allreduceTempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
             param.DataDes.dataType, param.stream, param.reduceType, 0,
             std::vector<Slice>(0), 0, nicRankList));
 
         CHK_RET(CheckCommSize(commPlaneLevel1, COMM_INDEX_0 + 1));
         SubCommInfo innerCommInfo = GetSubCommInfo(commPlaneLevel1, COMM_INDEX_0);
-        CHK_RET(RunTemplate(allreduceExecutor, innerCommInfo));
+        CHK_RET(RunTemplate(allreduceTempAlg, innerCommInfo));
     }
 
     // 执行server内broadcast
-    std::unique_ptr<ExecutorBase> bcastExecutor;
-    bcastExecutor.reset(new (std::nothrow) BroadcastRing(dispatcher_));
-    CHK_SMART_PTR_NULL(bcastExecutor);
-    CHK_RET(bcastExecutor->Prepare(execMem.outputMem, execMem.outputMem, execMem.inputMem, execMem.count,
+    std::unique_ptr<AlgTemplateBase> bcastTempAlg;
+    bcastTempAlg.reset(new (std::nothrow) BroadcastRing(dispatcher_));
+    CHK_SMART_PTR_NULL(bcastTempAlg);
+    CHK_RET(bcastTempAlg->Prepare(execMem.outputMem, execMem.outputMem, execMem.inputMem, execMem.count,
         param.DataDes.dataType, param.stream, param.reduceType, 0));
-    CHK_RET(RunTemplate(bcastExecutor, outerCommInfo));
+    CHK_RET(RunTemplate(bcastTempAlg, outerCommInfo));
 
     return HCCL_SUCCESS;
 }

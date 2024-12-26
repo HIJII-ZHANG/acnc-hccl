@@ -11,10 +11,10 @@
 #ifndef SCATTER_MESH_PUB_H
 #define SCATTER_MESH_PUB_H
 
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 
 namespace hccl {
-class ScatterMesh : public ExecutorBase {
+class ScatterMesh : public AlgTemplateBase {
 public:
     explicit ScatterMesh(const HcclDispatcher dispatcher,
                          const u32 interRank, const u32 interRankSize);

@@ -27,21 +27,44 @@ protected:
     HcclResult CalcCommInfo(std::vector<LevelNSubCommTransport>& opTransport) override;
 
     /* *************** 算法编排 *************** */
-    HcclResult ProcessSelfSendRecvTasks(std::vector<HcclSendRecvItem*> &orderedList,
-        u32 itemNum, u32& loopStartIndex, Stream& stream);
+
     u64 CalcSendLoopMaxCount(DeviceMem& inCCLBuffer, const u32 unitSize);
     u64 CalcRecvLoopMaxCount(DeviceMem& outCCLBuffer, const u32 unitSize);
-    HcclResult GetSendRecvInfo(HcclSendRecvItem* itemPtr);
+    HcclResult ProcessSendDataSlice(Stream& stream, bool needStreamSync, bool retryEnable);
+    HcclResult ProcessRecvDataSlice(Stream& stream, bool retryEnable);
+    HcclResult CalcSendSlices(AlgResourceResponse& algRes);
+    HcclResult CalcRecvSlices(AlgResourceResponse& algRes);
+    struct SendRecvSlice {
+        u8* addr;
+        u64 size;
+        u32 remoteRank;
+        SendRecvSlice(u8* addr, u64 size, u32 remoteRank) : addr(addr), size(size), remoteRank(remoteRank) {}
+    };
 
     u32 remoteUserRank_ = 0;
-    HcclSendRecvType sendRecvType_;
+    const u32 MAX_LOOP_IN_ONCE_LAUNCH = 200;
+    std::deque<SendRecvSlice> sendDataSilces_;
+    std::deque<SendRecvSlice> recvDataSilces_;
 private:
+    HcclResult RunLoopInHostUnfoldMode(OpParam& param);
+    HcclResult RunLoopInAicpuUnfoldMode(OpParam& param);
     HcclResult CalcStreamNum(u32& streamNum) override;
-    HcclResult GetPairWiseList(HcclSendRecvItem *sendRecvItemsPtr, u32 itemNum,
-        std::vector<HcclSendRecvItem *> &orderedList);
-    HcclResult RunLoop(OpParam &param, AlgResourceResponse &algRes, HcclSendRecvItem* sendRecvItem);
-    HcclResult KernelRun(const OpParam &param, ExecMem &execMem) override;
+    HcclResult GetPairWiseList(HcclSendRecvItem *sendRecvInfo, u32 itemNum);
+    HcclResult ProcessSelfSendRecvTasks(Stream& stream);
+    
+    HcclResult MainPostSubWait(Stream& mainStream, Stream& subStream);
+    HcclResult SubPostMainWait(Stream& mainStream, Stream& subStream);
+    HcclResult SendKernelRun(Stream& stream, ExecMem &execMem, u32 remoteUserRank, bool retryEnable);
+    HcclResult RecvKernelRun(Stream& stream, ExecMem &execMem, u32 remoteUserRank, bool retryEnable);
+    HcclResult GetTransport(u32 commIndex, u32 remoteUserRank, LINK &targetLink);
+
+private:
+
     std::set<u32> commTargetUserRankSet_;
+    std::deque<HcclSendRecvItem*> sendToSelfDeque_;
+    std::deque<HcclSendRecvItem*> recvFromSelfDeque_;
+    std::deque<HcclSendRecvItem*> sendDeque_;
+    std::deque<HcclSendRecvItem*> recvDeque_;
 };
 } // namespace hccl
 

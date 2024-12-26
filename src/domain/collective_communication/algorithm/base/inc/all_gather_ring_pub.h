@@ -11,10 +11,10 @@
 #ifndef ALL_GATHER_RING_PUB_H
 #define ALL_GATHER_RING_PUB_H
 
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 
 namespace hccl {
-class AllGatherRing : public ExecutorBase {
+class AllGatherRing : public AlgTemplateBase {
 public:
     explicit AllGatherRing(const HcclDispatcher dispatcher);
 

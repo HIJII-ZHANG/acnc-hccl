@@ -16,6 +16,7 @@ CollSendExecutor::CollSendExecutor(const HcclDispatcher dispatcher,
                                    std::unique_ptr<TopoMatcher> &topoMatcher)
     : CollNativeExecutorBase(dispatcher, topoMatcher)
 {
+    DMAReduceFlag_ = workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE;
 }
 
 HcclResult CollSendExecutor::Orchestrate(OpParam& param, AlgResourceResponse& algRes)
@@ -122,16 +123,28 @@ HcclResult CollSendExecutor::RunLoop(OpParam &param, AlgResourceResponse &algRes
 
         HCCL_DEBUG("SendOutPlace:curInputPtr[%p], curCount[%llu], curSize[%llu]", curInputPtr, curCount, curSize);
 
-        DeviceMem inCommMem(algRes.cclInputMem.ptr(), curSize);
-        DeviceMem inMem(curInputPtr, curSize);
-
-        CHK_RET(HcclD2DMemcpyAsync(dispatcher_, inCommMem, inMem, const_cast<Stream&>(param.stream)));
-
-        ret = RunTemplate(param, inCommMem);
-        CHK_PRT_RET(ret != HCCL_SUCCESS,
-            HCCL_ERROR("errNo[0x%016llx] SendOutPlace: send error, tag[%s], ptr[%p], count[%llu], dataType[%d]",
-            HCCL_ERROR_CODE(ret), param.tag.c_str(), curInputPtr, curCount, param.DataDes.dataType),
-            ret);
+        if(topoAttr_.deviceType == DevType::DEV_TYPE_910_93 && 
+            (topoAttr_.superPodNum > 1 || (topoAttr_.moduleNum > 1 && topoMatcher_->GetExternalInputInterHccsDisable()))) {
+            // A3的RDMA场景，send端需要消减
+            DeviceMem inMem(curInputPtr, curSize);
+            ret = RunTemplate(param, inMem);
+            CHK_PRT_RET(ret != HCCL_SUCCESS,
+                HCCL_ERROR("errNo[0x%016llx] SendOutPlace: send error, tag[%s], ptr[%p], count[%llu], dataType[%d]",
+                HCCL_ERROR_CODE(ret), param.tag.c_str(), curInputPtr, curCount, param.DataDes.dataType),
+                ret); 
+            HCCL_DEBUG("[CollSendExecutor][RunLoop]copy from user input to ccl output.");           
+        } else {
+            // 非A3场景，或A3的SDMA消减场景，send端不消减
+            DeviceMem inCommMem(algRes.cclInputMem.ptr(), curSize);
+            DeviceMem inMem(curInputPtr, curSize);
+            CHK_RET(HcclD2DMemcpyAsync(dispatcher_, inCommMem, inMem, const_cast<Stream&>(param.stream)));
+            ret = RunTemplate(param, inCommMem);
+            CHK_PRT_RET(ret != HCCL_SUCCESS,
+                HCCL_ERROR("errNo[0x%016llx] SendOutPlace: send error, tag[%s], ptr[%p], count[%llu], dataType[%d]",
+                HCCL_ERROR_CODE(ret), param.tag.c_str(), curInputPtr, curCount, param.DataDes.dataType),
+                ret);
+            HCCL_DEBUG("[CollSendExecutor][RunLoop]copy from user input to ccl input.");
+        }
 
         CHK_PRT_RET((curCount == 0), HCCL_ERROR("In OP_BASE curCount is zero"), HCCL_E_PARA);
         countLeft -= curCount;

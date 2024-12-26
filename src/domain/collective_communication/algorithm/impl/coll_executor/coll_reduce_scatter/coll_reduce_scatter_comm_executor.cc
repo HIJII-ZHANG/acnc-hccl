@@ -53,6 +53,11 @@ HcclResult CollReduceScatterCommExecutor::CalcScratchMemSize(u64& scratchMemSize
     return HCCL_SUCCESS;
 }
 
+bool CollReduceScatterCommExecutor::IsSmallData(const u64 totalSize, const u64 curSize)
+{
+    return topoAttr_.deviceType == DevType::DEV_TYPE_910_93;
+}
+
 HcclResult CollReduceScatterCommExecutor::CalcCommInfo(std::vector<LevelNSubCommTransport>& opTransport)
 {
     TransportMemType inputType = TransportMemType::RESERVED;
@@ -112,15 +117,13 @@ HcclResult CollReduceScatterCommExecutor::CalcCombinedCommInfo(TransportMemType 
 u64 CollReduceScatterCommExecutor::CalcLoopMaxCount(const u32 unitSize)
 {
     // 中转内存单次最多能够接受的output count
-    u64 maxCountPerLoop = inCCLbufferSize_ / (topoAttr_.userRankSize * unitSize);
+    u64 maxCountPerLoop = inCCLbufferSize_ / topoAttr_.userRankSize / HCCL_MIN_SLICE_ALIGN
+        * HCCL_MIN_SLICE_ALIGN / unitSize;
     return maxCountPerLoop;
 }
 
 bool CollReduceScatterCommExecutor::IsHugeData(const u64 curSize, OpParam *param)
 {
-    if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT) {
-        return true;
-    }
     bool hugeData = (curSize * topoAttr_.userRankSize / HCCL_INTERNODE_MAX_DATA_RATE > RDMA_SEND_MAX_SIZE) ||
                     (curSize > SDMA_SEND_MAX_SIZE);
     return hugeData;
@@ -139,35 +142,35 @@ HcclResult CollReduceScatterCommExecutor::KernelRun(const OpParam &param, ExecMe
     u64 reduceAttr = GetReduceAttr(execMem.inputMem, execMem.outputMem, param.DataDes.dataType, param.reduceType);
 
     // 构造ring algorithm对应的reduce-scatter实例
-    std::unique_ptr<ExecutorBase> executor;
+    std::unique_ptr<AlgTemplateBase> tempAlg;
     if (UseInterServerNHRAlgo(algType_)) {
-        executor.reset(new (std::nothrow) ReduceScatterNHR(dispatcher_, reduceAttr));
+        tempAlg.reset(new (std::nothrow) ReduceScatterNHR(dispatcher_, reduceAttr));
         HCCL_INFO("reducescatter comm: using nhr algo inter-server.");
-        CHK_SMART_PTR_NULL(executor);
-        CHK_RET(executor->Prepare(execMem.inputMem, execMem.outputMem, execMem.scratchMem, execMem.count,
+        CHK_SMART_PTR_NULL(tempAlg);
+        CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.scratchMem, execMem.count,
             param.DataDes.dataType, param.stream, param.reduceType));
-        CHK_RET(RunTemplate(executor, combinedCommInfo));
+        CHK_RET(RunTemplate(tempAlg, combinedCommInfo));
     } else if (UseInterServerNHRV1Algo(algType_)) {
-        executor.reset(new (std::nothrow) ReduceScatterNHRV1(dispatcher_, reduceAttr));
+        tempAlg.reset(new (std::nothrow) ReduceScatterNHRV1(dispatcher_, reduceAttr));
         HCCL_INFO("reducescatter comm: using nhr_v1 algo inter-server.");
-        CHK_SMART_PTR_NULL(executor);
-        CHK_RET(executor->Prepare(execMem.inputMem, execMem.outputMem, execMem.scratchMem, execMem.count,
+        CHK_SMART_PTR_NULL(tempAlg);
+        CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.scratchMem, execMem.count,
             param.DataDes.dataType, param.stream, param.reduceType));
-        CHK_RET(RunTemplate(executor, combinedCommInfo));
+        CHK_RET(RunTemplate(tempAlg, combinedCommInfo));
     } else if (UseInterServerNBAlgo(algType_)) {
-        executor.reset(new (std::nothrow) ReduceScatterNB(dispatcher_, reduceAttr));
+        tempAlg.reset(new (std::nothrow) ReduceScatterNB(dispatcher_, reduceAttr));
         HCCL_INFO("reducescatter comm: using nonuniform-bruck algo inter-server.");
-        CHK_SMART_PTR_NULL(executor);
-        CHK_RET(executor->Prepare(execMem.inputMem, execMem.outputMem, execMem.scratchMem, execMem.count,
+        CHK_SMART_PTR_NULL(tempAlg);
+        CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.scratchMem, execMem.count,
             param.DataDes.dataType, param.stream, param.reduceType));
-        CHK_RET(RunTemplate(executor, combinedCommInfo));
+        CHK_RET(RunTemplate(tempAlg, combinedCommInfo));
     } else {
-        executor.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
+        tempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
         HCCL_INFO("reducescatter comm: using ring algo inter-server.");
-        CHK_SMART_PTR_NULL(executor);
-        CHK_RET(executor->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, execMem.count,
+        CHK_SMART_PTR_NULL(tempAlg);
+        CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, execMem.count,
             param.DataDes.dataType, param.stream, param.reduceType));
-        CHK_RET(RunTemplate(executor, combinedCommInfo));
+        CHK_RET(RunTemplate(tempAlg, combinedCommInfo));
         // 将cclInBuffer中与userRank_对应的部分拷贝至cclOutBuffer
         u64 dataSize = execMem.count * SIZE_TABLE[param.DataDes.dataType];
         DeviceMem srcMem = execMem.inputMem.range(dataSize * topoAttr_.userRank, dataSize);

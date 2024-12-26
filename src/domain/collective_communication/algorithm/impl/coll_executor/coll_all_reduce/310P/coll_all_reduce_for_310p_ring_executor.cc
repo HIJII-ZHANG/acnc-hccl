@@ -74,19 +74,19 @@ HcclResult CollAllReduceFor310PRingExecutor::KernelRun(const OpParam &param, Exe
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
     SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
 
-    std::unique_ptr<ExecutorBase> executor;
-    executor.reset(new (std::nothrow) AllReduceRing(dispatcher_, reduceAttr));
-    CHK_SMART_PTR_NULL(executor);
+    std::unique_ptr<AlgTemplateBase> tempAlg;
+    tempAlg.reset(new (std::nothrow) AllReduceRing(dispatcher_, reduceAttr));
+    CHK_SMART_PTR_NULL(tempAlg);
 
-    CHK_RET(executor->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
+    CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
         param.DataDes.dataType, param.stream, param.reduceType,
         OUTER_BRIDGE_RANK_ID, std::vector<Slice>(0), 0));
 
-    CHK_RET(executor->RegisterProfiler(
+    CHK_RET(tempAlg->RegisterProfiler(
         (outerCommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + outerCommInfo.localRank,
         PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-    CHK_RET(RunTemplate(executor, outerCommInfo));
+    CHK_RET(RunTemplate(tempAlg, outerCommInfo));
     return HCCL_SUCCESS;
 }
 

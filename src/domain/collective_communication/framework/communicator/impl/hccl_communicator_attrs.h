@@ -63,6 +63,7 @@ public:
     bool GetAllRankSamePlane();
     bool GetStandardCard();
     bool Get310PDuoCard();
+    s32 GetHccsPortNum();
     void GetPairLinkCounter(std::unordered_map<u32, u32> &pairLinkCounter);
     void GetPairLinkInfo(std::unordered_map<u32, std::unordered_map<int, std::vector<int>>> &pairLinkInfo);
     std::vector<u32> GetNicList();
@@ -109,6 +110,7 @@ private:
     HcclResult GetModuleIdx(const RankInfo_t &rankInfo, u32 &moduleIdx);
     bool IsDiffDeviceModule(const std::vector<RankInfo_t> &rankList) const;
     HcclResult SetNiclistInfo();
+    HcclResult InitHccsPortNum();
     HcclResult InitTopoInfo(const RankTable_t &rankTable);
     HcclResult InitTopoInfo(const std::vector<RankInfo> &rankList); // For Subgroup
     HcclResult SetInterModeInSuperPod();
@@ -122,6 +124,7 @@ private:
     HcclResult CheckNicDeploy(NICDeployment nicDeploy, DevType deviceType) const;
     HcclResult CheckSuperDeviceId(const RankTable_t &rankTable);
     HcclResult CheckDevCount(const u32 devNum);
+    HcclResult CheckLocalBackupDevIp(const HcclIpAddress &backupDevIp, const u32 devicePhyId);
     HcclResult UpdateNicList();
     HcclResult SetLocalRankInfo();
     HcclResult SetLocalRankInfoSubGroup(const std::vector<RankInfo> &rankList);
@@ -148,6 +151,7 @@ private:
     bool multiSuperPodDiffServerNumMode_{false};    //判断每个超节点中的server数是否一致
     bool isStandardCard_{false};
     bool is310PDuoCard_{false};
+    s32 hccsPortNum_{-1};
     bool useSuperPodMode_{false};
     bool isAllRankSamePlane_{false};
     u32 serverNum_{0};

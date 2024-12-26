@@ -20,12 +20,12 @@
 #include "externalinput_pub.h"
 #include "mem_device_pub.h"
 #include "stream_pub.h"
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 #include "coll_alg_param.h"
 
 namespace hccl {
 
-class AllGatherPipeline : public ExecutorBase {
+class AllGatherPipeline : public AlgTemplateBase {
 public:
     explicit AllGatherPipeline(const HcclDispatcher dispatcher);
     ~AllGatherPipeline() override;

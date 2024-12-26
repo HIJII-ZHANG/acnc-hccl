@@ -53,6 +53,10 @@ HcclResult CollReduceExecutor::Orchestrate(OpParam& param, AlgResourceResponse& 
         execMem.outputMem = algRes.paramOutputMem;
         execMem.scratchMem = algRes.scratchMem;
         ret = KernelRun(param, execMem);
+        if (param.isPostSync == true) {
+            // post Sync
+            CHK_RET(InplaceOpSync(param, execMem));
+        }
     } else if (topoAttr_.userRankSize == 1) {
         execMem.inputMem = algRes.cclInputMem;
         execMem.outputMem = algRes.cclOutputMem;
@@ -203,9 +207,6 @@ u64 CollReduceExecutor::CalcLoopMaxCount(const u32 unitSize, const AlgResourceRe
 
 bool CollReduceExecutor::IsHugeData(const u64 curSize)
 {
-    if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT) {
-        return true;
-    }
     HCCL_WARNING("[CollReduceExecutor][IsHugeData]opMeta is using the default option.");
     bool hugeData = (curSize / HCCL_INTERNODE_MAX_DATA_RATE > RDMA_SEND_MAX_SIZE) ||
                     (curSize > SDMA_SEND_MAX_SIZE);

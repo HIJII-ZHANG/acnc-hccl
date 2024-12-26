@@ -309,8 +309,9 @@ HcclResult TopoInfoParse::IsAllRankSamePlane(bool &isAllRankSamePlane)
     }
 
     auto isSameDevId = [&]()-> bool {
+        s32 maxModuleDevNum = deviceType_ == DevType::DEV_TYPE_910B ? HCCL_DEVICE_NUM_EIGHT : MAX_MODULE_DEVICE_NUM;
         for (size_t index = 0; index < rankList_.size() - 1; ++index) {
-            if (rankList_[index].devicePhyId != rankList_[index + 1].devicePhyId) {
+            if (rankList_[index].devicePhyId % maxModuleDevNum != rankList_[index + 1].devicePhyId % maxModuleDevNum) {
                 return false;
             }
         }

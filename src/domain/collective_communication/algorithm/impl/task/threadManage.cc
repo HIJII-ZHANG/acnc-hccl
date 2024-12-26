@@ -9,7 +9,7 @@
  */
 
 #include "log.h"
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 #include "hccl_impl_pub.h"
 #include "reduce_scatter_ring_pub.h"
 #include "reduce_scatter_ring_concurrent_direct_pub.h"
@@ -90,46 +90,46 @@ HcclResult ThreadManage::ExecuteService()
 {
     HcclResult ret = HCCL_SUCCESS;
 
-    std::unique_ptr<ExecutorBase> executor;
+    std::unique_ptr<AlgTemplateBase> tempAlg;
     if (executorType_ == ExecutorType::REDUCE_SCATTER_RING) {
-        executor.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr_));
+        tempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr_));
     } else if (executorType_ == ExecutorType::ALLGATHER_RING) {
-        executor.reset(new (std::nothrow) AllGatherRing(dispatcher_));
+        tempAlg.reset(new (std::nothrow) AllGatherRing(dispatcher_));
     } else if (executorType_ == ExecutorType::REDUCE_SCATTER_RING_DIRECT) {
-        executor.reset(new (std::nothrow) ReduceScatterRingConcurrentDirect(
+        tempAlg.reset(new (std::nothrow) ReduceScatterRingConcurrentDirect(
             dispatcher_, reduceAttr_, opInfo_, userRank_, subStreamsInOneRing_, mainSignalsInOneRing_,
             subSignalsInOneRing_, ringsOrder_, userMemInputSlices_));
     } else if (executorType_ == ExecutorType::REDUCE_SCATTER_RING_DIRECT_RDMA) {
-        executor.reset(new (std::nothrow) ReduceScatterRingConcurrentDirect(
+        tempAlg.reset(new (std::nothrow) ReduceScatterRingConcurrentDirect(
             dispatcher_, reduceAttr_, opInfo_, userRank_, subStreamsInOneRing_, mainSignalsInOneRing_,
             subSignalsInOneRing_, ringsOrder_, userMemInputSlices_, false));
     } else if (executorType_ == ExecutorType::ALLGATHER_RING_DIRECT) {
-        executor.reset(new (std::nothrow) AllGatherRingConcurrentDirect(
+        tempAlg.reset(new (std::nothrow) AllGatherRingConcurrentDirect(
             dispatcher_, opInfo_, userRank_, subStreamsInOneRing_, mainSignalsInOneRing_,
             subSignalsInOneRing_, ringsOrder_, userMemInputSlices_));
     } else if (executorType_ == ExecutorType::ALLGATHER_RING_DIRECT_RDMA) {
-        executor.reset(new (std::nothrow) AllGatherRingConcurrentDirect(
+        tempAlg.reset(new (std::nothrow) AllGatherRingConcurrentDirect(
             dispatcher_, opInfo_, userRank_, subStreamsInOneRing_, mainSignalsInOneRing_,
             subSignalsInOneRing_, ringsOrder_, userMemInputSlices_, false));
     }
-    CHK_SMART_PTR_NULL(executor);
+    CHK_SMART_PTR_NULL(tempAlg);
 
     /* 从环等待启动 */
     ret = LocalNotify::Wait(stream_, dispatcher_, signalAux_, profStage_);
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[Execute][Service]stream[%u] wait failed", ringIndex_), ret);
 
-    ret = executor->Prepare(inputMem_, outputMem_, scratchMem_, count_, dataType_, stream_, reductionOp_,
+    ret = tempAlg->Prepare(inputMem_, outputMem_, scratchMem_, count_, dataType_, stream_, reductionOp_,
         OUTER_BRIDGE_RANK_ID, slices_, baseOffset_, nicRankList_);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[Execute][Service]stream[%u],prepare failed,return[%d]", ringIndex_, ret), ret);
 
-    ret = executor->RegisterProfiler(((ringIndex_ + 1) << PROF_RINGINDEX_OFFSET_OF_PLANEID) +
+    ret = tempAlg->RegisterProfiler(((ringIndex_ + 1) << PROF_RINGINDEX_OFFSET_OF_PLANEID) +
         (ringSubCommInfo_.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + ringSubCommInfo_.localRank,
         profStage_, HCCL_EXEC_STEP_NOT_SET, stream_);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[Execute][Service]stream[%u],register Profiler failed,return[%d]", ringIndex_, ret), ret);
 
-    ret = CollExecutorBase::RunTemplate(executor, ringSubCommInfo_);
+    ret = CollExecutorBase::RunTemplate(tempAlg, ringSubCommInfo_);
 
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[Execute][Service]stream[%u],run failed,return[%d]", ringIndex_, ret), ret);
@@ -143,7 +143,7 @@ HcclResult ThreadManage::ExecuteService()
 HcclResult ThreadManage::ThreadExecuteFn()
 {
     //给当前线程添加名字
-    SetThreadName("Hccl_ThreadManage");
+    SetThreadName("Hccl_ThrdManage");
 
     threadId_ = SalGetTid();
     HCCL_INFO("[ThreadManage][ThreadExecuteFn]deviceLogicId_[%d], threadId_[%u]", deviceLogicId_, threadId_);

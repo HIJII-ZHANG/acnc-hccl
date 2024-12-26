@@ -18,8 +18,8 @@ target_include_directories(hccl_alg PRIVATE
     ${TOP_DIR}/abl/msprof/inc
     ${TOP_DIR}/ace/npuruntime/inc
     ${TOP_DIR}/ace/npuruntime/acl/inc/external
-    ${CMAKE_CURRENT_SOURCE_DIR}/base/executor
-    ${CMAKE_CURRENT_SOURCE_DIR}/base/executor/component/inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/base/alg_template
+    ${CMAKE_CURRENT_SOURCE_DIR}/base/alg_template/component/inc
     ${CMAKE_CURRENT_SOURCE_DIR}/base/communicator
     ${CMAKE_CURRENT_SOURCE_DIR}/base/communicator/legacy
     ${CMAKE_CURRENT_SOURCE_DIR}/impl

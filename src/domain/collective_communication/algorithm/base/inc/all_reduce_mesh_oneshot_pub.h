@@ -11,10 +11,10 @@
 #ifndef ALL_REDUCE_MESH_ONESHOT_PUB_H
 #define ALL_REDUCE_MESH_ONESHOT_PUB_H
 
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 
 namespace hccl {
-class AllReduceMeshDirectOneshot : public ExecutorBase {
+class AllReduceMeshDirectOneshot : public AlgTemplateBase {
 public:
     explicit AllReduceMeshDirectOneshot(const HcclDispatcher dispatcher, const u64 reduceAttrBitMap,
         std::vector<Stream> &meshStreams, const std::vector<std::shared_ptr<LocalNotify>> &meshSignal,

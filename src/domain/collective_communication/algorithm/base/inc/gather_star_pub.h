@@ -11,10 +11,10 @@
 #ifndef GATHER_STAR_PUB_H
 #define GATHER_STAR_PUB_H
 
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 
 namespace hccl {
-class GatherStar : public ExecutorBase {
+class GatherStar : public AlgTemplateBase {
 public:
     explicit GatherStar(const HcclDispatcher dispatcher, u32 userRank);
 

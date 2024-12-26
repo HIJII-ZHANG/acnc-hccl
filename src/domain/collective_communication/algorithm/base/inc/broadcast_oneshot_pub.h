@@ -11,10 +11,10 @@
 #ifndef BROADCAST_ONESHOT_PUB_H
 #define BROADCAST_ONESHOT_PUB_H
 
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 
 namespace hccl {
-class BroadcastHD : public ExecutorBase {
+class BroadcastHD : public AlgTemplateBase {
 public:
     explicit BroadcastHD(const HcclDispatcher dispatcher, std::vector<Stream> &meshStreams,
         const std::vector<std::shared_ptr<LocalNotify>> &meshSignal,

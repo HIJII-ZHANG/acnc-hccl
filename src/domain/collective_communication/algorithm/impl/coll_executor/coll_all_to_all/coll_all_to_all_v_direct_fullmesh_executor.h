@@ -31,6 +31,7 @@ private:
     HcclResult GetLocalSendRecvInfoforAlltoallV(const OpParam &param);
     HcclResult GetLocalSendRecvInfoforAlltoallVC(const OpParam &param);
     HcclResult CalcTransportMemType(TransportMemType &inputType, TransportMemType &outputType);
+    HcclResult GetLocalSDMAGroupInfo(const u32 userRank, u32& devNumInlocalPod, u32& rankIdxInPod);
 };
 
 } // namespace hccl

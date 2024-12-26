@@ -20,6 +20,7 @@
 #include "externalinput_pub.h"
 #include "hccl_socket.h"
 #include "hccl_network_pub.h"
+#include "hashtable/universal_concurrent_map.h"
 
 namespace hccl {
 class TopoInfoDetect {
@@ -64,7 +65,7 @@ private:
         std::vector<HcclIpAddress> whitelist, HcclNetDevCtx netDevCtx, std::shared_ptr<HcclSocket> listenSocket,
         bool isMasterInfo = false);
     HcclResult WaitTopoExchangeServerCompelte(u32 idx) const;
-    void SetBootstrapHostIP(HcclIpAddress &ip) const;
+    void SetBootstrapHostIP(HcclIpAddress &ip);
     HcclIpAddress GetBootstrapHostIP() const;
     HcclResult FilterDevIPs(std::vector<HcclIpAddress> &sourceDeviceIPs,
         std::vector<HcclIpAddress> &targetDeviceIPs) const;
@@ -72,8 +73,8 @@ private:
     HcclBasicRankInfo localRankInfo_;
     RankTable_t clusterTopoInfo_;
     u32 identifierNum_;
-    static std::map<u32, volatile u32> topoExchangeServerStatus_;
-    static HcclIpAddress bootstrapHostIP_;
+    static UniversalConcurrentMap<u32, volatile u32> g_topoExchangeServerStatus_;
+    HcclIpAddress bootstrapHostIP_{};
     HcclNetDevCtx serverPortCtx_{nullptr};
     HcclNetDevCtx agentPortCtx_{nullptr};
     HcclNetDevCtx devNicCtx_{nullptr};

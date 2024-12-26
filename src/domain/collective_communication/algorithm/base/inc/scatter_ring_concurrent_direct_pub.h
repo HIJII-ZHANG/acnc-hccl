@@ -11,12 +11,12 @@
 #ifndef SCATTER_RING_CONCURRENT_DIRECT_PUB_H
 #define SCATTER_RING_CONCURRENT_DIRECT_PUB_H
 
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 #include "reducer_pub.h"
 #include "sender_pub.h"
 
 namespace hccl {
-class ScatterRingConcurrentDirect : public ExecutorBase {
+class ScatterRingConcurrentDirect : public AlgTemplateBase {
 public:
     explicit ScatterRingConcurrentDirect(const HcclDispatcher dispatcher, const HcomCollOpInfo *opInfo,
                                          const u32 userRank, std::vector<Stream> &subStreams,

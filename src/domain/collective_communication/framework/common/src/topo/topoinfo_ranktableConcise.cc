@@ -240,6 +240,10 @@ HcclResult TopoinfoRanktableConcise::GetServerList(const nlohmann::json &obj, Ra
         // get single server info
         CHK_RET(GetSingleServer(serverList, index, clusterInfo));
     }
+
+    for (u32 index = 0; index < clusterInfo.rankList.size(); index++) {
+        CHK_RET(VerifyBackupDeviceIp(clusterInfo.rankList[index], index));
+    }
     // 获取device
     return HCCL_SUCCESS;
 }
@@ -313,7 +317,6 @@ HcclResult TopoinfoRanktableConcise::GetDeviceList(const nlohmann::json &serverL
                 clusterInfo.rankList[index].deviceInfo.deviceIp.size(), checkDeviceIpSize);
             return HCCL_E_PARA;
         }
-        CHK_RET(VerifyBackupDeviceIp(clusterInfo.rankList[index], index));
     }
 
     return HCCL_SUCCESS;
@@ -457,7 +460,8 @@ HcclResult TopoinfoRanktableConcise::GetSingleDeviceIp(const nlohmann::json &dev
 HcclResult TopoinfoRanktableConcise::GetSingleBackupDeviceIp(const nlohmann::json &deviceListObj, u32 objIndex,
     RankInfo_t &rankinfo)
 {
-    if (params_.deviceType != DevType::DEV_TYPE_910_93 || !GetExternalInputInterSuperPodRetryEnable()) {
+    if (params_.deviceType != DevType::DEV_TYPE_910_93 || !GetExternalInputHcclAicpuUnfold()
+        || !GetExternalInputInterSuperPodRetryEnable()) {
         return HCCL_SUCCESS;
     }
     // 获取backup_device_ip（可能有多个）
@@ -499,7 +503,8 @@ HcclResult TopoinfoRanktableConcise::GetSingleBackupDeviceIp(const nlohmann::jso
 
 HcclResult TopoinfoRanktableConcise::VerifyBackupDeviceIp(RankInfo_t &rankInfo, u32 devIndex)
 {
-    if (params_.deviceType != DevType::DEV_TYPE_910_93 || !GetExternalInputInterSuperPodRetryEnable()) {
+    if (params_.deviceType != DevType::DEV_TYPE_910_93 || !GetExternalInputHcclAicpuUnfold()
+        || !GetExternalInputInterSuperPodRetryEnable()) {
         return HCCL_SUCCESS;
     }
 
@@ -509,10 +514,14 @@ HcclResult TopoinfoRanktableConcise::VerifyBackupDeviceIp(RankInfo_t &rankInfo, 
             continue;
         }
         string backupDevIpStr = backupDevIp.GetReadableIP();
-        CHK_PRT_RET(devIp2PhyIdMap_.find(backupDevIpStr) == devIp2PhyIdMap_.end(),
-            HCCL_ERROR("[Verify][BackupDeviceIp]Unknown backup devIp[%s] for device[%u]. "
-                "Fail to find this backup device in communicator.", backupDevIpStr.c_str(), devIndex),
-            HCCL_E_PARA);
+        if (devIp2PhyIdMap_.find(backupDevIpStr) == devIp2PhyIdMap_.end()) {
+            HCCL_RUN_WARNING("[Verify][BackupDeviceIp]"
+                "backup devIp[%s] for devicePhyId[%d] is not in this comm. "
+                "The validation of this backup ip could not be verified! "
+                "Please notice it might be an invalid backup ip!",
+                backupDevIpStr.c_str(), devIndex);
+            continue;
+        }
 
         s32 backupDevPhyId = devIp2PhyIdMap_[backupDevIpStr];
         CHK_PRT_RET(backupDevPhyId == rankInfo.deviceInfo.devicePhyId,

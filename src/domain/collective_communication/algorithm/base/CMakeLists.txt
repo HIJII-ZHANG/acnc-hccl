@@ -1,2 +1,2 @@
 add_subdirectory(communicator)
-add_subdirectory(executor)
+add_subdirectory(alg_template)

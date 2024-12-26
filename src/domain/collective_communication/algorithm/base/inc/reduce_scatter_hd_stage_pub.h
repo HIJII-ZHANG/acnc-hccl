@@ -11,13 +11,13 @@
 #ifndef REDUCE_SCATTER_HD_STAGE_PUB_H
 #define REDUCE_SCATTER_HD_STAGE_PUB_H
 
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 #include "mem_host_pub.h"
 #include "mem_device_pub.h"
 #include "stream_pub.h"
 #include "comm_base_pub.h"
 namespace hccl {
-class ReduceScatterHDStage : public ExecutorBase {
+class ReduceScatterHDStage : public AlgTemplateBase {
 public:
     explicit ReduceScatterHDStage(const HcclDispatcher dispatcher, const u64 reduceAttrBitMap,
         std::vector<Stream> &meshStreams, std::vector<std::shared_ptr<LocalNotify>> &meshSignal,

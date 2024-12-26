@@ -111,6 +111,7 @@ void CollAlgOperator::SetTopoAttr(AlgConfigurator* algConfigurator)
     isSingleMeshAggregation_ = topoAttr.isSingleMeshAggregation;
     isAllRankSamePlane_ = topoAttr.isAllRankSamePlane;
     is310PDuoCard_ = topoAttr.is310PDuoCard;
+    hccsPortNum_ = topoAttr.hccsPortNum;
 
     userRank_ = topoAttr.userRank;
     realUserRank_ = topoAttr.realUserRank;
@@ -662,7 +663,7 @@ bool CollAlgOperator::FitRetryConditionforInPlaceOp(
         if (CheckUserInMemNotLargerThanCCLInMem(opType, param)) {
             // case 2.4: 在hccl_communicator.cc的ExecOp之前已经该让图模式走单算子模式了，理论上不会进入此条件
             HCCL_INFO("[CollAlgOperator][OpRetry][AICPU]The retry with inplace case is expected to be supported, "
-                "therefore HcclWorkflowMode is set to [%d]",
+                "therefore HcclWorkflowMode is set to [%u]",
                 static_cast<u8>(GetWorkflowMode()));
             return ExecutorSupportInPlace(param, algName, inPlaceSupportRetryStatus);
         } else {
@@ -683,8 +684,8 @@ bool CollAlgOperator::SupportRetryWithInplaceCheck(
     // 不支持inplace的通信算子重执行
     if (IsHcclOpInplace(opType, param, userRank_, userRankSize_, isInplaceStatus)) {
         if(!FitRetryConditionforInPlaceOp(opType, param, algName, inPlaceSupportRetryStatus)) {
-            HCCL_DEBUG("[CollAlgOperator][OpRetry][AICPU]hccl aicpu can not retry, opType[%s], inputPtr[0x%016lx], "
-                "outputPtr[0x%016lx].",
+            HCCL_DEBUG("[CollAlgOperator][OpRetry][AICPU]hccl aicpu can not retry, opType[%s], inputPtr[%p], "
+                "outputPtr[%p].",
                 GetCMDTypeEnumStr(opType).c_str(), param.inputPtr, param.outputPtr);
             return false;
         }

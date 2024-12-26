@@ -99,9 +99,11 @@ HcclResult CollAlltoAllExecutor::CalcResRequest(const OpParam& param, AlgResourc
             for (u32 rankIndex = 0; rankIndex < rankSize; rankIndex++) {
                 if (subCommTransport.transportRequests[rankIndex].isValid == true) {
                     HCCL_INFO("[CollAlltoAllExecutor][CalcResRequest]" \
-                        "levelIndex[%u], ringIndex[%u], rankIndex[%u], userRank[%u], remoteRank[%u]",
+                        "levelIndex[%u], ringIndex[%u], rankIndex[%u], userRank[%u], remoteRank[%u]" \
+                        "isUsedRdma[%d]",
                         levelIndex, ringIndex, rankIndex, subCommTransport.transportRequests[rankIndex].localUserRank,
-                        subCommTransport.transportRequests[rankIndex].remoteUserRank);
+                        subCommTransport.transportRequests[rankIndex].remoteUserRank,
+                        subCommTransport.transportRequests[rankIndex].isUsedRdma);
                 }
             }
         }

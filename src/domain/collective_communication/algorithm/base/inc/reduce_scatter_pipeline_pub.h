@@ -20,7 +20,7 @@
 #include "mem_device_pub.h"
 #include "stream_pub.h"
 #include "dispatcher.h"
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 #include "reducer_pub.h"
 #include "sender_pub.h"
 #include "coll_alg_param.h"
@@ -28,7 +28,7 @@
 namespace hccl {
 constexpr u32 PIPELINE_DEPTH = 3;
 
-class ReduceScatterPipeline : public ExecutorBase {
+class ReduceScatterPipeline : public AlgTemplateBase {
 public:
     explicit ReduceScatterPipeline (const HcclDispatcher dispatcher, const u64 reduceAttrBitMap);
     ~ReduceScatterPipeline() override;

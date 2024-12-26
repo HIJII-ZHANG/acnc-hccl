@@ -94,18 +94,18 @@ HcclResult CollAllReduceMeshMidCountExecutor::KernelRun(const OpParam &param, Ex
         "", execMem.inputPtr, execMem.outputPtr, execMem.count, param.DataDes.dataType, param.root, param.reduceType
     };
 
-    std::unique_ptr<ExecutorBase> outer2Executor;
-    outer2Executor.reset(new (std::nothrow) AllReduceLocalReduce(dispatcher_, reduceAttr, algResResp_->slaveStreams,
+    std::unique_ptr<AlgTemplateBase> outer2TempAlg;
+    outer2TempAlg.reset(new (std::nothrow) AllReduceLocalReduce(dispatcher_, reduceAttr, algResResp_->slaveStreams,
         algResResp_->notifiesM2S, algResResp_->notifiesS2M, outerCommInfo.localRank, outerCommInfo.localRankSize,
         topoAttr_.userRank, &opInfo));
-    CHK_SMART_PTR_NULL(outer2Executor);
+    CHK_SMART_PTR_NULL(outer2TempAlg);
 
-    CHK_RET(outer2Executor->Prepare(execMem.outputMem, execMem.outputMem, execMem.outputMem, execMem.count,
+    CHK_RET(outer2TempAlg->Prepare(execMem.outputMem, execMem.outputMem, execMem.outputMem, execMem.count,
         param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID, dataSegsSlice, 0));
-    CHK_RET(outer2Executor->RegisterProfiler(
+    CHK_RET(outer2TempAlg->RegisterProfiler(
         (outerCommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + outerCommInfo.localRank,
         PROF_STAGE_2, HCCL_EXEC_STEP_NOT_SET, param.stream));
-    CHK_RET(RunTemplate(outer2Executor, outerCommInfo));
+    CHK_RET(RunTemplate(outer2TempAlg, outerCommInfo));
     HCCL_INFO("allreduce mid count run success.");
 
     return HCCL_SUCCESS;

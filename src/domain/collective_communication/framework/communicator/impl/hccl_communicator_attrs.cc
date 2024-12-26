@@ -204,7 +204,6 @@ HcclResult HcclCommunicatorAttrs::GetPairDeviceLinkType(const RankTable_t &rankT
     }
     return HCCL_SUCCESS;
 }
-
 // sub group适配获取server内设配数
 HcclResult HcclCommunicatorAttrs::SetInnerServerAverageDevice(const std::vector<RankInfo> &rankList)
 {
@@ -340,7 +339,6 @@ HcclResult HcclCommunicatorAttrs::SetSuperPodInfo(const std::vector<RankInfo_t> 
         multiSuperPodDiffServerNumMode_);
     return HCCL_SUCCESS;
 }
-
 // 集群中存在910B A+X时，0-7卡: moduleIdx = 2 * serverIdx; 8-15卡: moduleIdx = 2 * serverIdx + 1
 // 集群中不存在910B A+X时，moduleIdx = serverIdx
 HcclResult HcclCommunicatorAttrs::GetModuleIdx(const RankInfo_t &rankInfo, u32 &moduleIdx)
@@ -394,6 +392,16 @@ HcclResult HcclCommunicatorAttrs::SetNiclistInfo(){
     return HCCL_SUCCESS;
 }
 
+HcclResult HcclCommunicatorAttrs::InitHccsPortNum()
+{
+    DevType deviceType;
+    CHK_RET(hrtGetDeviceType(deviceType));
+    if (deviceType == DevType::DEV_TYPE_910_93) {
+        CHK_RET(hrtGetHccsPortNum(deviceLogicId_, hccsPortNum_));
+    }
+    return HCCL_SUCCESS;
+}
+
 HcclResult HcclCommunicatorAttrs::InitTopoInfo(const RankTable_t &rankTable)
 {
     topoInfoParse_.reset(new (std::nothrow) TopoInfoParse());
@@ -405,6 +413,7 @@ HcclResult HcclCommunicatorAttrs::InitTopoInfo(const RankTable_t &rankTable)
     CHK_RET(topoInfoParse_->IsAllRankSamePlane(isAllRankSamePlane_));                   // 确认集群所有卡在一个平面上
     isStandardCard_ = IsStandardCard();
     is310PDuoCard_ = Is310PDuoCard();
+    CHK_RET(InitHccsPortNum());
     CHK_RET(topoInfoParse_->ParseAndCheck(nicList_));
     return HCCL_SUCCESS;
 }
@@ -420,6 +429,7 @@ HcclResult HcclCommunicatorAttrs::InitTopoInfo(const std::vector<RankInfo> &rank
     CHK_RET(topoInfoParse_->IsAllRankSamePlane(isAllRankSamePlane_));                   // 确认集群所有卡在一个平面上
     isStandardCard_ = IsStandardCard();
     is310PDuoCard_ = Is310PDuoCard();
+    CHK_RET(InitHccsPortNum());
     if (!isStandardCard_) {
         CHK_RET(topoInfoParse_->Check());
     }
@@ -442,7 +452,6 @@ HcclResult HcclCommunicatorAttrs::SetInterModeInSuperPod()
     }
     return HCCL_SUCCESS;
 }
-
 // 910B A+X 在RDMA未启用情况下，两模块间的device数目需要一致且两模块中使用的卡都在同一平面上
 HcclResult HcclCommunicatorAttrs::CheckSingleServerComm(const std::vector<RankInfo_t> &rankList) const
 {
@@ -527,6 +536,7 @@ HcclResult HcclCommunicatorAttrs::SetRankInfoList(const RankTable_t &rankTable)
             hbRankInfo.devicePhyId = rankInfo.devicePhyId;
             hbRankInfo.serverId = rankInfo.serverId;
             hbRankInfo.nicIp.assign(rankInfo.nicIp.begin(), rankInfo.nicIp.end());
+            hbRankInfo.backupNicIp.assign(rankInfo.backupNicIp.begin(), rankInfo.backupNicIp.end());
             hbRankInfo.nicDeploy = rankInfo.nicDeploy;
             hbRankInfo.useSuperPodMode = useSuperPodMode_;
             hbRankInfo.superDeviceId = rankInfo.superDeviceId;
@@ -641,6 +651,7 @@ HcclResult HcclCommunicatorAttrs::SethbRankInfo(const std::vector<RankInfo> &ran
         hbRankInfo.devicePhyId = rankInfo.devicePhyId;
         hbRankInfo.serverId = rankInfo.serverId;
         hbRankInfo.nicIp.assign(rankInfo.nicIp.begin(), rankInfo.nicIp.end());
+        hbRankInfo.backupNicIp.assign(rankInfo.backupNicIp.begin(), rankInfo.backupNicIp.end());
         hbRankInfo.nicDeploy = rankInfo.nicDeploy;
         hbRankInfo.useSuperPodMode = useSuperPodMode_;
         hbRankInfo.superDeviceId = rankInfo.superDeviceId;
@@ -649,7 +660,6 @@ HcclResult HcclCommunicatorAttrs::SethbRankInfo(const std::vector<RankInfo> &ran
     }
     return HCCL_SUCCESS;
 }
-
 HcclResult HcclCommunicatorAttrs::CheckNicDeploy(NICDeployment nicDeploy, DevType deviceType) const
 {
     (void)deviceType;
@@ -730,7 +740,8 @@ bool HcclCommunicatorAttrs::Check2N(u32 num) const
     }
 }
 
-HcclResult HcclCommunicatorAttrs::UpdateNicList(){
+HcclResult HcclCommunicatorAttrs::UpdateNicList()
+{
     std::vector<u32> subCommNicList;
     for (u32 i = 0; i < rankInfoList_.size(); i++) {
         if (rankInfoList_[i].serverId == serverId_ &&
@@ -800,22 +811,51 @@ HcclResult HcclCommunicatorAttrs::SetLocalRankInfoSubGroup(const std::vector<Ran
     return HCCL_SUCCESS;
 }
 
+HcclResult HcclCommunicatorAttrs::CheckLocalBackupDevIp(const HcclIpAddress &backupDevIp, const u32 devicePhyId)
+{
+    if (deviceType_ == DevType::DEV_TYPE_910_93 && GetExternalInputHcclAicpuUnfold() &&
+        GetExternalInputInterSuperPodRetryEnable() && IsEnableRoce() && !backupDevIp.IsInvalid()) {
+        std::vector<std::vector<HcclIpAddress>> chipDeviceIPs;
+        CHK_RET(hrtRaGetDeviceAllNicIP(chipDeviceIPs));
+        if (chipDeviceIPs.size() != 2U) {
+            // 910A3场景一个chip上有两组deviceIP
+            HCCL_RUN_WARNING("[HcclCommunicatorAttrs][CheckLocalBackupDevIp]Fail to load backup device ip. "
+                "Please check the driver version! Please notice the backup device ip[%s] could not be verified!",
+                backupDevIp.GetReadableIP());
+        } else {
+            // 取到一组backup ip，按照devPhyId排序，ipv4在前，ipv6在后，每个网卡的ip顺序一一对应
+            // 取其中对端网卡的ip作为备用网卡ip
+            u32 ipIdex = 1U - (devicePhyId % 2U);
+            auto iter = std::find(chipDeviceIPs[ipIdex].begin(), chipDeviceIPs[ipIdex].end(), backupDevIp);
+            CHK_PRT_RET(iter == chipDeviceIPs[ipIdex].end(),
+                HCCL_ERROR("[HcclCommunicatorAttrs][CheckLocalBackupDevIp]Invalid backupDevIp[%s] for device[%u], "
+                "which is not in the backupNicIp list of current chip.",
+                backupDevIp.GetReadableIP(), devicePhyId), HCCL_E_PARA);
+            HCCL_INFO("[HcclCommunicatorAttrs][CheckLocalBackupDevIp]device[%u] is using verified backupDevIp[%s]",
+                devicePhyId, backupDevIp.GetReadableIP());
+        }
+    }
+    return HCCL_SUCCESS;
+}
+
 HcclResult HcclCommunicatorAttrs::CheckLocalRankInfo()
 {
     for (u32 i = 0; i < rankInfoList_.size(); ++i) {
-        if ((userRank_ == rankInfoList_[i].userRank) &&
-            (static_cast<s32>(devicePhyId_) != rankInfoList_[i].devicePhyId)) {
-            HCCL_ERROR("[Init][Para]errNo[0x%016llx] parameter check failed,userrank[%u] == rankInfoList.userrank[%u],"\
-                "phyid[%d] != rankInfoList.devid[%d]", HCCL_ERROR_CODE(HCCL_E_PARA), userRank_,
-                rankInfoList_[i].userRank, static_cast<s32>(devicePhyId_), rankInfoList_[i].devicePhyId);
-            return HCCL_E_PARA;
+        if (userRank_ == rankInfoList_[i].userRank) {
+            CHK_PRT_RET(static_cast<s32>(devicePhyId_) != rankInfoList_[i].devicePhyId,
+                HCCL_ERROR("[Init][Para]errNo[0x%016llx] parameter check failed, "
+                "userrank[%u] == rankInfoList.userrank[%u], phyid[%d] != rankInfoList.devid[%d]",
+                HCCL_ERROR_CODE(HCCL_E_PARA), userRank_, rankInfoList_[i].userRank,
+                static_cast<s32>(devicePhyId_), rankInfoList_[i].devicePhyId),
+                HCCL_E_PARA);
+            CHK_RET(CheckLocalBackupDevIp(rankInfoList_[i].backupNicIp[0], devicePhyId_));
         }
     }
     return HCCL_SUCCESS;
 }
 
 HcclResult HcclCommunicatorAttrs::InitRankInfo(const RankTable_t &rankTable)
-{   
+{
     // 获取serverId
     CHK_RET(SetServerId(rankTable));
     // 获取server数
@@ -1048,6 +1088,7 @@ void HcclCommunicatorAttrs::GetTopoAttr(HcclTopoAttr &topoAttr)
     topoAttr.deviceType = deviceType_;
     topoAttr.isStandardCard = isStandardCard_;
     topoAttr.is310PDuoCard = is310PDuoCard_;
+    topoAttr.hccsPortNum = hccsPortNum_;
     topoAttr.nicList = nicList_;
     topoAttr.pairLinkCounter = pairLinkCounter_;
     topoAttr.pairLinkInfo = pairLinkInfo_;
@@ -1177,6 +1218,11 @@ bool HcclCommunicatorAttrs::GetStandardCard()
 bool HcclCommunicatorAttrs::Get310PDuoCard()
 {
     return is310PDuoCard_;
+}
+
+s32 HcclCommunicatorAttrs::GetHccsPortNum()
+{
+    return hccsPortNum_;
 }
 
 void HcclCommunicatorAttrs::GetPairLinkCounter(std::unordered_map<u32, u32> &pairLinkCounter)

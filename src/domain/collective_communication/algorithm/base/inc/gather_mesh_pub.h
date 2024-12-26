@@ -11,10 +11,10 @@
 #ifndef GATHER_MESH_PUB_H
 #define GATHER_MESH_PUB_H
 
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 
 namespace hccl {
-class GatherMesh : public ExecutorBase {
+class GatherMesh : public AlgTemplateBase {
 public:
     explicit GatherMesh(const HcclDispatcher dispatcher,
         std::vector<Stream> &meshStreams,

@@ -86,10 +86,6 @@ u64 CollReduceScatterMeshOpbasePipelineExecutor::CalcLoopMaxCount(const u32 unit
 
 bool CollReduceScatterMeshOpbasePipelineExecutor::IsHugeData(const u64 curSize, OpParam *param)
 {
-    if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT) {
-        return true;
-    }
-
     bool hugeData = curSize > RDMA_SEND_MAX_SIZE || curSize > SDMA_SEND_MAX_SIZE;
     return hugeData;
 }
@@ -154,17 +150,17 @@ HcclResult CollReduceScatterMeshOpbasePipelineExecutor::RunLoop(OpParam &param, 
         execMem.inputPtr = curInputPtr;
         execMem.outputPtr = curOutputPtr;
 
-        std::unique_ptr<ReduceScatterPipeline> executor;
-        executor.reset(new (std::nothrow) ReduceScatterPipeline(dispatcher_, reduceAttr));
-        CHK_SMART_PTR_NULL(executor);
+        std::unique_ptr<ReduceScatterPipeline> tempAlg;
+        tempAlg.reset(new (std::nothrow) ReduceScatterPipeline(dispatcher_, reduceAttr));
+        CHK_SMART_PTR_NULL(tempAlg);
 
         HcomCollOpInfo opInfo = {"", execMem.inputPtr, execMem.outputPtr, param.DataDes.count, param.DataDes.dataType,
             param.root, param.reduceType};
 
-        CHK_RET(executor->Prepare(&opInfo, execMem.inputMem, curCount, bufferSize, curOffset, outerCommInfo,
+        CHK_RET(tempAlg->Prepare(&opInfo, execMem.inputMem, curCount, bufferSize, curOffset, outerCommInfo,
             innerCommInfo, const_cast<Stream&>(param.stream), algResResp_->slaveStreams, algResResp_->notifiesM2S,
             algResResp_->notifiesS2M));
-        CHK_RET(executor->RunAsync());
+        CHK_RET(tempAlg->RunAsync());
 
         CHK_RET(LaunchTask(dispatcher_, const_cast<Stream&>(param.stream)));
 

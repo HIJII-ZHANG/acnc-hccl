@@ -20,17 +20,19 @@ public:
     CollBatchSendRecvRetryExecutor(const HcclDispatcher dispatcher, std::unique_ptr<TopoMatcher> &topoMatcher);
     ~CollBatchSendRecvRetryExecutor() = default;
     HcclResult Orchestrate(OpParam& param, AlgResourceResponse& algRes) override;
-    HcclResult CreatePairWiseList(HcclSendRecvItem *sendRecvItemsPtr, u32 itemNum);
-    HcclResult GetPairWiseList(std::vector<std::vector<HcclSendRecvItem*>> &sendRecvPairList);
+    HcclResult CreatePairWiseList(HcclSendRecvItem *sendRecvInfo, u32 itemNum);
+    virtual HcclResult GetPairWiseList(std::vector<std::vector<HcclSendRecvItem*>> &sendRecvPairList);
 private:
+    HcclResult CalcSendSlices(AlgResourceResponse& algRes, HcclSendRecvItem* sendItem);
+    HcclResult CalcRecvSlices(AlgResourceResponse& algRes, HcclSendRecvItem* recvItem);
     HcclResult CheckSendRecvPair(const std::vector<HcclSendRecvItem*> &sendRecvPair);
     HcclResult RunLoop(OpParam &param, AlgResourceResponse &algRes, const std::vector<HcclSendRecvItem*> &sendRecvPair);
-    HcclResult KernelRun(const OpParam &param, ExecMem &execMem) override;
     HcclResult CalcStreamNum(u32& streamNum) override;
 private:
     std::vector<HcclSendRecvItem*> sendDeque_;
     std::vector<HcclSendRecvItem*> recvDeque_;
     std::vector<std::vector<HcclSendRecvItem*>> sendRecvPairList_;
+    HcclSendRecvType sendRecvType_;
 };
 } // namespace hccl
 

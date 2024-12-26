@@ -13,6 +13,8 @@
 
 #include <mutex>
 #include <unordered_map>
+#include <atomic>
+#include <fstream>
 #include "base.h"
 #include "coll_alg_param.h"
 #include "hccl_socket_manager.h"
@@ -22,10 +24,19 @@
 #include "ccl_buffer_manager.h"
 #include "externalinput_pub.h"
 #include "sal_pub.h"
+#include "thread/threads_guard.h"
 #include "hccl_hash_utils.h"
 #include "common.h"
 
 namespace hccl {
+
+constexpr u32 AICPU_RETRY_BACKUP_PORT = 16667;     // aicpu重执行备份默认端口
+constexpr u32 MULTI_QP_CONFIG_SUB_STRING_NUM = 2; // 配置信息格式为"sip,dip=sport0,sport1,...", 因此会被=分为两个子串
+constexpr u32 MULTI_QP_CONFIG_IP_NUM = 2; // 有两个ip，分别为源ip和目的ip
+constexpr u32 MULTI_QP_CONFIG_IP_PAIR_SHIFT_NUM = 32;
+constexpr u32 MULTI_QP_CONFIG_FILE_LINE_MAX = 128 * 1024; // 配置文件最多只能配置128k行有效内容
+constexpr u32 MULTI_QP_CONFIG_SRC_PORT_NUM_MAX = 32; // 一对ip对最多配置32个源端口号
+constexpr u32 MULTI_QP_CONFIG_SRC_PORT_ID_MAX = 65535;
 
 struct TransportData {
     LinkMode linkMode{LinkMode::LINK_RESERVED_MODE};
@@ -142,14 +153,22 @@ public:
 
     HcclResult CreateVirturalTransport(SingleSubCommTransport& singleSubCommTransport);
     HcclResult Alloc(const std::string &tag, const TransportIOMem &transMem, OpCommTransport &opTransportResponse,
-        bool isAicpuModeEn);
+        bool isAicpuModeEn, bool isBackup = false);
     HcclResult IncreAlloc(const std::string &tag, const TransportIOMem &transMem, OpCommTransport &opTransportReq,
-        OpCommTransport &opTransportResponse, bool isAicpuModeEn);
+        OpCommTransport &opTransportResponse, bool isAicpuModeEn, bool isBackup = false);
+    HcclResult GetRemoteRankList(OpCommTransport &opTransportResponse, std::vector<u32> &rankList,
+        TransportType transportType);
+    HcclResult GetIncreRemoteRankList(OpCommTransport &opTransportReq,
+        OpCommTransport &opTransportResponse, std::vector<u32> &rankList, TransportType transportType);
+    void AddremoteUserRankToList(TransportRequest &transportRequest, std::vector<u32> &rankList,
+        TransportType transportType);
     TransportManager(TransportManager const&) = delete;                 // Copy construct
     TransportManager(TransportManager&&) = delete;                      // Move construct
     TransportManager& operator=(TransportManager const&) = delete;      // Copy assign
     TransportManager& operator=(TransportManager &&) = delete;          // Move assign
 
+    HcclResult SetStopFlag(bool value);
+    bool GetStopFlag();
 private:
     HcclResult GetIOMem(const TransportIOMem &transMem,
         const TransportMemType inputMemType, const TransportMemType outputMemType,
@@ -161,12 +180,12 @@ private:
     HcclResult MakeRemoteLinkInfo(const u32 remoteRank, bool isInterRdma,
         u32 socketsPerLink, HcclRankLinkInfo &remoteLinkInfo);
     HcclResult CreateDestSockets(const std::string &newTag, RankId remoteRank, u64 taskNum,
-        std::vector<std::shared_ptr<HcclSocket> > &connectSockets, bool &isInterRdma, bool forceRdma = false);
+        std::vector<std::shared_ptr<HcclSocket> > &connectSockets, bool &isInterRdma, bool forceRdma = false, bool isBackup = false);
     u32 GetSocketsPerLink(u64 taskNum);
     HcclResult SetMachinePara(const std::string &tag, MachineType machineType, const std::string &serverId, u32 dstRank,
         const bool supportDataReceivedAck, const LinkMode linkMode,
         const std::vector<std::shared_ptr<HcclSocket> > &socketList, const DeviceMem &inputMem,
-        const DeviceMem &outputMem, bool isAicpuModeEn, MachinePara &machinePara);
+        const DeviceMem &outputMem, bool isAicpuModeEn, bool isBackup, MachinePara &machinePara);
     TransportType GetTransportType(const u32 dstRank, bool isUsedRdma);
     void SetTransportParam(TransportPara &para, MachinePara &machinePara);
     HcclResult TransportInit(const u32 dstRank, MachinePara &machinePara,
@@ -175,10 +194,14 @@ private:
         const std::string &serverId, const u32 remoteRank, const bool supportDataReceivedAck, const LinkMode linkMode,
         const bool enableUseOneDoorbell, const std::string threadStr,
         const std::vector<std::shared_ptr<HcclSocket> > sockets, const DeviceMem inputMem, const DeviceMem outputMem,
-        bool isUsedRdma, std::shared_ptr<Transport> &link, bool isAicpuModeEn);
+        bool isUsedRdma, std::shared_ptr<Transport> &link, bool isAicpuModeEn, bool isBackup = false);
     HcclResult ConstructTransTag(const std::string& tag, std::string& transTag, bool isInterRdma);
     HcclResult ExceptionHandle(const std::string &tag, OpCommTransport &opTransportResponse);
 
+    HcclResult LoadMultiQpSrcPortFromFile();
+    HcclResult GetConfigSrcPorts(MachinePara &machinePara);
+
+    std::mutex mutex_;	// 用于控制互斥资源的访问
     CCLBufferManager &cclBufferManager_;
     const std::unique_ptr<HcclSocketManager> &socketManager_;
     const HcclDispatcher &dispatcher_;
@@ -204,6 +227,11 @@ private:
     std::vector<u32> enableP2PDevices_;
 
     std::vector<std::string> socketTagVec_;
+
+    std::atomic<bool> stopFlag_{false};
+    std::unordered_map<std::string, std::vector<u32>> mapIpPairSrcPorts_;
+    bool isCfgFileRead_{ false };
+    std::mutex loadCfgFileMutex_; // 控制文件资源的访问
 };
 }  // namespace hccl
 

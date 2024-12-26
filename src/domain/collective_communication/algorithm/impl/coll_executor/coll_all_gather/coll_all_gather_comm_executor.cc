@@ -75,26 +75,26 @@ HcclResult CollAllGatherCommExecutor::KernelRun(const OpParam &param, ExecMem &e
     SubCommInfo combinedCommInfo = GetSubCommInfo(commPlane, COMM_INDEX_0);
 
     // 构造ring algorithm对应的all_gather实例
-    std::unique_ptr<ExecutorBase> executor;
+    std::unique_ptr<AlgTemplateBase> tempAlg;
     if (UseInterServerNHRAlgo(algType_)) {
-        executor.reset(new (std::nothrow) AllGatherNHR(dispatcher_));
+        tempAlg.reset(new (std::nothrow) AllGatherNHR(dispatcher_));
         HCCL_INFO("algather comm: using nhr algo inter-server.");
     } else if (UseInterServerNHRV1Algo(algType_)) {
-        executor.reset(new (std::nothrow) AllGatherNHRV1(dispatcher_));
+        tempAlg.reset(new (std::nothrow) AllGatherNHRV1(dispatcher_));
         HCCL_INFO("algather comm: using nhr_v1 algo inter-server.");
     } else if (UseInterServerNBAlgo(algType_)) {
-        executor.reset(new (std::nothrow) AllGatherNB(dispatcher_));
+        tempAlg.reset(new (std::nothrow) AllGatherNB(dispatcher_));
         HCCL_INFO("algather comm: using nonuniform-bruck algo inter-server.");
     } else {
-        executor.reset(new (std::nothrow) AllGatherRing(dispatcher_));
+        tempAlg.reset(new (std::nothrow) AllGatherRing(dispatcher_));
         HCCL_INFO("algather comm: ring algo inter-server.");
     }
-    CHK_SMART_PTR_NULL(executor);
+    CHK_SMART_PTR_NULL(tempAlg);
 
-    CHK_RET(executor->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
+    CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
         param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, INVALID_VALUE_RANKID));
 
-    CHK_RET(RunTemplate(executor, combinedCommInfo));
+    CHK_RET(RunTemplate(tempAlg, combinedCommInfo));
 
     return HCCL_SUCCESS;
 }

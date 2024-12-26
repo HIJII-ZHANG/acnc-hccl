@@ -91,12 +91,12 @@ HcclResult BroadCastOperatorForHetero::RunBroadCast(const std::string &tag, Devi
 HcclResult BroadCastOperatorForHetero::BroadcastStarExecutor(const std::string &tag, DeviceMem &inputMem,
     DeviceMem &outputMem, u64 count, HcclDataType dataType, HcclReduceOp op, u32 root, Stream &stream)
 {
-    std::unique_ptr<ExecutorBase> BcastStarExecutor;
-    BcastStarExecutor.reset(new (std::nothrow) BroadcastStar(dispatcher_, userRank_));
-    CHK_SMART_PTR_NULL(BcastStarExecutor);
+    std::unique_ptr<AlgTemplateBase> BcastStarTempAlg;
+    BcastStarTempAlg.reset(new (std::nothrow) BroadcastStar(dispatcher_, userRank_));
+    CHK_SMART_PTR_NULL(BcastStarTempAlg);
 
     std::vector<u32> nicRankList{0, 1};
-    CHK_RET(BcastStarExecutor->Prepare(inputMem, outputMem, inputMem, count, dataType, stream, op, root,
+    CHK_RET(BcastStarTempAlg->Prepare(inputMem, outputMem, inputMem, count, dataType, stream, op, root,
         std::vector<Slice>(0), 0, nicRankList));
 
     CommInfo *currComm;
@@ -105,7 +105,7 @@ HcclResult BroadCastOperatorForHetero::BroadcastStarExecutor(const std::string &
     CHK_PRT_RET(currComm->commOuter.size() == 0, HCCL_ERROR("commOuter size is zero"), HCCL_E_PARA);
     std::unique_ptr<CommBase> &commOuter = currComm->commOuter[COMM_INDEX_0];
     CHK_SMART_PTR_NULL(commOuter);
-    CHK_RET(commOuter->RunExecutor(BcastStarExecutor));
+    CHK_RET(commOuter->RunTemplateAlg(BcastStarTempAlg));
     return HCCL_SUCCESS;
 }
 }

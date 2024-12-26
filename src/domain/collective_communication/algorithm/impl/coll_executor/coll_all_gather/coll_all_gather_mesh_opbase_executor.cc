@@ -62,7 +62,8 @@ HcclResult CollAllGatherMeshOpbaseExecutor::CalcLevel0CommInfo(TransportMemType 
 
 u64 CollAllGatherMeshOpbaseExecutor::CalcLoopMaxCount(const u64 cclBuffSize, const u32 unitSize)
 {
-    u64 maxCountPerLoop = (cclBuffSize - HCCL_MIN_SLICE_ALIGN_910B) / unitSize;
+    u64 maxCountPerLoop = (cclBuffSize - HCCL_MIN_SLICE_ALIGN_910B) / HCCL_MIN_SLICE_ALIGN
+        * HCCL_MIN_SLICE_ALIGN / unitSize;
     return maxCountPerLoop;
 }
 
@@ -70,6 +71,11 @@ bool CollAllGatherMeshOpbaseExecutor::IsHugeData(const u64 curSize)
 {
     bool hugeData = curSize > SDMA_SEND_MAX_SIZE;
     return hugeData;
+}
+
+bool CollAllGatherMeshOpbaseExecutor::IsSmallData(const u64 size)
+{
+    return topoAttr_.deviceType == DevType::DEV_TYPE_910_93;
 }
 
 HcclResult CollAllGatherMeshOpbaseExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
@@ -98,21 +104,21 @@ HcclResult CollAllGatherMeshOpbaseExecutor::KernelRun(const OpParam &param, Exec
         "", execMem.inputPtr, execMem.outputPtr, param.DataDes.count, param.DataDes.dataType, 0, HCCL_REDUCE_RESERVED
     };
 
-    std::unique_ptr<ExecutorBase> outerExecutor;
-    outerExecutor.reset(
+    std::unique_ptr<AlgTemplateBase> outerTempAlg;
+    outerTempAlg.reset(
         new (std::nothrow) AllgatherMeshDirect(dispatcher_, algResResp_->slaveStreams,
         algResResp_->notifiesM2S, algResResp_->notifiesS2M, outerCommInfo.localRank, outerCommInfo.localRankSize,
         topoAttr_.userRank, &opInfo));
-    CHK_SMART_PTR_NULL(outerExecutor);
-    CHK_RET(outerExecutor->Prepare(currentOutputMem, currentOutputMem, execMem.inputMem, execMem.count,
+    CHK_SMART_PTR_NULL(outerTempAlg);
+    CHK_RET(outerTempAlg->Prepare(currentOutputMem, currentOutputMem, execMem.inputMem, execMem.count,
         param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, OUTER_BRIDGE_RANK_ID,
         dataSegsSlice, baseOffset));
 
     u32 rankSize = outerCommInfo.localRankSize;
-    CHK_RET(outerExecutor->RegisterProfiler((rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + outerCommInfo.localRank,
+    CHK_RET(outerTempAlg->RegisterProfiler((rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + outerCommInfo.localRank,
         PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-    CHK_RET(RunTemplate(outerExecutor, outerCommInfo));
+    CHK_RET(RunTemplate(outerTempAlg, outerCommInfo));
 
     HCCL_INFO("all gather mesh outer run success");
     return HCCL_SUCCESS;

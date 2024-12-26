@@ -291,6 +291,11 @@ u32 TopoMatcher::GetExternalInputHcclDumpDebug()
     return externalEnable_.dumpDebug;
 }
 
+u32 TopoMatcher::GetExternalInputInterHccsDisable()
+{
+    return externalEnable_.interHccsDisable;
+}
+
 bool CheckRankNeighbors(const std::vector<u32> &nicList)
 {
     // 组成ROH环路必须偶数个,且2节点不能组成双环？
@@ -477,12 +482,36 @@ HcclResult TopoMatcher::GetLocalSuperPodRankSize(const u32 userRank, u32& devNum
         }
     }
     if (superPodIdx == INVALID_VALUE_RANKID || rankIdxInPod == INVALID_VALUE_RANKID) {
-        HCCL_ERROR("[GET][GetSubRootForScatter]get rankId in inner failed.");
+        HCCL_ERROR("[GET][GetLocalSuperPodRankSize]get rankId in inner failed.");
         return HCCL_E_PARA;
     }
     devNumInlocalPod = serverAndsuperPodToRank_[1][superPodIdx].size();
     HCCL_DEBUG("[GetLocalSuperPodRankSize] userRank[%u], superPodIdx[%u], rankIdxInPod[%u] devNumInlocalPod[%u]",
         userRank, superPodIdx, rankIdxInPod, devNumInlocalPod);
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoMatcher::GetLocalServerRankSize(const u32 userRank, u32& devNumInlocalServer, u32& rankIdxInServer)
+{
+    u32 serverIdx = INVALID_VALUE_RANKID;
+    for (u32 i = 0; i < serverAndsuperPodToRank_[0].size(); i++) {
+        std::vector<u32> userRankInServer(serverAndsuperPodToRank_[0][i]);
+        std::sort(userRankInServer.begin(), userRankInServer.end());
+        for (u32 j = 0; j < userRankInServer.size(); j++) {
+            if (userRankInServer[j] == userRank) {
+                serverIdx = i;
+                rankIdxInServer = j;
+                break;
+            }
+        }
+    }
+    if (serverIdx == INVALID_VALUE_RANKID || rankIdxInServer == INVALID_VALUE_RANKID) {
+        HCCL_ERROR("[GET][GetLocalServerRankSize]get rankId in inner failed.");
+        return HCCL_E_PARA;
+    }
+    devNumInlocalServer = serverAndsuperPodToRank_[0][serverIdx].size();
+    HCCL_DEBUG("[GetLocalServerRankSize] userRank[%u], serverIdx[%u], rankIdxInServer[%u] devNumInlocalServer[%u]",
+        userRank, serverIdx, rankIdxInServer, devNumInlocalServer);
     return HCCL_SUCCESS;
 }
 

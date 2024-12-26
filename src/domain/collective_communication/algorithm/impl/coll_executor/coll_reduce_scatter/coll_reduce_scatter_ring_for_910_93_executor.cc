@@ -126,7 +126,8 @@ HcclResult CollReduceScatterRingFor91093Executor::CalcLevel2CommInfo(TransportMe
 u64 CollReduceScatterRingFor91093Executor::CalcLoopMaxCount(const u32 unitSize)
 {
     // 中转内存单次最多能够接受的output count，放开ranksize限制
-    u64 maxCountPerLoop = inCCLbufferSize_ / (topoAttr_.userRankSize * unitSize);
+    u64 maxCountPerLoop = inCCLbufferSize_ / topoAttr_.userRankSize / HCCL_MIN_SLICE_ALIGN
+        * HCCL_MIN_SLICE_ALIGN / unitSize;
     return maxCountPerLoop;
 }
 
@@ -136,9 +137,6 @@ bool CollReduceScatterRingFor91093Executor::IsHugeData(const u64 curSize, OpPara
     CHK_RET(CheckCommSize(COMM_LEVEL2, COMM_INDEX_0 + 1));
     SubCommInfo level2CommInfo = GetSubCommInfo(COMM_LEVEL2, COMM_INDEX_0);
     u32 level2RankSize = level2CommInfo.localRankSize;
-    if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT && level2RankSize > 1) {
-        return true;
-    }
     const u64 TBE_REDUCE_MAX_COUNT = INT32_MAX;
 
     u64 curCount = curSize / SIZE_TABLE[param->DataDes.dataType];
@@ -302,7 +300,7 @@ HcclResult CollReduceScatterRingFor91093Executor::KernelRun(const OpParam &param
                 tmpSlice.size = cclSlice.size;
                 CHK_PRT_RET(execMem.outputMem.size() == 0,
                     HCCL_ERROR("[CollReduceScatterRingFor91093Executor][KernelRun]cclout memsize[%llu] is zero",
-                    execMem.outputMem.size()), HCCL_E_PARA);              
+                    execMem.outputMem.size()), HCCL_E_PARA);
                 tmpSlice.offset =
                     (cclSlice.offset / execMem.outputMem.size()) * param.DataDes.count * perDataSize +
                     multiStreamSlice[ringIndex][0].offset;
@@ -344,7 +342,7 @@ HcclResult CollReduceScatterRingFor91093Executor::KernelRun(const OpParam &param
     if  (innerRankSize > 1) {
         // 节点间做reduce scatter（ring/NHR)
         u64 reduceAttr = GetReduceAttr(execMem.inputMem, execMem.scratchMem, param.DataDes.dataType, param.reduceType);
-        std::unique_ptr<ExecutorBase> innerExecutor;
+        std::unique_ptr<AlgTemplateBase> innerTempAlg;
 
         // 计算slice
         std::vector<Slice> level1DataSegsSlice;
@@ -361,30 +359,30 @@ HcclResult CollReduceScatterRingFor91093Executor::KernelRun(const OpParam &param
                 level1DataSegsSlice, syncTrans, reduceAttr));
         } else {
             if (UseInterServerRingAlgo(algType_)) {
-                innerExecutor.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
+                innerTempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
                 HCCL_INFO("reducescatter ring: using ring algo inter-server.");
             } else if (UseInterServerNBAlgo(algType_)) {
-                innerExecutor.reset(new (std::nothrow) ReduceScatterNB(dispatcher_, reduceAttr));
+                innerTempAlg.reset(new (std::nothrow) ReduceScatterNB(dispatcher_, reduceAttr));
                 HCCL_INFO("reducescatter ring: using nonuniform-bruck algo inter-server.");
             } else {
-                innerExecutor.reset(new (std::nothrow) ReduceScatterNHR(dispatcher_, reduceAttr));
+                innerTempAlg.reset(new (std::nothrow) ReduceScatterNHR(dispatcher_, reduceAttr));
                 HCCL_INFO("reducescatter ring: using nonuniform-hierarchical-ring algo inter-server.");
             }
-            CHK_SMART_PTR_NULL(innerExecutor);
+            CHK_SMART_PTR_NULL(innerTempAlg);
 
-            CHK_RET(innerExecutor->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, execMem.count,
+            CHK_RET(innerTempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, execMem.count,
                 param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID, level1DataSegsSlice));
-            CHK_RET(innerExecutor->RegisterProfiler(
+            CHK_RET(innerTempAlg->RegisterProfiler(
                 (innerRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + innerCommInfo.localRank,
                 PROF_STAGE_2, HCCL_EXEC_STEP_NOT_SET, param.stream));
-            CHK_RET(RunTemplate(innerExecutor, innerCommInfo));
+            CHK_RET(RunTemplate(innerTempAlg, innerCommInfo));
         }
     }
 
     if (level2RankSize > 1) {
         /* ****************** 超节点间 reducescatter *******************************/
         u64 reduceAttr = GetReduceAttr(execMem.inputMem, execMem.scratchMem, param.DataDes.dataType, param.reduceType);
-        std::unique_ptr<ExecutorBase> level2Executor;
+        std::unique_ptr<AlgTemplateBase> level2TempAlg;
 
         // 计算slice
         std::vector<Slice> level2DataSegsSlice;
@@ -398,17 +396,17 @@ HcclResult CollReduceScatterRingFor91093Executor::KernelRun(const OpParam &param
                 topoAttr_.userRank, i, sliceTemp.offset, sliceTemp.size, level2RankSize);
         }
 
-        level2Executor.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
+        level2TempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
         HCCL_INFO("reducescatter ring: using ring algo inter-superPod.");
 
-        CHK_SMART_PTR_NULL(level2Executor);
+        CHK_SMART_PTR_NULL(level2TempAlg);
 
-        CHK_RET(level2Executor->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, execMem.count,
+        CHK_RET(level2TempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, execMem.count,
             param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID, level2DataSegsSlice));
-        CHK_RET(level2Executor->RegisterProfiler(
+        CHK_RET(level2TempAlg->RegisterProfiler(
             (level2RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level2CommInfo.localRank,
             PROF_STAGE_2, HCCL_EXEC_STEP_NOT_SET, param.stream));
-        CHK_RET(RunTemplate(level2Executor, level2CommInfo));
+        CHK_RET(RunTemplate(level2TempAlg, level2CommInfo));
     }
 
     if (innerRankSize > 1 || level2RankSize > 1) {

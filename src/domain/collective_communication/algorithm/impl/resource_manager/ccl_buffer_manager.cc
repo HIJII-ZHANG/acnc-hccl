@@ -76,7 +76,6 @@ HcclResult CleanAIVbuffer(void *bufferPtr)
         HcclRtMemcpyKind::HCCL_RT_MEMCPY_KIND_HOST_TO_DEVICE));
     return HCCL_SUCCESS;
 }
-
 HcclResult CCLBufferManager::CreateCommAIVbuffer()
 {
     if (inAIVbuffer_.ptr() == nullptr) {

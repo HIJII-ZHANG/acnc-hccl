@@ -21,7 +21,7 @@
 #include "externalinput_pub.h"
 #include "mem_device_pub.h"
 #include "stream_pub.h"
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 #include "coll_alg_param.h"
 
 namespace hccl {
@@ -35,7 +35,7 @@ public:
 };
 
 // 定义 alltoall pipeline 系列算法的一些公共实现，和整体的抽象行为
-class AlltoallPipelineBase : public ExecutorBase {
+class AlltoallPipelineBase : public AlgTemplateBase {
 public:
     explicit AlltoallPipelineBase(
         const HcclDispatcher dispatcher,

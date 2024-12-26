@@ -53,6 +53,10 @@ HcclResult CollReduceScatterDeterExecutor::CalcStreamNum(u32& streamNum)
         totalStreamNum = topoAttr_.deviceNumPerAggregation;
     }
     streamNum = totalStreamNum - 1U;
+    const u32 subStreamNum = 3;
+    if (topoAttr_.serverNum != 1) {
+        streamNum = subStreamNum;
+    }
     HCCL_INFO("[CollReduceScatterDeterExecutor][CalcStreamNum] tag[%s] streamNum[%u]", tag_.c_str(), streamNum);
     return HCCL_SUCCESS;
 }
@@ -93,18 +97,37 @@ HcclResult CollReduceScatterDeterExecutor::CalcLevel0CommInfo(TransportMemType i
     TransportMemType outputType,
     std::vector<LevelNSubCommTransport>& opTransport)
 {
-    CommParaInfo commParaLevel0(COMM_LEVEL0, CommType::COMM_TAG_MESH);
-    commParaLevel0.meshSinglePlane = true;
-    CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel0, opTransport[COMM_LEVEL0], inputType, outputType));
+    if (topoAttr_.serverNum == 1) {
+        CommParaInfo commParaLevel0(COMM_LEVEL0, CommType::COMM_TAG_MESH);
+        commParaLevel0.meshSinglePlane = true;
+        CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel0, opTransport[COMM_LEVEL0], inputType, outputType));
+    } else  {
+        CommParaInfo commCombinePara(COMM_COMBINE_ORDER, CommType::COMM_TAG_MESH);
+        CHK_RET(CalcCommPlaneInfo(tag_, commCombinePara, opTransport[COMM_COMBINE_ORDER], inputType, outputType));
+    }
     return HCCL_SUCCESS;
 }
 
 u64 CollReduceScatterDeterExecutor::CalcLoopMaxCount(const u32 unitSize)
 {
-    u64 maxCountPerLoop = (inCCLbufferSize_ - HCCL_MIN_SLICE_ALIGN_910B * topoAttr_.deviceNumPerAggregation) /
-        unitSize / (topoAttr_.deviceNumPerAggregation - 1);
-    maxCountPerLoop = maxCountPerLoop / HCCL_MIN_SLICE_ALIGN_910B;
-    maxCountPerLoop = maxCountPerLoop * HCCL_MIN_SLICE_ALIGN_910B;
+    u64 maxCountPerLoop;
+    bool isLocalReduce91073 = ((((topoAttr_.userRankSize & (topoAttr_.userRankSize - 1)) != 0) ||
+        aicpuUnfoldMode_ || (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB)) 
+        && (topoAttr_.deviceType == DevType::DEV_TYPE_910_93)) && (topoAttr_.serverNum == 1);
+
+    bool isLocalReduce910B = ((totalSize_ > HCCL_SMALL_COUNT_32_KB) ||
+        (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB) ||
+        ((topoAttr_.deviceNumPerAggregation != DEVICE_EIGHT) && (topoAttr_.deviceNumPerAggregation != DEVICE_FOUR)))&&
+        (topoAttr_.deviceType == DevType::DEV_TYPE_910B);
+    if (isLocalReduce91073 || isLocalReduce910B) { 
+        maxCountPerLoop = (inCCLbufferSize_ - HCCL_MIN_SLICE_ALIGN_910B * topoAttr_.deviceNumPerAggregation) /
+            unitSize / (topoAttr_.deviceNumPerAggregation - 1);
+        maxCountPerLoop = maxCountPerLoop / HCCL_MIN_SLICE_ALIGN_910B;
+        maxCountPerLoop = maxCountPerLoop * HCCL_MIN_SLICE_ALIGN_910B;
+    } else {
+        const u32 base = 2;
+        maxCountPerLoop = inCCLbufferSize_ * base / topoAttr_.userRankSize;
+    }
     return maxCountPerLoop;
 }
 
@@ -118,7 +141,7 @@ bool CollReduceScatterDeterExecutor::IsSmallData(const u64 totalSize, const u64 
 {
     bool smallData = false;
     if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
-        smallData = totalSize <= HCCL_SMALL_COUNT_2_MB;
+        smallData = true;
     } else {
         smallData = totalSize <= HCCL_SMALL_COUNT_32_KB;
     }
@@ -129,10 +152,14 @@ HcclResult CollReduceScatterDeterExecutor::KernelRun(const OpParam &param, ExecM
 {
     u32 unitSize = SIZE_TABLE[param.DataDes.dataType];
     std::vector<Slice> dataSegsSlice; // 数据分成ranksize份，每份的起始偏移和大小
-    std::unique_ptr<ExecutorBase> outerExecutor;
+    std::unique_ptr<AlgTemplateBase> outerTempAlg;
+    CommPlane commPlane = COMM_LEVEL0;
+    if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93 && topoAttr_.serverNum != 1) {
+        commPlane = COMM_COMBINE_ORDER;
+    }
 
-    CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    CHK_RET(CheckCommSize(commPlane, COMM_INDEX_0 + 1));
+    SubCommInfo outerCommInfo = GetSubCommInfo(commPlane, COMM_INDEX_0);
 
     CHK_RET(ActiveSlaveStreams(param.stream));
 
@@ -142,7 +169,7 @@ HcclResult CollReduceScatterDeterExecutor::KernelRun(const OpParam &param, ExecM
 
     bool isLocalReduce91073 = ((((topoAttr_.userRankSize & (topoAttr_.userRankSize - 1)) != 0) ||
         aicpuUnfoldMode_ || (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB)) 
-        && (topoAttr_.deviceType == DevType::DEV_TYPE_910_93));
+        && (topoAttr_.deviceType == DevType::DEV_TYPE_910_93)) && (topoAttr_.serverNum == 1);
 
     bool isLocalReduce910B = ((param.DataDes.count * unitSize > HCCL_SMALL_COUNT_32_KB) ||
         (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB) ||
@@ -150,23 +177,23 @@ HcclResult CollReduceScatterDeterExecutor::KernelRun(const OpParam &param, ExecM
         (topoAttr_.deviceType == DevType::DEV_TYPE_910B);
 
     if (isLocalReduce91073 || isLocalReduce910B) {
-        outerExecutor.reset(new (std::nothrow) ReduceScatterLocalReduce(dispatcher_, reduceAttr,
+        outerTempAlg.reset(new (std::nothrow) ReduceScatterLocalReduce(dispatcher_, reduceAttr,
             algResResp_->slaveStreams, algResResp_->notifiesM2S, algResResp_->notifiesS2M,
             topoAttr_.userRank, &opInfo));
     } else {
-        outerExecutor.reset(new (std::nothrow) ReduceScatterHDStage(dispatcher_, reduceAttr, algResResp_->slaveStreams,
+        outerTempAlg.reset(new (std::nothrow) ReduceScatterHDStage(dispatcher_, reduceAttr, algResResp_->slaveStreams,
             algResResp_->notifiesM2S, algResResp_->notifiesS2M, topoAttr_.userRank, &opInfo));
     }
 
-    CHK_SMART_PTR_NULL(outerExecutor);
-    CHK_RET(outerExecutor->Prepare(execMem.inputMem, execMem.scratchMem, execMem.outputMem, execMem.count,
+    CHK_SMART_PTR_NULL(outerTempAlg);
+    CHK_RET(outerTempAlg->Prepare(execMem.inputMem, execMem.scratchMem, execMem.outputMem, execMem.count,
         param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID, dataSegsSlice, 0));
 
-    CHK_RET(outerExecutor->RegisterProfiler(
+    CHK_RET(outerTempAlg->RegisterProfiler(
         (outerCommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + outerCommInfo.localRank,
         PROF_STAGE_2, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-    CHK_RET(RunTemplate(outerExecutor, outerCommInfo));
+    CHK_RET(RunTemplate(outerTempAlg, outerCommInfo));
     HCCL_INFO("reducescatter mesh deter run success");
     return HCCL_SUCCESS;
 }

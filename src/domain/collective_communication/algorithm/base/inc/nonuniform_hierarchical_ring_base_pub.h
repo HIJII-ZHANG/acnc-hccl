@@ -11,8 +11,8 @@
 #ifndef NONUNIFORM_HIERARCHICAL_RING_BASE_PUB_H
 #define NONUNIFORM_HIERARCHICAL_RING_BASE_PUB_H
 
-#include "executor_base_pub.h"
-#include "cmath"
+#include <cmath>
+#include "alg_template_base_pub.h"
 
 namespace hccl {
 
@@ -34,12 +34,14 @@ using InterServerAlgoStep = struct InterServerAlgoStepDef {
     }
 };
 
-class NHRBase : public ExecutorBase {
+class NHRBase : public AlgTemplateBase {
 public:
     explicit NHRBase(const HcclDispatcher dispatcher);
     ~NHRBase() override;
 
     void GetRankMapping(const u32 rankSize, bool keepOrder = false);
+
+    void FetchRankMapping(std::vector<u32> &sliceMap);
 
     void MergeSlices(std::vector<Slice> &slices);
 

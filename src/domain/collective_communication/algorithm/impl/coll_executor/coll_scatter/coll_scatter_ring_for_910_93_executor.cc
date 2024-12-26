@@ -112,18 +112,18 @@ HcclResult CollScatterRingFor91093Executor::KernelRunLevel2(const OpParam &param
     if (level2RankSize > 1 && subUserRankRootSupperPod_ == topoAttr_.userRank) {
         u32 planeRootSupperPod = 0;
         CHK_RET(GetRankByUserRank(COMM_LEVEL2, COMM_INDEX_0, param.root, planeRootSupperPod));
-        std::unique_ptr<ExecutorBase> level2Executor;
+        std::unique_ptr<AlgTemplateBase> level2TempAlg;
 
-        level2Executor.reset(new (std::nothrow) ScatterRing(dispatcher_));
+        level2TempAlg.reset(new (std::nothrow) ScatterRing(dispatcher_));
         HCCL_INFO("scatter ring: using ring algo inter-superPod.");
-        CHK_SMART_PTR_NULL(level2Executor);
+        CHK_SMART_PTR_NULL(level2TempAlg);
 
         u64 level2Count = execMem.inputMem.size() / perDataSize_;
-        CHK_RET(level2Executor->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, level2Count,
+        CHK_RET(level2TempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, level2Count,
             param.DataDes.dataType, stream, HCCL_REDUCE_RESERVED, planeRootSupperPod, std::vector<Slice>(0)));
-        CHK_RET(level2Executor->RegisterProfiler((level2RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level2Rank,
+        CHK_RET(level2TempAlg->RegisterProfiler((level2RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level2Rank,
             PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, stream));
-        CHK_RET(RunTemplate(level2Executor, level2CommInfo_));
+        CHK_RET(RunTemplate(level2TempAlg, level2CommInfo_));
     }
     return HCCL_SUCCESS;
 }
@@ -152,20 +152,20 @@ HcclResult CollScatterRingFor91093Executor::KernelRunLevel1(const OpParam &param
         u32 rootRankInner = 0;
         CHK_RET(GetRankByUserRank(COMM_LEVEL1, commIndex_, subUserRankRootSupperPod_, rootRankInner));
 
-        std::unique_ptr<ExecutorBase> innerExecutor;
-        innerExecutor.reset(new (std::nothrow) ScatterRing(dispatcher_));
+        std::unique_ptr<AlgTemplateBase> innerTempAlg;
+        innerTempAlg.reset(new (std::nothrow) ScatterRing(dispatcher_));
         HCCL_INFO("scatter ring: using ring algo inter-server.");
-        CHK_SMART_PTR_NULL(innerExecutor);
+        CHK_SMART_PTR_NULL(innerTempAlg);
 
         DeviceMem level1InputMem = execMem.inputMem.range(level1SliceOffset_, level1SliceSize);
         CHK_SMART_PTR_NULL(level1InputMem.ptr());
 
-        CHK_RET(innerExecutor->Prepare(level1InputMem, level1InputMem, level1InputMem, level1SliceCount,
+        CHK_RET(innerTempAlg->Prepare(level1InputMem, level1InputMem, level1InputMem, level1SliceCount,
             param.DataDes.dataType, stream, HCCL_REDUCE_RESERVED, rootRankInner, std::vector<Slice>(0),
             level1SliceOffset_));
-        CHK_RET(innerExecutor->RegisterProfiler((level1RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1Rank,
+        CHK_RET(innerTempAlg->RegisterProfiler((level1RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1Rank,
             PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, stream));
-        CHK_RET(RunTemplate(innerExecutor, innerCommInfo_));
+        CHK_RET(RunTemplate(innerTempAlg, innerCommInfo_));
     }
     return HCCL_SUCCESS;
 }

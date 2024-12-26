@@ -11,10 +11,10 @@
 #ifndef ALL_GATHER_MESH_DIRECT_H
 #define ALL_GATHER_MESH_DIRECT_H
 
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 
 namespace hccl {
-class AllgatherMeshDirect : public ExecutorBase {
+class AllgatherMeshDirect : public AlgTemplateBase {
 public:
     explicit AllgatherMeshDirect(const HcclDispatcher dispatcher,
         std::vector<Stream> &meshStreams,

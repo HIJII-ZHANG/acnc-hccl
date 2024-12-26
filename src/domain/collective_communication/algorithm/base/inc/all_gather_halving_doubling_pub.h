@@ -11,10 +11,10 @@
 #ifndef ALL_GATHER_HALVING_DOUBLING_PUB_H
 #define ALL_GATHER_HALVING_DOUBLING_PUB_H
 
-#include "executor_base_pub.h"
+#include "alg_template_base_pub.h"
 
 namespace hccl {
-class AllGatherHalvingDoubling : public ExecutorBase {
+class AllGatherHalvingDoubling : public AlgTemplateBase {
 public:
     explicit AllGatherHalvingDoubling(u32 blockSize, const HcclDispatcher dispatcher,
                                       UserMemType hdInputMemType = UserMemType::OUTPUT_MEM,
