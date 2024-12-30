@@ -12,7 +12,7 @@
 #include "alg_template_base.h"
 
 namespace hccl {
-AlgTemplateBase::AlgTemplateBase(const HcclDispatcher dispatcher)
+ExecutorBase::ExecutorBase(const HcclDispatcher dispatcher)
     : dispatcher_(dispatcher),
       slices_(slicesDummy_), count_(0), dataBytes_(0), dataType_(HCCL_DATA_TYPE_RESERVED),
       reductionOp_(HCCL_REDUCE_RESERVED), root_(INVALID_VALUE_RANKID),
@@ -20,13 +20,13 @@ AlgTemplateBase::AlgTemplateBase(const HcclDispatcher dispatcher)
 {
 }
 
-AlgTemplateBase::~AlgTemplateBase()
+ExecutorBase::~ExecutorBase()
 {
     slices_.clear();
 }
 
 // prepare函数给需要进行集合通信操作进行参数赋值
-HcclResult AlgTemplateBase::Prepare(DeviceMem &inputMem, DeviceMem &outputMem, DeviceMem &scratchMem,
+HcclResult ExecutorBase::Prepare(DeviceMem &inputMem, DeviceMem &outputMem, DeviceMem &scratchMem,
                                  const u64 count,
                                  const HcclDataType dataType, const Stream &stream,
                                  const HcclReduceOp reductionOp,
@@ -36,7 +36,7 @@ HcclResult AlgTemplateBase::Prepare(DeviceMem &inputMem, DeviceMem &outputMem, D
 {
     // 部分集合通信操作允许input_mem/output_mem为空
 
-    HCCL_DEBUG("AlgTemplateBase prepare start");
+    HCCL_DEBUG("ExecutorBase prepare start");
 
     /* * 参数保存 */
     inputMem_ = inputMem;
@@ -60,11 +60,11 @@ HcclResult AlgTemplateBase::Prepare(DeviceMem &inputMem, DeviceMem &outputMem, D
 
     nicRankList_.assign(nicRankList.begin(), nicRankList.end());
     // 不带入该参数，代表数据均分，直接用count赋值
-    HCCL_DEBUG("AlgTemplateBase prepare end");
+    HCCL_DEBUG("ExecutorBase prepare end");
     return HCCL_SUCCESS;
 }
 
-HcclResult AlgTemplateBase::Prepare(DeviceMem &inputMem, DeviceMem &scratchMem, const u64 count,
+HcclResult ExecutorBase::Prepare(DeviceMem &inputMem, DeviceMem &scratchMem, const u64 count,
                                  const HcclDataType dataType, const Stream &stream,
                                  const HcclReduceOp reductionOp,
                                  const u32 root, const std::vector<Slice> &slices, const u64 baseOffset,
@@ -74,7 +74,7 @@ HcclResult AlgTemplateBase::Prepare(DeviceMem &inputMem, DeviceMem &scratchMem, 
     // 部分集合通信操作允许input_mem/output_mem为空
     CHK_PTR_NULL(stream.ptr());
 
-    HCCL_DEBUG("AlgTemplateBase prepare start");
+    HCCL_DEBUG("ExecutorBase prepare start");
 
     /* * 参数保存 */
     inputMem_ = inputMem;
@@ -98,11 +98,11 @@ HcclResult AlgTemplateBase::Prepare(DeviceMem &inputMem, DeviceMem &scratchMem, 
 
     nicRankList_.assign(nicRankList.begin(), nicRankList.end());
     // 不带入该参数，代表数据均分，直接用count赋值
-    HCCL_DEBUG("AlgTemplateBase prepare end");
+    HCCL_DEBUG("ExecutorBase prepare end");
     return HCCL_SUCCESS;
 }
 
-HcclResult AlgTemplateBase::Prepare(DeviceMem &inputMem, DeviceMem &outputMem, DeviceMem &scratchMem,
+HcclResult ExecutorBase::Prepare(DeviceMem &inputMem, DeviceMem &outputMem, DeviceMem &scratchMem,
                                  const u64 count,
                                  const HcclDataType dataType, const Stream &stream,
                                  const std::vector<std::vector<Slice>> &multRingsSlices,
@@ -141,7 +141,7 @@ HcclResult AlgTemplateBase::Prepare(DeviceMem &inputMem, DeviceMem &outputMem, D
     return HCCL_SUCCESS;
 }
 
-HcclResult AlgTemplateBase::RegisterProfiler(s32 planeId, s32 stage, s32 step, const Stream &stream)
+HcclResult ExecutorBase::RegisterProfiler(s32 planeId, s32 stage, s32 step, const Stream &stream)
 {
     profilerInput_.streamID = stream.id();
     profilerInput_.planeID = planeId;
@@ -150,7 +150,7 @@ HcclResult AlgTemplateBase::RegisterProfiler(s32 planeId, s32 stage, s32 step, c
     return HCCL_SUCCESS;
 }
 
-HcclResult AlgTemplateBase::RunAsync(const u32 rank, const u32 rankSize,
+HcclResult ExecutorBase::RunAsync(const u32 rank, const u32 rankSize,
     const std::vector<std::shared_ptr<Transport> > &links)
 {
     (void)rank;
@@ -159,7 +159,7 @@ HcclResult AlgTemplateBase::RunAsync(const u32 rank, const u32 rankSize,
     return HCCL_SUCCESS;
 }
 
-HcclResult AlgTemplateBase::RunAsyncStaged(const u32 rank, const u32 rankSize,
+HcclResult ExecutorBase::RunAsyncStaged(const u32 rank, const u32 rankSize,
     const std::vector<std::shared_ptr<Transport> > &links, RunStage stage)
 {
     (void)rank;
@@ -169,7 +169,7 @@ HcclResult AlgTemplateBase::RunAsyncStaged(const u32 rank, const u32 rankSize,
     return HCCL_SUCCESS;
 }
 
-void AlgTemplateBase::CalcBinaryBlockParams(u32 rank, u32 rankSize, u32 &stepsInBlock, u32 &lowerBlockSize,
+void ExecutorBase::CalcBinaryBlockParams(u32 rank, u32 rankSize, u32 &stepsInBlock, u32 &lowerBlockSize,
     u32 &myBlockSize, u32 &rankInMyBlock, u32 &myBlockOffset, u32 &higherBlockSize)
 {
     u32 offset = rankSize;
@@ -204,7 +204,7 @@ void AlgTemplateBase::CalcBinaryBlockParams(u32 rank, u32 rankSize, u32 &stepsIn
         rankInMyBlock = rank % myBlockSize;
     }
 }
-std::vector<bool> AlgTemplateBase::CalcLinksRelation(const u32 rank, const u32 rankSize, const u32 rootRank,
+std::vector<bool> ExecutorBase::CalcLinksRelation(const u32 rank, const u32 rankSize, const u32 rootRank,
                                                   HalvingDoublingType algorithmType)
 {
     HCCL_INFO("Calculate links relation: Rank[%u], RankSize[%u], RootRank[%u], HDType[%d]",
@@ -248,7 +248,7 @@ std::vector<bool> AlgTemplateBase::CalcLinksRelation(const u32 rank, const u32 r
 }
 
 // 将数据均分，最小单位是128
-HcclResult AlgTemplateBase::PrepareSliceData(u64 dataCount, u32 unitSize, u32 sliceNum, u64 piplineOffset,
+HcclResult ExecutorBase::PrepareSliceData(u64 dataCount, u32 unitSize, u32 sliceNum, u64 piplineOffset,
     std::vector<Slice>& dataSlice)
 {
     Slice temp;
@@ -282,7 +282,7 @@ HcclResult AlgTemplateBase::PrepareSliceData(u64 dataCount, u32 unitSize, u32 sl
 }
 
 // 数据切分到每个stream上，最小单位是128
-HcclResult AlgTemplateBase::PrepareSliceMeshStreams(const std::vector<Slice> &rankSegsSlice, u32 streamCount,
+HcclResult ExecutorBase::PrepareSliceMeshStreams(const std::vector<Slice> &rankSegsSlice, u32 streamCount,
     std::vector<std::vector<Slice>>& mutliStreamsSlices)
 {
     std::vector<u64> rankStreamSize;
@@ -298,7 +298,7 @@ HcclResult AlgTemplateBase::PrepareSliceMeshStreams(const std::vector<Slice> &ra
     for (u32 rankId = 0; rankId < rankSegsSlice.size(); rankId++) {
         u64 rankDataSize = rankSegsSlice[rankId].size;
         u64 sizePerStream = (rankDataSize + streamCount - 1) / streamCount;
-        u64 sizeAlgin = AlgTemplateBase::RoundUpWithDivisor(sizePerStream, HCCL_MIN_SLICE_ALIGN);
+        u64 sizeAlgin = ExecutorBase::RoundUpWithDivisor(sizePerStream, HCCL_MIN_SLICE_ALIGN);
         rankStreamSize.push_back(sizeAlgin);
         rankResidueSize.push_back(rankDataSize);
     }
@@ -326,7 +326,7 @@ HcclResult AlgTemplateBase::PrepareSliceMeshStreams(const std::vector<Slice> &ra
     return HCCL_SUCCESS;
 }
 
-HcclResult AlgTemplateBase::CalcBinaryBlockHalvingDoubleLinkReleation(u32 rank, u32 rankSize,
+HcclResult ExecutorBase::CalcBinaryBlockHalvingDoubleLinkReleation(u32 rank, u32 rankSize,
     std::vector<bool> &linkRelation)
 {
     u32 stepsInBlock = 0;
@@ -368,7 +368,7 @@ HcclResult AlgTemplateBase::CalcBinaryBlockHalvingDoubleLinkReleation(u32 rank, 
 }
 
 //  用于recursive halving doubling
-void AlgTemplateBase::CalcLinkInBlock(u32 blockSize, u32 rankInBlock, std::list<u32> &linkRankIndexInBlock)
+void ExecutorBase::CalcLinkInBlock(u32 blockSize, u32 rankInBlock, std::list<u32> &linkRankIndexInBlock)
 {
     u32 blockSizeHalving = blockSize / 2;       //  每个循环除2计算当前block的折半rank数
     u32 rankInTempBlock = rankInBlock;
@@ -384,7 +384,7 @@ void AlgTemplateBase::CalcLinkInBlock(u32 blockSize, u32 rankInBlock, std::list<
 }
 
 //  用于recursive halving doubling
-void AlgTemplateBase::CalcLinkBetweenParts(u32 part1Size, std::list<u32> &linkRankIndexInBlock,
+void ExecutorBase::CalcLinkBetweenParts(u32 part1Size, std::list<u32> &linkRankIndexInBlock,
                                         std::list<u32> &linkRankIndex, bool oddRank)
 {
     for (auto it : linkRankIndexInBlock) {
@@ -401,7 +401,7 @@ void AlgTemplateBase::CalcLinkBetweenParts(u32 part1Size, std::list<u32> &linkRa
 }
 
 //  用于recursive halving doubling
-void AlgTemplateBase::CalcRecursiveHalvingDobuleLinkReleation(u32 rank, u32 rankSize, u32 rootRank,
+void ExecutorBase::CalcRecursiveHalvingDobuleLinkReleation(u32 rank, u32 rankSize, u32 rootRank,
                                                            std::vector<bool> &linkRelation)
 {
     u32 exponent = 0;
@@ -428,7 +428,7 @@ void AlgTemplateBase::CalcRecursiveHalvingDobuleLinkReleation(u32 rank, u32 rank
     }
 }
 
-void AlgTemplateBase::CalcRecursiveHdLinkRelationForFirstScene(u32 rank,
+void ExecutorBase::CalcRecursiveHdLinkRelationForFirstScene(u32 rank,
     u32 part1Size, u32 blockSize, std::vector<bool> &linkRelation)
 {
     if (rank < part1Size && rank % 2 == 0) { // 除2判断是否为偶数
@@ -457,7 +457,7 @@ void AlgTemplateBase::CalcRecursiveHdLinkRelationForFirstScene(u32 rank,
     }
 }
 
-void AlgTemplateBase::CalcRecursiveHdLinkRelationForSecondScene(u32 rank,
+void ExecutorBase::CalcRecursiveHdLinkRelationForSecondScene(u32 rank,
     u32 part1Size, u32 blockSize, std::vector<bool> &linkRelation)
 {
     if (rank < part1Size && rank % 2 == 1) {  // 除2判断是否为奇数
@@ -486,13 +486,13 @@ void AlgTemplateBase::CalcRecursiveHdLinkRelationForSecondScene(u32 rank,
     }
 }
 
-HcclResult AlgTemplateBase::ExecuteBarrier(const std::shared_ptr<Transport> &preLink,
+HcclResult ExecutorBase::ExecuteBarrier(const std::shared_ptr<Transport> &preLink,
                                         const std::shared_ptr<Transport> &aftLink)
 {
     return ExecuteBarrier(preLink, aftLink, stream_);
 }
 
-HcclResult AlgTemplateBase::ExecuteBarrier(const std::shared_ptr<Transport> &preLink,
+HcclResult ExecutorBase::ExecuteBarrier(const std::shared_ptr<Transport> &preLink,
     const std::shared_ptr<Transport> &aftLink, Stream &stream)
 {
     // 同步与preLink保证数据收发已结束
@@ -508,7 +508,7 @@ HcclResult AlgTemplateBase::ExecuteBarrier(const std::shared_ptr<Transport> &pre
     return HCCL_SUCCESS;
 }
 
-HcclResult AlgTemplateBase::ExecuteBarrier(std::shared_ptr<Transport> link, Stream &stream)
+HcclResult ExecutorBase::ExecuteBarrier(std::shared_ptr<Transport> link, Stream &stream)
 {
     CHK_RET(link->TxAck(stream));
 
@@ -520,11 +520,11 @@ HcclResult AlgTemplateBase::ExecuteBarrier(std::shared_ptr<Transport> link, Stre
 
     return HCCL_SUCCESS;
 }
-HcclResult AlgTemplateBase::Sum(const std::vector<Slice> &inputSlices, u32 start, u32 num, u64 &sizeOut)
+HcclResult ExecutorBase::Sum(const std::vector<Slice> &inputSlices, u32 start, u32 num, u64 &sizeOut)
 {
     u64 totalSize = 0;
     // 判断不是<=因为访问vector前会先进行num--
-    CHK_PRT_RET(inputSlices.size() < start + num, HCCL_ERROR("[AlgTemplateBase][Sum]recursive Halving Doubling sum "\
+    CHK_PRT_RET(inputSlices.size() < start + num, HCCL_ERROR("[ExecutorBase][Sum]recursive Halving Doubling sum "\
         "error.para: size[%llu], start[%u], num[%u]", inputSlices.size(), start, num), HCCL_E_PARA);
     while (num > 0) {
         num--;
@@ -533,37 +533,37 @@ HcclResult AlgTemplateBase::Sum(const std::vector<Slice> &inputSlices, u32 start
     sizeOut = totalSize;
     return HCCL_SUCCESS;
 }
-HcclResult AlgTemplateBase::ExecuteRxSync(std::shared_ptr<Transport> link, UserMemType srcMemType, u64 srcOffset,
+HcclResult ExecutorBase::ExecuteRxSync(std::shared_ptr<Transport> link, UserMemType srcMemType, u64 srcOffset,
     void *dst, u64 len, Stream &stream) const
 {
     HcclResult ret = link->TxAsync(srcMemType, srcOffset, dst, 0, stream);
-    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[AlgTemplateBase][ExecuteRxSync]ExecuteRxSync: tx async size[%llu] "\
+    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[ExecutorBase][ExecuteRxSync]ExecuteRxSync: tx async size[%llu] "\
         "failed", len), ret);
     ret = link->RxAsync(srcMemType, srcOffset, dst, len, stream);
-    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[AlgTemplateBase][ExecuteRxSync]ExecuteRxSync: rx async with rcvMem[%p] "\
+    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[ExecutorBase][ExecuteRxSync]ExecuteRxSync: rx async with rcvMem[%p] "\
         "offset[%llu] size[%llu] failed", dst, srcOffset, len), ret);
     ret = link->DataReceivedAck(stream);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
-        HCCL_ERROR("[AlgTemplateBase][ExecuteRxSync]ExecuteRxSync: data received ack failed"), ret);
+        HCCL_ERROR("[ExecutorBase][ExecuteRxSync]ExecuteRxSync: data received ack failed"), ret);
     return HCCL_SUCCESS;
 }
-HcclResult AlgTemplateBase::ExecuteTxSync(std::shared_ptr<Transport> link, UserMemType dstMemType, u64 dstOffset,
+HcclResult ExecutorBase::ExecuteTxSync(std::shared_ptr<Transport> link, UserMemType dstMemType, u64 dstOffset,
     void *src, u64 len, Stream &stream) const
 {
     HcclResult ret = link->TxAsync(dstMemType, dstOffset, src, len, stream);
-    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[AlgTemplateBase][ExecuteTxSync]ExecuteTxSync: tx async sendMem[%p] "\
+    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[ExecutorBase][ExecuteTxSync]ExecuteTxSync: tx async sendMem[%p] "\
         "offset[%llu] size[%llu] failed", src, dstOffset, len), ret);
     // 接收应答
     ret = link->RxAsync(dstMemType, dstOffset, src, 0, stream);
-    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[AlgTemplateBase][ExecuteTxSync]ExecuteTxSync: rx async size[%llu] "\
+    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[ExecutorBase][ExecuteTxSync]ExecuteTxSync: rx async size[%llu] "\
         "failed", len), ret);
     ret = link->DataReceivedAck(stream);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
-        HCCL_ERROR("[AlgTemplateBase][ExecuteTxSync]ExecuteTxSync: data received ack failed"), ret);
+        HCCL_ERROR("[ExecutorBase][ExecuteTxSync]ExecuteTxSync: data received ack failed"), ret);
     return HCCL_SUCCESS;
 }
 
-HcclResult AlgTemplateBase::PrepareRunAsync(const u32 rank, const u32 rankSize,
+HcclResult ExecutorBase::PrepareRunAsync(const u32 rank, const u32 rankSize,
     const std::vector<std::shared_ptr<Transport> > &links)
 {
     (void)rank;
@@ -572,7 +572,7 @@ HcclResult AlgTemplateBase::PrepareRunAsync(const u32 rank, const u32 rankSize,
     return HCCL_SUCCESS;
 }
 
-HcclResult AlgTemplateBase::ExecEmptyTask(DeviceMem &inputMem, DeviceMem &outputMem, Stream &stream,
+HcclResult ExecutorBase::ExecEmptyTask(DeviceMem &inputMem, DeviceMem &outputMem, Stream &stream,
     const HcclDispatcher dispatcher)
 {
     DeviceMem emptySrcMem = DeviceMem::create(inputMem.ptr(), 0);
@@ -581,7 +581,7 @@ HcclResult AlgTemplateBase::ExecEmptyTask(DeviceMem &inputMem, DeviceMem &output
     return HCCL_SUCCESS;
 }
 
-HcclResult AlgTemplateBase::CheckConcurrentDirectParameters(const u32 rank, const u32 rankSize,
+HcclResult ExecutorBase::CheckConcurrentDirectParameters(const u32 rank, const u32 rankSize,
                                                          const std::vector<LINK> &links)
 {
     // 判断stream, dispatcher是否为空
@@ -591,26 +591,26 @@ HcclResult AlgTemplateBase::CheckConcurrentDirectParameters(const u32 rank, cons
     // inputMem_ == outputMem_ 是允许的, 因为ring的时候收的slice和发的slice不是同一片
     // reduce scatter用inputMem_，allgather用outputMem_
     if (!outputMem_ || !inputMem_) {
-        HCCL_ERROR("[AlgTemplateBase] rank[%u] run_async inputmem or outputmem is null", rank);
+        HCCL_ERROR("[ExecutorBase] rank[%u] run_async inputmem or outputmem is null", rank);
         return HCCL_E_PTR;
     }
-    HCCL_INFO("AlgTemplateBase run: rank[%u] ranksize[%u] inputMem[%p] outputMem[%p] count[%llu]", rank, rankSize,
+    HCCL_INFO("ExecutorBase run: rank[%u] ranksize[%u] inputMem[%p] outputMem[%p] count[%llu]", rank, rankSize,
               inputMem_.ptr(), outputMem_.ptr(), count_);
 
     // 判断links数量是否正确
     CHK_PRT_RET(links.size() < rankSize,
-                HCCL_ERROR("[AlgTemplateBase] rank[%u] link size[%u] is less than "
+                HCCL_ERROR("[ExecutorBase] rank[%u] link size[%u] is less than "
                            "rank size[%u]",
                            rank, links.size(), rankSize),
                 HCCL_E_PARA);
 
     // 校验DataUnitSize
     if (DataUnitSize(dataType_) == 0) {
-        HCCL_ERROR("[AlgTemplateBase] rank[%u] unit data size is zero", rank);
+        HCCL_ERROR("[ExecutorBase] rank[%u] unit data size is zero", rank);
         return HCCL_E_INTERNAL;
     }
 
-    HCCL_INFO("AlgTemplateBase finished to CheckParameters");
+    HCCL_INFO("ExecutorBase finished to CheckParameters");
     return HCCL_SUCCESS;
 }
 }  // namespace hccl

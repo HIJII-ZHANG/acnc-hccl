@@ -76,10 +76,10 @@ enum class RunStage {
     RUN_DEFAULT
 };
 
-class AlgTemplateBase {
+class ExecutorBase {
 public:
-    explicit AlgTemplateBase(const HcclDispatcher dispatcher);
-    virtual ~AlgTemplateBase();
+    explicit ExecutorBase(const HcclDispatcher dispatcher);
+    virtual ~ExecutorBase();
 
     virtual HcclResult RunAsync(const u32 rank, const u32 rankSize,
         const std::vector<std::shared_ptr<Transport> > &links);
@@ -205,6 +205,8 @@ private:
     static void CalcRecursiveHdLinkRelationForSecondScene(u32 rank,
         u32 part1Size, u32 blockSize, std::vector<bool> &linkRelation);
 };
+
+using AlgTemplateBase = ExecutorBase;
 }  // namespace hccl
 
 #endif /* EXECUTOR_BASE_PUB_H */
