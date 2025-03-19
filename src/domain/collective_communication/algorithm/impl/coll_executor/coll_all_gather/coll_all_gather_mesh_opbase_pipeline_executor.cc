@@ -82,12 +82,12 @@ HcclResult CollAllGatherMeshOpbasePipelineExecutor::KernelRun(const OpParam &par
 {
     HCCL_INFO("[CollAllGatherMeshOpbasePipelineExecutor][KernelRun]AllGatherMeshOpbasePipelineExecutor begins.");
 
-    // step 1 先获取 comm inner \ comm outer 的value
+    // step 1 先获取 comm level0 \ comm level1 的value
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
-    u32 commIndex = outerCommInfo.localRank;
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    u32 commIndex = level0CommInfo.localRank;
     CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
-    SubCommInfo innerCommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
+    SubCommInfo level1CommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
 
     // DMA消减场景，打包opInfo
     HcomCollOpInfo opInfo = {
@@ -98,8 +98,8 @@ HcclResult CollAllGatherMeshOpbasePipelineExecutor::KernelRun(const OpParam &par
     tempAlg.reset(new (std::nothrow) AllGatherPipeline(dispatcher_));
     CHK_SMART_PTR_NULL(tempAlg);
     CHK_RET(tempAlg->Prepare(&opInfo, topoAttr_.userRank, execMem.count, execMem.inputMem, execMem.outputMem,
-        outerCommInfo, innerCommInfo, const_cast<Stream&>(param.stream),
-        algResResp_->slaveStreams, algResResp_->notifiesM2S, algResResp_->notifiesS2M));
+        level0CommInfo, level1CommInfo, const_cast<Stream&>(param.stream),
+        algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux));
     CHK_RET(tempAlg->RunAsync());
     return HCCL_SUCCESS;
 }

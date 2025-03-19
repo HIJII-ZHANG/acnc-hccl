@@ -22,7 +22,7 @@ CollReduceRingFor91093Executor::CollReduceRingFor91093Executor(const HcclDispatc
 HcclResult CollReduceRingFor91093Executor::CalcStreamNum(u32& streamNum)
 {
     // DoubleRing只支持910_93场景
-    u32 totalStreamNum = (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING ? OUTER_PLANE_NUM_IN_NPRING_DOUBLE : OUTER_PLANE_NUM_IN_NPRING_SINGLE);
+    u32 totalStreamNum = (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING ? LEVEL0_PLANE_NUM_IN_NPRING_DOUBLE : LEVEL0_PLANE_NUM_IN_NPRING_SINGLE);
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
         totalStreamNum *= STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
     }
@@ -61,10 +61,10 @@ HcclResult CollReduceRingFor91093Executor::CalcLevel0CommInfo(TransportMemType i
     TransportMemType outputType,
     std::vector<LevelNSubCommTransport>& opTransport)
 {
-    HCCL_INFO("[CollReduceRingFor91093Executor][CalcOuterCommInfo]tag[%s] start.", tag_.c_str());
+    HCCL_INFO("[CollReduceRingFor91093Executor][CalcLevel0CommInfo]tag[%s] start.", tag_.c_str());
     CommParaInfo commParaLevel0(COMM_LEVEL0, CommType::COMM_TAG_RING_INNER);
     CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel0, opTransport[COMM_LEVEL0], inputType, outputType));
-    HCCL_INFO("[CollReduceRingFor91093Executor][CalcOuterCommInfo]tag[%s] Calc RingComm finish.", tag_.c_str());
+    HCCL_INFO("[CollReduceRingFor91093Executor][CalcLevel0CommInfo]tag[%s] Calc RingComm finish.", tag_.c_str());
     return HCCL_SUCCESS;
 }
 
@@ -108,14 +108,14 @@ HcclResult CollReduceRingFor91093Executor::KernelRun(const OpParam &param, ExecM
             HCCL_ERROR_CODE(HCCL_E_PARA), param.DataDes.dataType), HCCL_E_PARA);
     std::vector<Slice> dataSegsSlice; // 数据分成ranksize份，每份的起始偏移和大小
     std::vector<std::vector<Slice> > multiRingsSliceZero; // 数据基于该rank上环0的偏移
-    u32 ringNum = OUTER_PLANE_NUM_IN_NPRING_SINGLE;
+    u32 ringNum = LEVEL0_PLANE_NUM_IN_NPRING_SINGLE;
     if (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) {
-        ringNum = OUTER_PLANE_NUM_IN_NPRING_DOUBLE;
+        ringNum = LEVEL0_PLANE_NUM_IN_NPRING_DOUBLE;
     }
     
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
-    u32 sliceNum = outerCommInfo.localRankSize;
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    u32 sliceNum = level0CommInfo.localRankSize;
     // 根据数据量计算每个环上数据的偏移和大小
     CHK_RET(AlgTemplateBase::PrepareSliceData(execMem.count, perDataSize, sliceNum, 0, dataSegsSlice));
 
@@ -141,7 +141,7 @@ HcclResult CollReduceRingFor91093Executor::KernelRun(const OpParam &param, ExecM
     u64 hdSize = 0;
     u32 commIndex = 0;
     u32 segmentIdx = 0;
-    CHK_RET(PrepareInnerCommInfo(segmentIdx, commIndex, hdSize, outerCommInfo, multiRingsSliceZero, param.tag));
+    CHK_RET(PrepareLevel1CommInfo(segmentIdx, commIndex, hdSize, level0CommInfo, multiRingsSliceZero, param.tag));
     u64 hdCount = hdSize / perDataSize;
     if (topoAttr_.superPodNum <= 1) {
         DeviceMem reduceInput = execMem.inputMem.range(dataSegsSlice[segmentIdx].offset, hdSize);
@@ -150,20 +150,20 @@ HcclResult CollReduceRingFor91093Executor::KernelRun(const OpParam &param, ExecM
         CHK_SMART_PTR_NULL(reduceOutput);
         
         CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
-        SubCommInfo innerCommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
+        SubCommInfo level1CommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
         
         u64 reduceAttr = GetReduceAttr(reduceInput, reduceOutput, param.DataDes.dataType, param.reduceType);
-        std::unique_ptr<AlgTemplateBase> innerTempAlg;
+        std::unique_ptr<AlgTemplateBase> level1TempAlg;
         if (UseInterServerRingAlgo(algType_)) {
-            innerTempAlg.reset(new (std::nothrow) ReduceRing(dispatcher_, reduceAttr));
+            level1TempAlg.reset(new (std::nothrow) ReduceRing(dispatcher_, reduceAttr));
             HCCL_INFO("[CollReduceRingFor91093Executor]reduce: using ring algo inter-server.");
         } else {
-            innerTempAlg.reset(new (std::nothrow) ReduceRecursiveHalvingDoubling(dispatcher_, reduceAttr));
+            level1TempAlg.reset(new (std::nothrow) ReduceRecursiveHalvingDoubling(dispatcher_, reduceAttr));
             HCCL_INFO("[CollReduceRingFor91093Executor]reduce: using halving-doubling algo inter-server.");
         }
-        CHK_SMART_PTR_NULL(innerTempAlg);
+        CHK_SMART_PTR_NULL(level1TempAlg);
         
-        u32 rankSize = innerCommInfo.localRankSize;
+        u32 rankSize = level1CommInfo.localRankSize;
         u32 subUserrankRoot = topoMatcher_->GetSubRootUserRank(topoAttr_.userRank, param.root);
         CHK_PRT_RET(subUserrankRoot == INVALID_VALUE_RANKID,
             HCCL_ERROR("[CollReduceRingFor91093Executor]subUserrankRoot[%u] is invalid,userRank[%u],root[%u]",
@@ -171,18 +171,18 @@ HcclResult CollReduceRingFor91093Executor::KernelRun(const OpParam &param, ExecM
         u32 planeRoot = 0;
         CHK_RET(GetRankByUserRank(COMM_LEVEL1, commIndex, subUserrankRoot, planeRoot));
         // 节点间的hd 使用环0来记录
-        CHK_RET(innerTempAlg->Prepare(reduceInput, reduceOutput, reduceOutput, hdCount, param.DataDes.dataType,
+        CHK_RET(level1TempAlg->Prepare(reduceInput, reduceOutput, reduceOutput, hdCount, param.DataDes.dataType,
             param.stream, param.reduceType, planeRoot, std::vector<Slice>(0),
             dataSegsSlice[segmentIdx].offset));
-        CHK_RET(innerTempAlg->RegisterProfiler(
-            (rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + innerCommInfo.localRank,
+        CHK_RET(level1TempAlg->RegisterProfiler(
+            (rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1CommInfo.localRank,
             PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
-        CHK_RET(RunTemplate(innerTempAlg, innerCommInfo));
+        CHK_RET(RunTemplate(level1TempAlg, level1CommInfo));
     } else {
         //节点间 reduce scatter
         CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
-        SubCommInfo innerCommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
-        u32 level1RankSize = innerCommInfo.localRankSize;
+        SubCommInfo level1CommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
+        u32 level1RankSize = level1CommInfo.localRankSize;
         u64 level1Offset = dataSegsSlice[segmentIdx].offset;
         CHK_RET(AlgTemplateBase::PrepareSliceData(hdCount, perDataSize, level1RankSize, 0, dataSegsSlice));
 
@@ -207,13 +207,13 @@ HcclResult CollReduceRingFor91093Executor::KernelRun(const OpParam &param, ExecM
             
             CHK_RET(level1RSTempAlg->Prepare (
                 reducescatterInput, reducescatterInput, reducescatterOutput, hdCount, param.DataDes.dataType,
-                param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID, dataSegsSlice, level1Offset));
+                param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID, dataSegsSlice, level1Offset));
                 
             CHK_RET(level1RSTempAlg->RegisterProfiler(
-                (level1RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + innerCommInfo.localRank,
+                (level1RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1CommInfo.localRank,
                 PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
             
-            CHK_RET(RunTemplate(level1RSTempAlg, innerCommInfo));
+            CHK_RET(RunTemplate(level1RSTempAlg, level1CommInfo));
             HCCL_INFO("[CollReduceRingFor91093Executor][superpod] level1 reducescatter run success.");
         }
         
@@ -221,7 +221,7 @@ HcclResult CollReduceRingFor91093Executor::KernelRun(const OpParam &param, ExecM
         SubCommInfo level2CommInfo = GetSubCommInfo(COMM_LEVEL2, COMM_INDEX_0);
         CHK_RET(CheckCommSize(COMM_LEVEL2, COMM_INDEX_0 + 1));
         u32 rankSize = level2CommInfo.localRankSize;
-        u32 localRank = innerCommInfo.localRank;
+        u32 localRank = level1CommInfo.localRank;
         u32 subUserrankRootSupperPod = topoMatcher_->GetSubRootUserRankWithSuperPod(topoAttr_.userRank, param.root);
         u32 planeRootSupperPod = 0;
         CHK_RET(GetRankByUserRank(COMM_LEVEL2, COMM_INDEX_0, subUserrankRootSupperPod, planeRootSupperPod));
@@ -271,19 +271,19 @@ HcclResult CollReduceRingFor91093Executor::KernelRun(const OpParam &param, ExecM
                 param.DataDes.dataType, param.stream,
                 HcclReduceOp::HCCL_REDUCE_RESERVED, planeRoot, dataSegsSlice, level1Offset));
             CHK_RET(level1GTempAlg->RegisterProfiler(
-                (level1RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + innerCommInfo.localRank,
+                (level1RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1CommInfo.localRank,
                 PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
-            CHK_RET(RunTemplate(level1GTempAlg, innerCommInfo));
+            CHK_RET(RunTemplate(level1GTempAlg, level1CommInfo));
             HCCL_INFO("[CollReduceRingFor91093Executor][superpod] level1 gather run success.");
         }
     }
    
     // step3: 节点内的gatherring，只有在root所在server内进行gather操作
-    SingleSubCommTransport &outerTransportInfo =
+    SingleSubCommTransport &level0TransportInfo =
         const_cast<SingleSubCommTransport&>(algResResp_->opTransportResponse[COMM_LEVEL0][COMM_INDEX_0]);
         
-    if (sliceNum > 1 &&(outerTransportInfo.userRank2subCommRank.find(param.root) != 
-        outerTransportInfo.userRank2subCommRank.end())) {
+    if (sliceNum > 1 &&(level0TransportInfo.userRank2subCommRank.find(param.root) != 
+        level0TransportInfo.userRank2subCommRank.end())) {
         CHK_RET(MultiRingGather(param.tag, execMem.outputMem, execMem.outputMem, hdCount, param.DataDes.dataType,
             multiRingsSliceZero, param.reduceType, param.root, param.stream, PROF_STAGE_2));
         HCCL_INFO("[CollReduceRingFor91093Executor]MultiRingGather run success.");

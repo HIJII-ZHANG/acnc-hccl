@@ -91,7 +91,7 @@ public:
                          const u32 root = INVALID_VALUE_RANKID,
                          const std::vector<Slice> &slices = std::vector<Slice>(ZERO_SLICE),
                          const u64 baseOffset = 0, std::vector<u32> nicRankList = {0, 1, 2, 3, 4, 5, 6, 7},
-                         const bool retryEnable = false);
+                         const bool disableDMAReduce = false);
 
     HcclResult Prepare(DeviceMem &inputMem, DeviceMem &scratchMem, const u64 count,
                          const HcclDataType dataType,
@@ -99,14 +99,14 @@ public:
                          const u32 root = INVALID_VALUE_RANKID,
                          const std::vector<Slice> &slices = std::vector<Slice>(ZERO_SLICE),
                          const u64 baseOffset = 0, std::vector<u32> nicRankList = {0, 1, 2, 3, 4, 5, 6, 7},
-                         const bool retryEnable = false);
+                         const bool disableDMAReduce = false);
     virtual HcclResult Prepare(DeviceMem &inputMem, DeviceMem &outputMem, DeviceMem &scratchMem, const u64 count,
                         const HcclDataType dataType, const Stream &stream,
                         const std::vector<std::vector<Slice>> &multRingsSlices,
                         const HcclReduceOp reductionOp = HCCL_REDUCE_RESERVED,
                         const u32 root = INVALID_VALUE_RANKID,
                         const u64 baseOffset = 0,
-                        const bool retryEnable = false);
+                        const bool disableDMAReduce = false);
     HcclResult Sum(const std::vector<Slice> &inputSlices, u32 start, u32 num, u64 &sizeOut);
     HcclResult RegisterProfiler(s32 planeId, s32 stage, s32 step, const Stream &stream);
     static HcclResult ExecEmptyTask(DeviceMem &inputMem, DeviceMem &outputMem, Stream &stream,
@@ -175,7 +175,7 @@ protected:
     HcclDataType dataType_;
     HcclReduceOp reductionOp_;
     u32 root_;
-    bool retryEnable_;
+    bool disableDMAReduce_;
 
     // Added on Mar.24th, for profiling template
     StepData profilerInput_;
@@ -205,7 +205,6 @@ private:
     static void CalcRecursiveHdLinkRelationForSecondScene(u32 rank,
         u32 part1Size, u32 blockSize, std::vector<bool> &linkRelation);
 };
-
 using AlgTemplateBase = ExecutorBase;
 }  // namespace hccl
 

@@ -193,26 +193,26 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::KernelRun(const OpParam &para
 
     // 获取通信域信息
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
-    u32 commIndex = outerCommInfo.localRank;
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    u32 commIndex = level0CommInfo.localRank;
     CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
-    SubCommInfo innerCommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
+    SubCommInfo level1CommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
 
     // 数据准备，按照server内rankSize切片
     u32 perDataSize = SIZE_TABLE[param.DataDes.dataType];
     u64 totalSize = param.DataDes.count * perDataSize;
     std::vector<Slice> dataSegsSlice;   // 数据分成ranksize份，每份的起始偏移和大小
-    u32 sliceNum = outerCommInfo.localRankSize;
+    u32 sliceNum = level0CommInfo.localRankSize;
     CHK_RET(PrepareSliceDataWithAlignSize(totalSize, sliceNum, 0, dataSegsSlice, perDataSize));
     CHK_PRT_RET(commIndex >= dataSegsSlice.size(),
         HCCL_ERROR("[CollAllReduceMeshExecutor][Run]commIndex[%u] >= dataSegsSlice size[%zu]", commIndex,
         dataSegsSlice.size()), HCCL_E_INTERNAL);
-    std::vector<hccl::LINK> intraLinks = outerCommInfo.links;
-    std::vector<hccl::LINK> interLinks = innerCommInfo.links;
-    u32 intraRankSize = outerCommInfo.localRankSize;
-    u32 interRankSize = innerCommInfo.localRankSize;
-    u32 intraRankId = outerCommInfo.localRank;
-    u32 interRankId = innerCommInfo.localRank;
+    std::vector<hccl::LINK> intraLinks = level0CommInfo.links;
+    std::vector<hccl::LINK> interLinks = level1CommInfo.links;
+    u32 intraRankSize = level0CommInfo.localRankSize;
+    u32 interRankSize = level1CommInfo.localRankSize;
+    u32 intraRankId = level0CommInfo.localRank;
+    u32 interRankId = level1CommInfo.localRank;
 
     // reduce scatter via AIV
     void* dataBuffers[MAX_RANK_SIZE];

@@ -86,6 +86,8 @@ public:
         rtStream_t stream, HcomCollOpInfo *opInfo = nullptr);
     HcclResult AllGatherOutPlace(const std::string &tag, void *inputPtr, void *outputPtr, u64 inputCount,
         HcclDataType dataType, rtStream_t stream);
+    HcclResult AllGatherVOutPlace(const std::string &tag, void *inputPtr, void *outputPtr, 
+        u64 inputCount, const void *outputCounts, const void *outputDispls, HcclDataType dataType, HcclRtStream stream);
 
     /* *********************************************************************
      功能描述  : all reduce功能实现
@@ -169,6 +171,9 @@ public:
         HcclDataType dataType, HcclReduceOp op, rtStream_t stream);
     HcclResult ReduceScatterOutPlace(const std::string &tag, void *inputPtr, void *outputPtr, u64 recvCount,
         HcclDataType dataType, HcclReduceOp op, rtStream_t stream);
+    HcclResult ReduceScatterVOutPlace(const std::string &tag, void *inputPtr, void *outputPtr, 
+        const void *inputCounts, const void *inputDispls, u64 outputCount, 
+        HcclDataType dataType, HcclReduceOp op, HcclRtStream stream);
 
     HcclResult BatchSendRecv(const std::string &tag, struct HcclSendRecvItemDef* sendRecvItemsPtr,
         u32 itemNum, rtStream_t stream);
@@ -221,7 +226,7 @@ public:
     void ReleaseIndirectCCLbuf();
 
     HcclResult GetOneSidedService(IHcclOneSidedService** service);
-    HcclResult InitOneSidedServiceNetDevCtx();
+    HcclResult InitOneSidedServiceNetDevCtx(u32 remoteRankId);
     HcclResult GetIndirectInCCLbuf(void* &ptr, u64 &size);
     HcclResult GetIndirectOutCCLbuf(void* &ptr, u64 &size);
     HcclResult GetWorkspaceSubStreamNum(u64 &streamNum, u64 dataSize = 0,
@@ -282,7 +287,7 @@ public:
     HcclResult SetStopFlag(bool value);
     HcclResult SetState(HcclCommState state);
     HcclCommState GetState();
-    HcclResult GetAicpuOpStreamNotify(HcclRtStream *opStream, void** aicpuNotify);
+    HcclResult GetAicpuOpStreamNotify(HcclRtStream *opStream, u8 aicpuNotifyNum, void** aicpuNotify);
     HcclResult Mc2AiCpuStreamAllocAndGet(u32 streamMode, rtStream_t &aiCpuStream);
     HcclResult GetAiCpuNotifyData(HcclRtNotify notifyHandle, HcclSignalInfo &notifyInfo);
     HcclResult AddAiCpuNotify(HcclRtNotify *notifyHandle);
@@ -300,6 +305,13 @@ public:
     std::mutex operatorlock_;
     HcclResult Suspend();
     HcclResult Resume();
+    HcclResult InitZeroCopyMemoryAgent();
+    HcclResult DeinitZeroCopyMemoryAgent();
+    HcclResult SetMemoryRange(void *baseVirPtr, size_t size, size_t alignment, uint64_t flags);
+    HcclResult UnsetMemoryRange(void *baseVirPtr);
+    HcclResult ActivateCommMemory(void *virPtr, size_t size, size_t offset, void* handle, uint64_t flags);
+    HcclResult DeactivateCommMemory(void *virPtr);
+
 protected:
     /* * 禁止用户对API类的实体做拷贝构造或拷贝赋值的操作，内部有指针成员变量 */
     hcclComm(const hcclComm &) = delete;

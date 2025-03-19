@@ -32,17 +32,17 @@ HcclResult CollBroadcastPlusBroadcast::CalcCommInfo(std::vector<LevelNSubCommTra
 HcclResult CollBroadcastPlusBroadcast::CalcLevel0CommInfo(TransportMemType inputType,
     TransportMemType outputType, std::vector<LevelNSubCommTransport>& opTransport)
 {
-    HCCL_INFO("[CollBroadcastPlusBroadcast][CalcOuterCommInfo]tag[%s] start", tag_.c_str());
+    HCCL_INFO("[CollBroadcastPlusBroadcast][CalcLevel0CommInfo]tag[%s] start", tag_.c_str());
     CommParaInfo commParaLevel0(COMM_LEVEL0, CommType::COMM_TAG_MESH);
     CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel0, opTransport[COMM_LEVEL0], inputType, outputType));
-    HCCL_INFO("[CollBroadcastPlusBroadcast][CalcOuterCommInfo]tag[%s] Calc MeshComm finish", tag_.c_str());
+    HCCL_INFO("[CollBroadcastPlusBroadcast][CalcLevel0CommInfo]tag[%s] Calc MeshComm finish", tag_.c_str());
     return HCCL_SUCCESS;
 }
 
 HcclResult CollBroadcastPlusBroadcast::KernelRun(const OpParam &param, ExecMem &execMem)
 {
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
 
     bool rootIsDevPhyZero = false;
     if (topoAttr_.userRank == param.root && topoAttr_.devicePhyId == 0) {
@@ -57,19 +57,19 @@ HcclResult CollBroadcastPlusBroadcast::KernelRun(const OpParam &param, ExecMem &
         CHK_SMART_PTR_NULL(bCastRingInNode);
         CHK_RET(bCastRingInNode->Prepare(execMem.inputMem, execMem.outputMem, execMem.inputMem, execMem.count, 
                                          param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, rootRank));
-        CHK_RET(RunTemplate(bCastRingInNode, outerCommInfo));
+        CHK_RET(RunTemplate(bCastRingInNode, level0CommInfo));
     }
     // 第二步，进行server间bcast
     if (topoAttr_.devicePhyId == 0) {
         std::unique_ptr<AlgTemplateBase> broadcastTempAlg = nullptr;
-        SubCommInfo innerCommInfo = GetSubCommInfo(COMM_LEVEL1, COMM_INDEX_0);
+        SubCommInfo level1CommInfo = GetSubCommInfo(COMM_LEVEL1, COMM_INDEX_0);
         u64 curSize = execMem.count * SIZE_TABLE[param.DataDes.dataType];
         if (UseInterServerRingAlgo(algType_)) {
             broadcastTempAlg.reset(new (std::nothrow) BroadcastRing(dispatcher_));
             HCCL_INFO("broadcast ring: using ring algo inter-server.");
         } else if (UseInterServerNHRAlgo(algType_)) {
-            HCCL_DEBUG("broadcast ring: curSize[%llu] deviceNumPerAggregation[%u] commOuterSize[%u]",
-                curSize, topoAttr_.deviceNumPerAggregation, outerCommInfo.localRankSize);
+            HCCL_DEBUG("broadcast ring: curSize[%llu] deviceNumPerAggregation[%u] commLevel0Size[%u]",
+                curSize, topoAttr_.deviceNumPerAggregation, level0CommInfo.localRankSize);
             if (curSize / topoAttr_.deviceNumPerAggregation <= NHR_BCAST_SMALL_SIZE) {
                 broadcastTempAlg.reset(new (std::nothrow) BroadcastNHROneshot(dispatcher_));
             } else {
@@ -80,8 +80,8 @@ HcclResult CollBroadcastPlusBroadcast::KernelRun(const OpParam &param, ExecMem &
             broadcastTempAlg.reset(new (std::nothrow) BroadcastNHRV1(dispatcher_));
             HCCL_INFO("broadcast ring: using nhr_v1 algo inter-server.");
         } else if (UseInterServerNBAlgo(algType_)) {
-            const u32 innerRankSize = innerCommInfo.localRankSize;
-            if (ShouldUseBinaryBroadcastOfNB(curSize / topoAttr_.deviceNumPerAggregation, innerRankSize, 
+            const u32 level1RankSize = level1CommInfo.localRankSize;
+            if (ShouldUseBinaryBroadcastOfNB(curSize / topoAttr_.deviceNumPerAggregation, level1RankSize, 
                                              topoAttr_.userRankSize, topoAttr_.deviceNumPerAggregation)) {
                 broadcastTempAlg.reset(new (std::nothrow) BroadcastNBBinary(dispatcher_));
             } else {
@@ -94,25 +94,25 @@ HcclResult CollBroadcastPlusBroadcast::KernelRun(const OpParam &param, ExecMem &
         }
         CHK_SMART_PTR_NULL(broadcastTempAlg);
         // 获取root所在的server的device0的userRank
-        u32 innerRootUserRank = innerCommInfo.localRank;
+        u32 level1RootUserRank = level1CommInfo.localRank;
         CHK_RET(CheckCommSize(COMM_LEVEL1, COMM_INDEX_0 + 1));
         u32 planeRoot = 0;
-        CHK_RET(GetRankByUserRank(COMM_LEVEL1, COMM_INDEX_0, innerRootUserRank, planeRoot));
+        CHK_RET(GetRankByUserRank(COMM_LEVEL1, COMM_INDEX_0, level1RootUserRank, planeRoot));
         CHK_RET(broadcastTempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count, 
                                            param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, planeRoot));
-        CHK_RET(RunTemplate(broadcastTempAlg, innerCommInfo));
+        CHK_RET(RunTemplate(broadcastTempAlg, level1CommInfo));
     }
     // 第三步，执行server内broadcast（从设备0到设备1）
     std::unique_ptr<AlgTemplateBase> bcastTempAlg;
     bcastTempAlg.reset(new (std::nothrow) BroadcastRing(dispatcher_));
     CHK_SMART_PTR_NULL(bcastTempAlg);
     // 获取本rank所在server上device0的UserRank
-    u32 outerRootUserRank = outerCommInfo.localRank;
+    u32 level0RootUserRank = level0CommInfo.localRank;
     u32 rootRank = 0;
-    CHK_RET(GetRankByUserRank(COMM_LEVEL0, COMM_INDEX_0, outerRootUserRank, rootRank));
+    CHK_RET(GetRankByUserRank(COMM_LEVEL0, COMM_INDEX_0, level0RootUserRank, rootRank));
     CHK_RET(bcastTempAlg->Prepare(execMem.outputMem, execMem.outputMem, execMem.inputMem, execMem.count, 
                                    param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, rootRank));
-    CHK_RET(RunTemplate(bcastTempAlg, outerCommInfo));
+    CHK_RET(RunTemplate(bcastTempAlg, level0CommInfo));
 
     return HCCL_SUCCESS;
 }

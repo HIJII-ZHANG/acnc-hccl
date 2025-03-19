@@ -161,7 +161,7 @@ HcclResult CollAllReduceMeshSmallCountExecutor::KernelRun(const OpParam &param, 
     }
     
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
 
     ReduceType reduceType = ((param.reduceType != HCCL_REDUCE_PROD) &&
         (param.DataDes.dataType != HCCL_DATA_TYPE_INT64)) ?
@@ -179,37 +179,37 @@ HcclResult CollAllReduceMeshSmallCountExecutor::KernelRun(const OpParam &param, 
         "", execMem.inputPtr, execMem.outputPtr, execMem.count, param.DataDes.dataType, param.root, param.reduceType
     };
 
-    std::unique_ptr<AlgTemplateBase> outer2TempAlg;
+    std::unique_ptr<AlgTemplateBase> level0TempAlg;
     if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
         bool aicpu = true;
         aicpu = false;
-        outer2TempAlg.reset(new (std::nothrow) AllReduceHDOptim(dispatcher_,
-            reduceAttr, algResResp_->slaveStreams, algResResp_->notifiesM2S, algResResp_->notifiesS2M,
-            outerCommInfo.localRank, &opInfo, aicpu));
+        level0TempAlg.reset(new (std::nothrow) AllReduceHDOptim(dispatcher_,
+            reduceAttr, algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
+            level0CommInfo.localRank, &opInfo, aicpu));
     } else if (!topoMatcher_->GetExternalInputHcclDeterministic()) {
-        outer2TempAlg.reset(new (std::nothrow) AllReduceReduceBcast(dispatcher_,
-            reduceAttr, algResResp_->slaveStreams, algResResp_->notifiesM2S, algResResp_->notifiesS2M,
-            outerCommInfo.localRank, outerCommInfo.localRankSize, topoAttr_.userRank, &opInfo));
+        level0TempAlg.reset(new (std::nothrow) AllReduceReduceBcast(dispatcher_,
+            reduceAttr, algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
+            level0CommInfo.localRank, level0CommInfo.localRankSize, topoAttr_.userRank, &opInfo));
     } else if (topoAttr_.deviceNumPerAggregation == DEVICE_EIGHT) {
         if (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE || aicpuUnfoldMode_) {
-            outer2TempAlg.reset(new (std::nothrow) AllReduceDoubling(dispatcher_, reduceAttr));
+            level0TempAlg.reset(new (std::nothrow) AllReduceDoubling(dispatcher_, reduceAttr));
         } else {
-            outer2TempAlg.reset(new (std::nothrow) AllReduceDoublingDirect(dispatcher_, reduceAttr, &opInfo));
+            level0TempAlg.reset(new (std::nothrow) AllReduceDoublingDirect(dispatcher_, reduceAttr, &opInfo));
         }
     } else {
-        outer2TempAlg.reset(new (std::nothrow) AllReduceLocalReduceBcast(dispatcher_,
-            reduceAttr, algResResp_->slaveStreams, algResResp_->notifiesM2S, algResResp_->notifiesS2M,
-            outerCommInfo.localRank, outerCommInfo.localRankSize, topoAttr_.userRank, &opInfo));
+        level0TempAlg.reset(new (std::nothrow) AllReduceLocalReduceBcast(dispatcher_,
+            reduceAttr, algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
+            level0CommInfo.localRank, level0CommInfo.localRankSize, topoAttr_.userRank, &opInfo));
     }
-    CHK_SMART_PTR_NULL(outer2TempAlg);
-    CHK_RET(outer2TempAlg->Prepare(execMem.inputMem, execMem.scratchMem, execMem.outputMem, execMem.count,
-        param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID, dataSegsSlice, 0));
+    CHK_SMART_PTR_NULL(level0TempAlg);
+    CHK_RET(level0TempAlg->Prepare(execMem.inputMem, execMem.scratchMem, execMem.outputMem, execMem.count,
+        param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID, dataSegsSlice, 0));
 
     CHK_RET(
-        outer2TempAlg->RegisterProfiler(
-            (outerCommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + outerCommInfo.localRank,
+        level0TempAlg->RegisterProfiler(
+            (level0CommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level0CommInfo.localRank,
             PROF_STAGE_2, HCCL_EXEC_STEP_NOT_SET, param.stream));
-    CHK_RET(RunTemplate(outer2TempAlg, outerCommInfo));
+    CHK_RET(RunTemplate(level0TempAlg, level0CommInfo));
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
         CHK_RET(LaunchTask(dispatcher_, const_cast<Stream&>(param.stream)));
     }

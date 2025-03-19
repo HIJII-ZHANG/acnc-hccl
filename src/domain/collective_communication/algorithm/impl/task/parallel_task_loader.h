@@ -23,7 +23,7 @@ public:
     explicit ParallelTaskLoader(const s32 deviceLogicId, const HcclDispatcher dispatcher);
     ~ParallelTaskLoader();
 
-    HcclResult Prepare(std::vector<Stream *> streamsPtr, SubCommInfo outerCommInfo);
+    HcclResult Prepare(std::vector<Stream *> streamsPtr, SubCommInfo level0CommInfo);
 
     HcclResult StartTaskLoad();
     HcclResult WaitTaskLoadFinish();

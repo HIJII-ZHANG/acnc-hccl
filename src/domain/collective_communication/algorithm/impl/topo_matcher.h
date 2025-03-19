@@ -26,12 +26,12 @@ constexpr u32 COMM_LEVEL1_INDEX = COMM_LEVEL1;
 using HcclAlgoInfo = struct HcclAlgoInfoDef {
     bool inlineReduceSwitchOn;       // 收到数量时同时完成Reduce计算
     std::string identifier;
-    bool isUsedRdmaOuter;
+    bool isUsedRdmaLevel0;
 
     HcclAlgoInfoDef()
         : inlineReduceSwitchOn(true),
         identifier(""),
-        isUsedRdmaOuter(false)
+        isUsedRdmaLevel0(false)
     {}
 };
 
@@ -51,6 +51,8 @@ using HcclTopoInfo = struct HcclTopoInfoDef {
     u32 meshAggregationRankSize;
     u32 multiModuleDiffDeviceNumMode;
     u32 multiSuperPodDiffServerNumMode;
+    bool isDiffDeviceType;
+    u32 gcdDeviceNumPerAggregation;
     u32 realUserRank;
     bool isDiffDeviceModule;
     u32 moduleNum;

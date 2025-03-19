@@ -55,7 +55,7 @@ HcclResult CollAllGatherFor310PExecutor::CalcLevel0CommInfo(TransportMemType inp
 HcclResult CollAllGatherFor310PExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
 
     std::unique_ptr<AlgTemplateBase> tempAlg;
     tempAlg.reset(new (std::nothrow) AllGatherRing(dispatcher_));
@@ -64,12 +64,12 @@ HcclResult CollAllGatherFor310PExecutor::KernelRun(const OpParam &param, ExecMem
     CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
         param.DataDes.dataType, param.stream, param.reduceType));
 
-    u32 rankSize = outerCommInfo.localRankSize;
+    u32 rankSize = level0CommInfo.localRankSize;
     CHK_RET(tempAlg->RegisterProfiler(
-        (rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + outerCommInfo.localRank,
+        (rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level0CommInfo.localRank,
         PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-    CHK_RET(RunTemplate(tempAlg, outerCommInfo));
+    CHK_RET(RunTemplate(tempAlg, level0CommInfo));
     HCCL_INFO("allgather for 310P run success");
 
     return HCCL_SUCCESS;

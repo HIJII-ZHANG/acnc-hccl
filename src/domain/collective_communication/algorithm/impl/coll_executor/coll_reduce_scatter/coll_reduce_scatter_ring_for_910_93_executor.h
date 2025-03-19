@@ -42,17 +42,17 @@ private:
         const std::vector<std::vector<Slice>> &multRingsSliceZero, const Stream &stream, s32 profStage,
         const u64 baseOffset = 0, const HcomCollOpInfo *opInfo = nullptr,
         const std::vector<std::vector<Slice>> &multRingsUserMemSlice = std::vector<std::vector<Slice>>(0),
-        const bool retryEnable = false);
+        const bool disableDMAReduce = false);
     HcclResult KernelRun(const OpParam &param, ExecMem &execMem) override;
     /* **************** 数据准备*************** */
     void FillMultiRingSlice(const ExecMem &execMem, const std::vector<std::vector<Slice>> &multiStreamSlice,
-        u32 sliceNum, u32 innerRankSize, u32 level2RankSize,
+        u32 sliceNum, u32 level1RankSize, u32 level2RankSize,
         const u32 ringIndex, std::vector<Slice> &dataSlice);
     void CalLevel0DataSegsSlice(const ExecMem &execMem, const std::vector<std::vector<Slice>> &multiStreamSlice,
-        u32 sliceNum, u32 innerRankSize, u32 level2RankSize,
+        u32 sliceNum, u32 level1RankSize, u32 level2RankSize,
         std::vector<std::vector<Slice>> &level0DataSegsSlice);
     HcclResult CalLevel1DataSegsSlice(const ExecMem &execMem, const u32 &commIndex,
-        u32 sliceNum, u32 innerRankSize, u32 level2RankSize,
+        u32 sliceNum, u32 level1RankSize, u32 level2RankSize,
         std::vector<Slice> &level1DataSegsSlice);
 };
 

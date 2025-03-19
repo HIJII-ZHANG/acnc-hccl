@@ -19,7 +19,7 @@ CollRunAlltoAllVStaged::CollRunAlltoAllVStaged(const HcclDispatcher dispatcher,
 }
 
 HcclResult CollRunAlltoAllVStaged::ParallelTaskLoaderProcess(const std::string &tag, Stream &stream,
-    SubCommInfo &outerCommInfo, std::vector<Stream> &ringStreams)
+    SubCommInfo &level0CommInfo, std::vector<Stream> &ringStreams)
 {
     u32 streamIndex;
     std::vector<Stream *> streamsPtr;
@@ -33,7 +33,7 @@ HcclResult CollRunAlltoAllVStaged::ParallelTaskLoaderProcess(const std::string &
     HCCL_INFO("[ParallelTaskLoaderProcess]main stream[%p], streams size[%zu]", stream.ptr(), streamsPtr.size());
 
     // 准备多线程启动参数
-    CHK_RET(parallelTaskLoader_->Prepare(streamsPtr, outerCommInfo));
+    CHK_RET(parallelTaskLoader_->Prepare(streamsPtr, level0CommInfo));
 
     // 启动多线程处理
     CHK_RET(parallelTaskLoader_->StartTaskLoad());
@@ -217,16 +217,16 @@ HcclResult CollRunAlltoAllVStaged::CalcCommInfo(std::vector<LevelNSubCommTranspo
 HcclResult CollRunAlltoAllVStaged::PrepareAlltoAllVStaged1(DeviceMem &sendBuf, DeviceMem &recvBuf, DeviceMem &scratchMem,
     std::map<u32, std::list<OneSendRecvAddrInfo>> &sendAddrInfosIntra,
     std::map<u32, std::list<OneSendRecvAddrInfo>> &recvAddrInfosIntra,
-    Stream &stream, const std::string &tag, std::unique_ptr<AlltoAllVStagedBase> &alltoallOuter,
+    Stream &stream, const std::string &tag, std::unique_ptr<AlltoAllVStagedBase> &alltoallLevel0,
     ExecMem &execMem)
 {
     // opbase BCopy 不支持fullmesh算法，因此不必做算法选择
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE &&
         !isAlltoAllZCopyMode_) { // 单算子 && Buffer拷贝模式
         HCCL_INFO("Running alltoallv Staged Pairwise intra Server");
-        alltoallOuter.reset(new (std::nothrow)AlltoAllVStagedPairwise(dispatcher_, stream));
-        CHK_SMART_PTR_NULL(alltoallOuter);
-        CHK_RET(alltoallOuter->Prepare(sendBuf, scratchMem, execMem.inputMem, execMem.outputMem, sendAddrInfosIntra,
+        alltoallLevel0.reset(new (std::nothrow)AlltoAllVStagedPairwise(dispatcher_, stream));
+        CHK_SMART_PTR_NULL(alltoallLevel0);
+        CHK_RET(alltoallLevel0->Prepare(sendBuf, scratchMem, execMem.inputMem, execMem.outputMem, sendAddrInfosIntra,
             recvAddrInfosIntra, isAlltoAllZCopyMode_));
     } else {
         bool isOpBaseZCopy = workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && isAlltoAllZCopyMode_;
@@ -243,9 +243,9 @@ HcclResult CollRunAlltoAllVStaged::PrepareAlltoAllVStaged1(DeviceMem &sendBuf, D
             const_cast<HcclTopoInfo &>(topoAttr_).pairLinkCounter[static_cast<u32>(LinkTypeInServer::HCCS_SW_TYPE)] != 0 ||
             topoAttr_.meshAggregationRankSize == 1) {
             HCCL_INFO("Running alltoallv Staged Pairwise intra Server");
-            alltoallOuter.reset(new (std::nothrow)AlltoAllVStagedPairwise(dispatcher_, stream));
-            CHK_SMART_PTR_NULL(alltoallOuter);
-            CHK_RET(alltoallOuter->Prepare(inBuf, outBuf, sendAddrInfosIntra, recvAddrInfosIntra,
+            alltoallLevel0.reset(new (std::nothrow)AlltoAllVStagedPairwise(dispatcher_, stream));
+            CHK_SMART_PTR_NULL(alltoallLevel0);
+            CHK_RET(alltoallLevel0->Prepare(inBuf, outBuf, sendAddrInfosIntra, recvAddrInfosIntra,
                 isAlltoAllZCopyMode_));
         } else {
             HCCL_INFO("Running alltoallv Staged Mesh intra Server");
@@ -256,14 +256,14 @@ HcclResult CollRunAlltoAllVStaged::PrepareAlltoAllVStaged1(DeviceMem &sendBuf, D
             CHK_RET(AddSubStreamToProfiling());
 
             if (GetExternalInputHcclEnableFfts() || algResResp_->slaveStreams.size() == 0) {
-                alltoallOuter.reset(new (std::nothrow) AlltoAllVStagedMesh(dispatcher_, stream,
-                    algResResp_->notifiesM2S, algResResp_->notifiesS2M, topoAttr_.userRank, algResResp_->slaveStreams));
+                alltoallLevel0.reset(new (std::nothrow) AlltoAllVStagedMesh(dispatcher_, stream,
+                    algResResp_->notifiesMain, algResResp_->notifiesAux, topoAttr_.userRank, algResResp_->slaveStreams));
             } else {
-                alltoallOuter.reset(new (std::nothrow) AlltoAllVStagedMesh(vDispatcher_, stream,
-                    algResResp_->notifiesM2S, algResResp_->notifiesS2M, topoAttr_.userRank, algResResp_->slaveStreams));
+                alltoallLevel0.reset(new (std::nothrow) AlltoAllVStagedMesh(vDispatcher_, stream,
+                    algResResp_->notifiesMain, algResResp_->notifiesAux, topoAttr_.userRank, algResResp_->slaveStreams));
             }
-            CHK_SMART_PTR_NULL(alltoallOuter);
-            CHK_RET(alltoallOuter->Prepare(inBuf, outBuf, sendAddrInfosIntra, recvAddrInfosIntra, isAlltoAllZCopyMode_,
+            CHK_SMART_PTR_NULL(alltoallLevel0);
+            CHK_RET(alltoallLevel0->Prepare(inBuf, outBuf, sendAddrInfosIntra, recvAddrInfosIntra, isAlltoAllZCopyMode_,
                 algResResp_->slaveStreams));
         }
     }
@@ -351,21 +351,21 @@ void CollRunAlltoAllVStaged::CalcInterMeshAggregationAlltoAllMemInfo(
 HcclResult CollRunAlltoAllVStaged::PrepareAlltoAllVStaged2(DeviceMem &recvBuf, DeviceMem &scratchMem,
     std::map<u32, std::list<OneSendRecvAddrInfo>> &sendAddrInfosInter,
     std::map<u32, std::list<OneSendRecvAddrInfo>> &recvAddrInfosInter,
-    Stream &stream, const std::string &tag, std::unique_ptr<AlltoAllVStagedBase> &alltoallInner,
+    Stream &stream, const std::string &tag, std::unique_ptr<AlltoAllVStagedBase> &alltoallLevel1,
     ExecMem &execMem)
 {
-    alltoallInner.reset(new (std::nothrow)AlltoAllVStagedPairwise(dispatcher_, stream));
-    CHK_SMART_PTR_NULL(alltoallInner);
+    alltoallLevel1.reset(new (std::nothrow)AlltoAllVStagedPairwise(dispatcher_, stream));
+    CHK_SMART_PTR_NULL(alltoallLevel1);
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE &&
         !isAlltoAllZCopyMode_) { // 单算子 && BCopy模式
-        CHK_RET(alltoallInner->Prepare(scratchMem, recvBuf, execMem.inputMem, execMem.outputMem, sendAddrInfosInter,
+        CHK_RET(alltoallLevel1->Prepare(scratchMem, recvBuf, execMem.inputMem, execMem.outputMem, sendAddrInfosInter,
             recvAddrInfosInter, isAlltoAllZCopyMode_));
     } else if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE &&
         isAlltoAllZCopyMode_) { // 单算子 && ZCopy模式
-        CHK_RET(alltoallInner->Prepare(scratchMem, execMem.outputMem, execMem.inputMem, execMem.outputMem,
+        CHK_RET(alltoallLevel1->Prepare(scratchMem, execMem.outputMem, execMem.inputMem, execMem.outputMem,
             sendAddrInfosInter, recvAddrInfosInter, isAlltoAllZCopyMode_));
     } else {
-        CHK_RET(alltoallInner->Prepare(scratchMem, recvBuf, sendAddrInfosInter, recvAddrInfosInter,
+        CHK_RET(alltoallLevel1->Prepare(scratchMem, recvBuf, sendAddrInfosInter, recvAddrInfosInter,
             isAlltoAllZCopyMode_));
     }
     return HCCL_SUCCESS;
@@ -392,7 +392,7 @@ HcclResult CollRunAlltoAllVStaged::KernelRun(const OpParam &param, ExecMem &exec
         recvAddrInfosIntra, topoAttr_.meshAggregationRankSize, isSingleMesh);
 
     CHK_RET(CheckCommSize(COMM_MESH_L0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_MESH_L0, COMM_INDEX_0);
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_MESH_L0, COMM_INDEX_0);
 
     if (alltoallMeshReadOnly) {
         HCCL_INFO("[AlltoAllOperator][RunAlltoAllVStaged] staged 1 read only algo");
@@ -404,14 +404,14 @@ HcclResult CollRunAlltoAllVStaged::KernelRun(const OpParam &param, ExecMem &exec
         std::unique_ptr<AlltoAllVMeshReadOnly> alltoallReadOnly = nullptr;
         if (GetExternalInputHcclEnableFfts()) {
             alltoallReadOnly.reset(new (std::nothrow) AlltoAllVMeshReadOnly(dispatcher_,
-                const_cast<Stream&>(param.stream), algResResp_->slaveStreams, algResResp_->notifiesM2S,
-                algResResp_->notifiesS2M, topoAttr_.userRank, topoAttr_.meshAggregationRankSize,
-                outerCommInfo.links, allMeshAggregationSendRecvInfo_));
+                const_cast<Stream&>(param.stream), algResResp_->slaveStreams, algResResp_->notifiesMain,
+                algResResp_->notifiesAux, topoAttr_.userRank, topoAttr_.meshAggregationRankSize,
+                level0CommInfo.links, allMeshAggregationSendRecvInfo_));
         } else {
             alltoallReadOnly.reset(new (std::nothrow) AlltoAllVMeshReadOnly(dispatcher_,
-                const_cast<Stream&>(param.stream), algResResp_->slaveStreams, algResResp_->notifiesM2S,
-                algResResp_->notifiesS2M, topoAttr_.userRank, topoAttr_.meshAggregationRankSize,
-                outerCommInfo.links, allMeshAggregationSendRecvInfo_));
+                const_cast<Stream&>(param.stream), algResResp_->slaveStreams, algResResp_->notifiesMain,
+                algResResp_->notifiesAux, topoAttr_.userRank, topoAttr_.meshAggregationRankSize,
+                level0CommInfo.links, allMeshAggregationSendRecvInfo_));
         }
 
         if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
@@ -425,18 +425,18 @@ HcclResult CollRunAlltoAllVStaged::KernelRun(const OpParam &param, ExecMem &exec
         }
         CHK_RET(alltoallReadOnly->RunAsync());
     } else {
-        std::unique_ptr<AlltoAllVStagedBase> alltoallOuter = nullptr;
+        std::unique_ptr<AlltoAllVStagedBase> alltoallLevel0 = nullptr;
         CHK_RET(PrepareAlltoAllVStaged1(algResResp_->paramInputMem, algResResp_->paramOutputMem, execMem.scratchMem,
-            sendAddrInfosIntra, recvAddrInfosIntra, const_cast<Stream&>(param.stream), tag_, alltoallOuter, execMem));
+            sendAddrInfosIntra, recvAddrInfosIntra, const_cast<Stream&>(param.stream), tag_, alltoallLevel0, execMem));
         if ((algResResp_->slaveStreams.size() != 0) &&
             (!GetExternalInputHcclEnableFfts()) && isAlltoAllZCopyMode_) {
             HCCL_INFO("[AlltoAllOperator][RunAlltoAllVStaged] staged 0 use parallel multi-thread delivery of tasks");
-            CHK_RET(RunTemplateWithVirtualLink(alltoallOuter, outerCommInfo));
+            CHK_RET(RunTemplateWithVirtualLink(alltoallLevel0, level0CommInfo));
             // 多流场景下，并行多线程下发task处理
-            CHK_RET(ParallelTaskLoaderProcess(tag_, const_cast<Stream&>(param.stream), outerCommInfo,
+            CHK_RET(ParallelTaskLoaderProcess(tag_, const_cast<Stream&>(param.stream), level0CommInfo,
                 algResResp_->slaveStreams));
         } else {
-            CHK_RET(RunAlltoAllVTemplateStaged(alltoallOuter, outerCommInfo));
+            CHK_RET(RunAlltoAllVTemplateStaged(alltoallLevel0, level0CommInfo));
         }
 
         HCCL_INFO("[hcclImpl][RunAlltoAllVStaged] stage0 run success!");
@@ -453,11 +453,11 @@ HcclResult CollRunAlltoAllVStaged::KernelRun(const OpParam &param, ExecMem &exec
     } else {
         HCCL_INFO("[hcclImpl][RunAlltoAllVStaged] stage1 run starts!");
         CHK_RET(CheckCommSize(COMM_MESH_L1, COMM_INDEX_0 + 1));
-        SubCommInfo innerCommInfo = GetSubCommInfo(COMM_MESH_L1, COMM_INDEX_0);
-        std::unique_ptr<AlltoAllVStagedBase> alltoallInner = nullptr;
+        SubCommInfo level1CommInfo = GetSubCommInfo(COMM_MESH_L1, COMM_INDEX_0);
+        std::unique_ptr<AlltoAllVStagedBase> alltoallLevel1 = nullptr;
         CHK_RET(PrepareAlltoAllVStaged2(algResResp_->paramOutputMem, execMem.scratchMem, sendAddrInfosInter,
-            recvAddrInfosInter, const_cast<Stream&>(param.stream), tag_, alltoallInner, execMem));
-        CHK_RET(RunAlltoAllVTemplateStaged(alltoallInner, innerCommInfo));
+            recvAddrInfosInter, const_cast<Stream&>(param.stream), tag_, alltoallLevel1, execMem));
+        CHK_RET(RunAlltoAllVTemplateStaged(alltoallLevel1, level1CommInfo));
     }
 
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE &&

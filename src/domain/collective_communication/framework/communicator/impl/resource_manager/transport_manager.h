@@ -26,6 +26,7 @@
 #include "sal_pub.h"
 #include "thread/threads_guard.h"
 #include "hccl_hash_utils.h"
+#include "workflow_pub.h"
 #include "common.h"
 
 namespace hccl {
@@ -85,6 +86,23 @@ struct TransportData {
             (remoteSocketPort == that.remoteSocketPort);
     }
 };
+
+struct SubCommLinkPara {
+    struct SingleSubCommTransport &singleSubCommTransport;
+    std::vector<std::pair<u32, u32>> remoteRankMap;
+    u32 remoteRankIdStartIndex;
+    u32 remoteRankIdNum;
+    std::vector<std::unique_ptr<std::thread>> linkThreads;
+
+    SubCommLinkPara(struct SingleSubCommTransport &singleSubCommTransport,
+        std::vector<std::pair<u32, u32>> &remoteRankMap,
+        u32 remoteRankIdStartIndex,
+        u32 remoteRankIdNum)
+    : singleSubCommTransport(singleSubCommTransport),
+    remoteRankMap(remoteRankMap),
+    remoteRankIdStartIndex(remoteRankIdStartIndex),
+    remoteRankIdNum(remoteRankIdNum) {}
+};
 }
 
 namespace std {
@@ -124,6 +142,7 @@ struct TransportIOMem {
     DeviceMem scratchMem;
     DeviceMem aivInputMem;
     DeviceMem aivOutputMem;
+    DeviceMem expMem;
 };
 
 class TransportManager {
@@ -141,7 +160,7 @@ public:
         const void *transportResourceInfoAddr,
         size_t transportResourceInfoSize,
         bool isUseRankPort,
-        bool isUsedRdmaOuter,
+        bool isUsedRdmaLevel0,
         const std::vector<u32> &ranksPort,
         bool useSuperPodMode,
         const std::vector<HcclIpAddress> &devIpAddr,
@@ -172,7 +191,7 @@ public:
 private:
     HcclResult GetIOMem(const TransportIOMem &transMem,
         const TransportMemType inputMemType, const TransportMemType outputMemType,
-        DeviceMem &inputMem,  DeviceMem &outputMem);
+        DeviceMem &inputMem,  DeviceMem &outputMem, DeviceMem &expMem);
     u32 GetRemoteNicPort(u32 remoteRank);
     bool IsSupportInterHccs(const u32 dstRank);
     void UpdateIsInterRdma(const u32 remoteRank, bool &isInterRdma, bool forceRdma);
@@ -185,7 +204,8 @@ private:
     HcclResult SetMachinePara(const std::string &tag, MachineType machineType, const std::string &serverId, u32 dstRank,
         const bool supportDataReceivedAck, const LinkMode linkMode,
         const std::vector<std::shared_ptr<HcclSocket> > &socketList, const DeviceMem &inputMem,
-        const DeviceMem &outputMem, bool isAicpuModeEn, bool isBackup, MachinePara &machinePara);
+        const DeviceMem &outputMem, const DeviceMem &expMem, bool isAicpuModeEn, bool isBackup,
+        u32 notifyNum, MachinePara &machinePara);
     TransportType GetTransportType(const u32 dstRank, bool isUsedRdma);
     void SetTransportParam(TransportPara &para, MachinePara &machinePara);
     HcclResult TransportInit(const u32 dstRank, MachinePara &machinePara,
@@ -194,12 +214,19 @@ private:
         const std::string &serverId, const u32 remoteRank, const bool supportDataReceivedAck, const LinkMode linkMode,
         const bool enableUseOneDoorbell, const std::string threadStr,
         const std::vector<std::shared_ptr<HcclSocket> > sockets, const DeviceMem inputMem, const DeviceMem outputMem,
-        bool isUsedRdma, std::shared_ptr<Transport> &link, bool isAicpuModeEn, bool isBackup = false);
+        bool isUsedRdma, std::shared_ptr<Transport> &link, bool isAicpuModeEn,
+        u32 notifyNum = 0, bool isBackup = false, const DeviceMem expMem = DeviceMem());
     HcclResult ConstructTransTag(const std::string& tag, std::string& transTag, bool isInterRdma);
     HcclResult ExceptionHandle(const std::string &tag, OpCommTransport &opTransportResponse);
 
     HcclResult LoadMultiQpSrcPortFromFile();
     HcclResult GetConfigSrcPorts(MachinePara &machinePara);
+    HcclResult createSubCommLinkThreads(const std::string &tag, const TransportIOMem &transMem,
+        struct SubCommLinkPara &subCommLinkPara, bool isAicpuModeEn, bool isBackup);
+    HcclResult waitSubCommLinkThreadsComplete(struct SubCommLinkPara &subCommLinkPara);
+    HcclResult checkSubCommLinkThreadsStatus(const std::string &tag, struct SubCommLinkPara &subCommLinkPara, bool isBackup);
+    HcclResult AllocSubCommLinks(const std::string &tag, const TransportIOMem &transMem,
+        struct SingleSubCommTransport &singleSubCommTransport, bool isAicpuModeEn, bool isBackup);        
 
     std::mutex mutex_;	// 用于控制互斥资源的访问
     CCLBufferManager &cclBufferManager_;
@@ -215,7 +242,7 @@ private:
     const void *transportResourceInfoAddr_;
     size_t transportResourceInfoSize_;
     bool isUseRankPort_{ false };
-    bool isUsedRdmaOuter_{ false };
+    bool isUsedRdmaLevel0_{ false };
     const std::vector<u32> &ranksPort_;
     bool useSuperPodMode_{ false };
     const std::vector<HcclIpAddress> &devIpAddr_;
@@ -227,11 +254,14 @@ private:
     std::vector<u32> enableP2PDevices_;
 
     std::vector<std::string> socketTagVec_;
+    std::vector<DeviceMem> extraMem_;
 
     std::atomic<bool> stopFlag_{false};
+    HcclWorkflowMode workflowMode_{HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE};
     std::unordered_map<std::string, std::vector<u32>> mapIpPairSrcPorts_;
     bool isCfgFileRead_{ false };
     std::mutex loadCfgFileMutex_; // 控制文件资源的访问
+    u64 rankConsistentDataLength_ = 0;
 };
 }  // namespace hccl
 

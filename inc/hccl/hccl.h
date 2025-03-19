@@ -163,6 +163,25 @@ extern HcclResult HcclReduceScatter(void *sendBuf, void *recvBuf, uint64_t recvC
     HcclReduceOp op, HcclComm comm, aclrtStream stream);
 
 /**
+ * @brief ReduceScatterV operator.
+ *
+ * @param sendBuf A pointer identifying the input data address of the operator.
+ * @param sendCounts Integer array, where entry i specifies the number of elements to send to rank i.
+ * @param sendDispls Integer array, where entry i specifies the displacement (offset from sendbuf, in units of sendtype)
+from which to send data to rank i.
+ * @param recvBuf A pointer identifying the output data address of the operator.
+ * @param recvCount An integer(u64) identifying the number of the output data.
+ * @param dataType The data type of the operator, must be one of the following types: int8, int32,
+ float16, float32, bfloat16.
+ * @param op The reduction type of the operator, must be one of the following types: sum, min, max, prod.
+ * @param comm A pointer identifying the communication resource based on.
+ * @param stream A pointer identifying the stream information.
+ * @return HcclResult
+ */
+extern HcclResult HcclReduceScatterV(void *sendBuf, const void *sendCounts, const void *sendDispls,
+    void *recvBuf, uint64_t recvCount, HcclDataType dataType, HcclReduceOp op, HcclComm comm, aclrtStream stream);
+
+/**
  * @brief Scatter operator.
  *
  * @param sendBuf A pointer identifying the input data address of the operator.
@@ -172,7 +191,7 @@ extern HcclResult HcclReduceScatter(void *sendBuf, void *recvBuf, uint64_t recvC
  * @param root An integer(u32) identifying the the root rank in the operator.
  * @param comm A pointer identifying the communication resource based on
  * @param stream A pointer identifying the stream information.
- * @return HcclResult 
+ * @return HcclResult
  */
 extern HcclResult HcclScatter(void *sendBuf, void *recvBuf, uint64_t recvCount, HcclDataType dataType, uint32_t root,
     HcclComm comm, aclrtStream stream);
@@ -191,6 +210,25 @@ uint8, uint16, uint32, uint64, float16, float32, float64, bfloat16.
  */
 extern HcclResult HcclAllGather(void *sendBuf, void *recvBuf, uint64_t sendCount, HcclDataType dataType,
     HcclComm comm, aclrtStream stream);
+
+/**
+ * @brief AllGatherV operator.
+ *
+ * @param sendBuf A pointer identifying the input data address of the operator.
+ * @param sendCount An integer(u64) identifying the number of the input data.
+ * @param recvBuf A pointer identifying the output data address of the operator.
+ * @param recvCounts Integer array, where entry i specifies the number of elements to receive from rank i.
+ * @param recvDispls Integer array, where entry i specifies the displacement (offset from recvbuf, in units of recvtype)
+from which to recv data from rank i.
+ * @param dataType The data type of the operator, must be one of the following types: int8, int32,
+ float16, float32, bfloat16.
+ * @param comm A pointer identifying the communication resource based on.
+ * @param stream A pointer identifying the stream information.
+ * @return HcclResult
+ */
+extern HcclResult HcclAllGatherV(void *sendBuf, uint64_t sendCount, void *recvBuf,
+    const void *recvCounts, const void *recvDispls, HcclDataType dataType, HcclComm comm, aclrtStream stream);
+
 /**
  * @brief Get the rank size of this comm.
  *
@@ -393,6 +431,41 @@ extern HcclResult HcclCommResume(HcclComm comm);
  * @brief Get a number that represents the capability of comm configuration.
 */
 extern uint32_t HcclGetCommConfigCapability();
+
+/**
+ * @brief Set the virtual memory range to HCCL communicator
+ * @param comm A pointer identifying the communication resource based on.
+ * @param baseVirPtr The base address of memory range
+ * @param size The size of memory range
+ * @param alignment Memory range alignment, now only support 0
+ * @param flags The flag of this memory range, now only support 0
+ */
+extern HcclResult HcclCommSetMemoryRange(HcclComm comm, void *baseVirPtr, size_t size, size_t alignment, uint64_t flags);
+
+/**
+ * @brief Unset the virtual memory range to HCCL communicator
+ * @param comm A pointer identifying the communication resource based on.
+ * @param baseVirPtr The base address of memory range set by @ref HcclCommSetMemoryRange().
+ */
+extern HcclResult HcclCommUnsetMemoryRange(HcclComm comm, void *baseVirPtr);
+
+/**
+ * @brief Activate memory by physical memory handle.
+ * @param comm A pointer identifying the communication resource based on.
+ * @param virPtr The virtual address memory range in @ref HcclCommSetMemoryRange()
+ * @param size The length of activate memory
+ * @param offset the offset of physical memory, now only support 0
+ * @param handle the physical memory hande
+ * @param flags the flag of physical memory, now only support 0
+ */
+extern HcclResult HcclCommActivateCommMemory(HcclComm comm, void *virPtr, size_t size, size_t offset, aclrtDrvMemHandle handle, uint64_t flags);
+
+/**
+ * @brief Deactivate memory.
+ * @param comm A pointer identifying the communication resource based on.
+ * @param virPtr The virtual address of activate memory by @ref HcclCommActivateCommMemory().
+ */
+extern HcclResult HcclCommDeactivateCommMemory(HcclComm comm, void *virPtr);
 
 #ifdef __cplusplus
 }

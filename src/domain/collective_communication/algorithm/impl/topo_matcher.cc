@@ -198,7 +198,6 @@ HcclResult TopoMatcher::GetIsUsedRdma(const CommParaInfo &commParaInfo, bool &is
                commParaInfo.commType == CommType::COMM_TAG_WHOLE_AHC_BROKE ||
                commParaInfo.commType == CommType::COMM_TAG_ASYMMETRIC_HIERARCHICAL_CONCATENATE ||
                commParaInfo.commType == CommType::COMM_TAG_ASYMMETRIC_HIERARCHICAL_CONCATENATE_BROKE) {
-        // COMM 场景，支持 HCCS 和 ROH 混合链路
         isUsedRdma = false;
         return HCCL_SUCCESS;
     }
@@ -298,7 +297,6 @@ u32 TopoMatcher::GetExternalInputInterHccsDisable()
 
 bool CheckRankNeighbors(const std::vector<u32> &nicList)
 {
-    // 组成ROH环路必须偶数个,且2节点不能组成双环？
     if (nicList.size() % 2 != 0 || nicList.size() < HCCL_DEVICE_NUM_FOUR) {
         return false;
     }
@@ -317,7 +315,6 @@ bool CheckRankNeighbors(const std::vector<u32> &nicList)
     return true;
 }
 
-// 适配ROH平面网段隔离，奇数rank互通，偶数rank互通，奇偶不通
 bool TopoMatcher::CheckSdmaWithRohTopo(const std::vector<u32> &nicList, std::vector<u32> &topoList)
 {
     std::vector<u32> tmpNicList(nicList);
@@ -347,7 +344,7 @@ const u32 TopoMatcher::GetSubCollectiveRank(const std::vector<u32> &vecPara) con
 
 HcclResult TopoMatcher::GetSubRootForScatter(const u32 root, u32& subRoot)
 {
-    // 通过root找到ringIndex, 通过userRank找到Inner中的rank
+    // 通过root找到ringIndex, 通过userRank找到level1中的rank
     u32 planeIdx = INVALID_VALUE_RANKID;
     u32 ringSize = CommPlaneVector_[COMM_LEVEL1_INDEX].size();
 
@@ -358,7 +355,7 @@ HcclResult TopoMatcher::GetSubRootForScatter(const u32 root, u32& subRoot)
     u32 rank = INVALID_VALUE_RANKID;
     for (u32 ringIndex = 0; ringIndex < ringSize; ringIndex++) {
         if (isBridgeVector_[ringIndex]) {
-            rank = GetSubCollectiveRank(CommPlaneVector_[COMM_LEVEL1_INDEX][ringIndex]); // 确定userRank在Inner中的rank号
+            rank = GetSubCollectiveRank(CommPlaneVector_[COMM_LEVEL1_INDEX][ringIndex]); // 确定userRank在level1中的rank号
         }
         for (u32 idx = 0; idx < CommPlaneVector_[COMM_LEVEL1_INDEX][ringIndex].size(); idx++) {
             if (root == CommPlaneVector_[COMM_LEVEL1_INDEX][ringIndex][idx]) {  // 获取root所在的平面
@@ -367,7 +364,7 @@ HcclResult TopoMatcher::GetSubRootForScatter(const u32 root, u32& subRoot)
         }
     }
     CHK_PRT_RET(rank == INVALID_VALUE_RANKID,
-        HCCL_ERROR("[GET][GetSubRootForScatter]get rankId in inner failed."), HCCL_E_PARA);
+        HCCL_ERROR("[GET][GetSubRootForScatter]get rankId in level1 failed."), HCCL_E_PARA);
     CHK_PRT_RET(planeIdx == INVALID_VALUE_RANKID,
         HCCL_ERROR("[GET][GetSubRootForScatter]get root[%u] planeIdx[%u] failed.", root, planeIdx), HCCL_E_PARA);
     subRoot = CommPlaneVector_[COMM_LEVEL1_INDEX][planeIdx][rank];
@@ -482,7 +479,7 @@ HcclResult TopoMatcher::GetLocalSuperPodRankSize(const u32 userRank, u32& devNum
         }
     }
     if (superPodIdx == INVALID_VALUE_RANKID || rankIdxInPod == INVALID_VALUE_RANKID) {
-        HCCL_ERROR("[GET][GetLocalSuperPodRankSize]get rankId in inner failed.");
+        HCCL_ERROR("[GET][GetLocalSuperPodRankSize]get rankId in level1 failed.");
         return HCCL_E_PARA;
     }
     devNumInlocalPod = serverAndsuperPodToRank_[1][superPodIdx].size();
@@ -506,7 +503,7 @@ HcclResult TopoMatcher::GetLocalServerRankSize(const u32 userRank, u32& devNumIn
         }
     }
     if (serverIdx == INVALID_VALUE_RANKID || rankIdxInServer == INVALID_VALUE_RANKID) {
-        HCCL_ERROR("[GET][GetLocalServerRankSize]get rankId in inner failed.");
+        HCCL_ERROR("[GET][GetLocalServerRankSize]get rankId in level1 failed.");
         return HCCL_E_PARA;
     }
     devNumInlocalServer = serverAndsuperPodToRank_[0][serverIdx].size();

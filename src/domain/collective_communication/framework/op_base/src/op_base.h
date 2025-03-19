@@ -78,12 +78,18 @@ HcclResult HcclGetCommHandle(const char *commName, std::shared_ptr<hccl::hcclCom
 
 HcclResult CheckScatterInputPara(uint64_t recvCount, HcclComm comm, void *recvBuf);
 
+HcclResult HcclMc2ComResourceByTiling(HcclComm comm, uint32_t *pVersion, void *mc2Tiling, rtStream_t &aicpuStream);
+
 HcclResult HcclCreateComResourceByComm(HcclComm comm, u32 streamMode, bool isOpbaseMode,
     void** commContext);
 
 HcclResult HcclDeviceRefresh(void);
 
 HcclResult HcclSetIfProfile(void);
+
+void PrintCountsAndDispls(const u32 length, const void *counts, const void *displs, const std::string &tag);
+
+void CheckCountsAndDispls(const u32 length, const void *counts, const void *displs, const std::string &tag);
 
 #ifdef __cplusplus
 extern "C" {

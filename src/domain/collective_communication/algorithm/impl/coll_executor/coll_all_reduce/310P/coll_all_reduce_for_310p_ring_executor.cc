@@ -17,12 +17,61 @@ CollAllReduceFor310PRingExecutor::CollAllReduceFor310PRingExecutor(const HcclDis
     DMAReduceFlag_ = false;
 }
 
+HcclResult CollAllReduceFor310PRingExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
+{
+    bool isInlineReduce = IsSupportSDMAReduce(execMem.inputMem.ptr(), execMem.outputMem.ptr(),
+        param.DataDes.dataType, param.reduceType);
+    u64 reduceAttr = 0;
+    if (isInlineReduce) {
+        SalSetBitOne(reduceAttr, ATTR_POS_INLINE_REDUCE);
+    }
+
+    CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+
+    std::unique_ptr<AlgTemplateBase> tempAlg;
+    tempAlg.reset(new (std::nothrow) AllReduceRing(dispatcher_, reduceAttr));
+    CHK_SMART_PTR_NULL(tempAlg);
+
+    CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
+        param.DataDes.dataType, param.stream, param.reduceType,
+        LEVEL0_BRIDGE_RANK_ID, std::vector<Slice>(0), 0));
+
+    CHK_RET(tempAlg->RegisterProfiler(
+        (level0CommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level0CommInfo.localRank,
+        PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, param.stream));
+
+    CHK_RET(RunTemplate(tempAlg, level0CommInfo));
+    return HCCL_SUCCESS;
+}
+
 HcclResult CollAllReduceFor310PRingExecutor::CalcCommInfo(std::vector<LevelNSubCommTransport>& opTransport)
 {
     TransportMemType inputType = TransportMemType::RESERVED;
     TransportMemType outputType = TransportMemType::RESERVED;
     CHK_RET(CalcTransportMemType(inputType, outputType));
     CHK_RET(CalcLevel0CommInfo(inputType, outputType, opTransport));
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollAllReduceFor310PRingExecutor::CalcLevel0CommInfo(TransportMemType inputType,
+    TransportMemType outputType,
+    std::vector<LevelNSubCommTransport>& opTransport)
+{
+    HCCL_INFO("[CollAllReduceFor310PRingExecutor][CalcLevel0CommInfo]tag[%s] start", tag_.c_str());
+
+    if (algType_ == AlgType::ALG_NP_HD) {
+        CommParaInfo commParaInfo(COMM_LEVEL0, CommType::COMM_TAG_HALVING_DOUBLING);
+        CHK_RET(CalcCommPlaneInfo(tag_, commParaInfo, opTransport[COMM_LEVEL0], inputType, outputType));
+    } else if (algType_ == AlgType::ALG_DEFAULT) {
+        CommParaInfo commParaInfo(COMM_LEVEL0, CommType::COMM_TAG_RING_INNER);
+        CHK_RET(CalcCommPlaneInfo(tag_, commParaInfo, opTransport[COMM_LEVEL0], inputType, outputType));
+    } else {
+        HCCL_ERROR("unsupported algType %d", algType_);
+        return HCCL_E_INTERNAL;
+    }
+
+    HCCL_INFO("[CollAllReduceFor310PRingExecutor][CalcLevel0CommInfo]tag[%s] Calc RingComm finish", tag_.c_str());
     return HCCL_SUCCESS;
 }
 
@@ -38,55 +87,6 @@ HcclResult CollAllReduceFor310PRingExecutor::CalcTransportMemType(TransportMemTy
     }
     HCCL_INFO("[CollAllReduceFor310PRingExecutor][CalcTransportMemType] tag[%s] inputType[%d], outputType[%d]",
         tag_.c_str(), inputType, outputType);
-    return HCCL_SUCCESS;
-}
-
-HcclResult CollAllReduceFor310PRingExecutor::CalcLevel0CommInfo(TransportMemType inputType,
-    TransportMemType outputType,
-    std::vector<LevelNSubCommTransport>& opTransport)
-{
-    HCCL_INFO("[CollAllReduceFor310PRingExecutor][CalcOuterCommInfo]tag[%s] start", tag_.c_str());
-
-    if (algType_ == AlgType::ALG_NP_HD) {
-        CommParaInfo commParaInfo(COMM_LEVEL0, CommType::COMM_TAG_HALVING_DOUBLING);
-        CHK_RET(CalcCommPlaneInfo(tag_, commParaInfo, opTransport[COMM_LEVEL0], inputType, outputType));
-    } else if (algType_ == AlgType::ALG_DEFAULT) {
-        CommParaInfo commParaInfo(COMM_LEVEL0, CommType::COMM_TAG_RING_INNER);
-        CHK_RET(CalcCommPlaneInfo(tag_, commParaInfo, opTransport[COMM_LEVEL0], inputType, outputType));
-    } else {
-        HCCL_ERROR("unsupported algType %d", algType_);
-        return HCCL_E_INTERNAL;
-    }
-
-    HCCL_INFO("[CollAllReduceFor310PRingExecutor][CalcOuterCommInfo]tag[%s] Calc RingComm finish", tag_.c_str());
-    return HCCL_SUCCESS;
-}
-
-HcclResult CollAllReduceFor310PRingExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
-{
-    bool isInlineReduce = IsSupportSDMAReduce(execMem.inputMem.ptr(), execMem.outputMem.ptr(),
-        param.DataDes.dataType, param.reduceType);
-    u64 reduceAttr = 0;
-    if (isInlineReduce) {
-        SalSetBitOne(reduceAttr, ATTR_POS_INLINE_REDUCE);
-    }
-
-    CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
-
-    std::unique_ptr<AlgTemplateBase> tempAlg;
-    tempAlg.reset(new (std::nothrow) AllReduceRing(dispatcher_, reduceAttr));
-    CHK_SMART_PTR_NULL(tempAlg);
-
-    CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
-        param.DataDes.dataType, param.stream, param.reduceType,
-        OUTER_BRIDGE_RANK_ID, std::vector<Slice>(0), 0));
-
-    CHK_RET(tempAlg->RegisterProfiler(
-        (outerCommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + outerCommInfo.localRank,
-        PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, param.stream));
-
-    CHK_RET(RunTemplate(tempAlg, outerCommInfo));
     return HCCL_SUCCESS;
 }
 

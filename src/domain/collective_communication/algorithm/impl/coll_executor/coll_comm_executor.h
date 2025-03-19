@@ -55,6 +55,9 @@ public:
         const HcclDataType dataType, const HcclReduceOp reductionOp, Stream stream, s32 profStage,
         std::vector<Slice> &dataSegsSlice,u32 segmentIdx, u32 commIndex, u64 hdSize, u32 syncTrans);
 
+    HcclResult UpdateOffsetBasedOnStrideCount(const OpParam &param,
+        std::vector<std::vector<Slice>> &multRingsUserMemSlice);
+
     HcclResult MultiRingAllGather(const std::string &tag, DeviceMem inputMem, DeviceMem outputMem, const u64 count,
         const HcclDataType dataType,
         const std::vector<std::vector<Slice> > multRingsSliceZero, Stream stream,
@@ -122,7 +125,7 @@ public:
     bool IsMultiMeshInlineReduce(void *inputPtr, void *outputPtr, HcclDataType dataType, HcclReduceOp op);
 
     u64 GetReduceAttr(DeviceMem &inputMem, DeviceMem &outputMem, HcclDataType dataType, HcclReduceOp op);
-    HcclResult PrepareInnerCommInfo(u32 &segmentIdx, u32 &commIndex, u64 &hdSize,
+    HcclResult PrepareLevel1CommInfo(u32 &segmentIdx, u32 &commIndex, u64 &hdSize,
                                           const SubCommInfo &commInfo,
                                           const std::vector<std::vector<Slice> > &multRingsSliceZero,
                                           const std::string &tag);

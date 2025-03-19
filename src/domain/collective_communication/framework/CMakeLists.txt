@@ -32,12 +32,18 @@ set(hccl_include_list
     ${HCCL_BASE_DIR}/framework/communicator/impl/
     ${HCCL_BASE_DIR}/framework/communicator/impl/resource_manager
     ${HCCL_BASE_DIR}/framework/communicator/impl/one_sided_service
+    ${HCCL_BASE_DIR}/framework/communicator/impl/zero_copy_memory_agent
     ${HCCL_BASE_DIR}/framework/hcom/
     ${HCCL_BASE_DIR}/framework/inc/
     ${HCCL_BASE_DIR}/framework/op_base/src
+    ${HCCL_BASE_DIR}/common/health/
 )
 
 if(BUILD_OPEN_PROJECT)
+    target_compile_definitions(hccl PRIVATE
+        OPEN_BUILD_PROJECT
+        LOG_CPP)
+
     target_include_directories(hccl PRIVATE
         ${HCCL_BASE_DIR}/../../../inc
         ${HCCL_BASE_DIR}/../../../inc/hccl
@@ -47,6 +53,7 @@ if(BUILD_OPEN_PROJECT)
         ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/metadef/common/util/error_manager/
         ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/msprof/
         ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/runtime/
+        ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/slog/toolchain
         ${ASCEND_CANN_PACKAGE_PATH}/include/ascendc/highlevel_api/
         ${THIRD_PARTY_NLOHMANN_PATH}
     )
@@ -63,7 +70,9 @@ else()
         ${TOP_DIR}/inc/driver                               # experiment/ascend_hal/driver/
         ${TOP_DIR}/inc/external                             # experiment
         ${TOP_DIR}/metadef/inc/common/util/error_manager    # experiment/metadef/inc/common/util/error_manager/
+        ${TOP_DIR}/metadef/inc/external/
         ${TOP_DIR}/open_source/json/include
+        ${TOP_DIR}/abl/slog/inc/toolchain                   # experiment/slog/
     )
 endif()
 
@@ -97,6 +106,7 @@ if(BUILD_OPEN_PROJECT)
     target_link_libraries(hccl
             -Wl,--no-as-needed
             c_sec
+            ascendalog
             hccl_alg
             hccl_plf
             -Wl,--as-needed
@@ -107,8 +117,10 @@ if(BUILD_OPEN_PROJECT)
 else()
     target_link_libraries(hccl
             $<BUILD_INTERFACE:kernel_tiling_headers>
+            $<BUILD_INTERFACE:slog_headers>
             -Wl,--no-as-needed
             c_sec
+            slog
             hccl_alg
             hccl_plf
             -Wl,--as-needed

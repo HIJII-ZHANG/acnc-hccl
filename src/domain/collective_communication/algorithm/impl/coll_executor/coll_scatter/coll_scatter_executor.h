@@ -29,8 +29,8 @@ protected:
     virtual HcclResult CalcTransportMemType(TransportMemType &inputType, TransportMemType &outputType);
 
     /* *************** 算法编排 *************** */
-    // 按Inner、Outer、Level2可继续进行拆分。
-    virtual HcclResult KernelRunInner(DeviceMem &inputMem, u64 count, HcclDataType dataType, u32 &commIndex,
+    // 按Level0、Level1、Level2可继续进行拆分。
+    virtual HcclResult KernelRunLevel1(DeviceMem &inputMem, u64 count, HcclDataType dataType, u32 &commIndex,
         u32 root, u32 &subRoot, CommPlane commLevel, Stream &stream);
     // 用于需要Loop的Executor
     virtual HcclResult RunLoop(OpParam &param, AlgResourceResponse &algRes);
@@ -41,6 +41,8 @@ protected:
     virtual HcclResult PrepareDataSlice(u64 dataCount, u32 unitSize, u32 sliceNum,
         std::vector<Slice> &dataSlice);
     virtual HcclResult ReorderSlice(std::vector<Slice> &dataSlice, std::vector<u32> &order);
+
+    bool DMAReduceFlag_{false}; // 是否DMA消减的标志
 private:
 };
 

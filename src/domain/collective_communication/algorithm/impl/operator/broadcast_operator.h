@@ -21,6 +21,8 @@ public:
     ~BroadCastOperator();
     HcclResult SelectAlg(const std::string& tag, const OpParam& param, std::string& algName, std::string& newTag);
 private:
+    HcclResult SelectAlgforMix(const OpParam& param, std::string& algName);
+
     HcclResult SelectAlgfor310P3(const OpParam& param, std::string& algName);
 
     HcclResult SelectAlgfor310P(const OpParam& param, std::string& algName);

@@ -55,7 +55,7 @@ HcclResult CollScatterMeshExecutor::KernelRun(const OpParam &param, ExecMem &exe
     u32 level1LocalRankSize = level1CommInfo.localRankSize;
 
     bool bRet = level0LocalRankSize == 0;
-    CHK_PRT_RET(bRet, HCCL_ERROR("[CollScatterMeshExecutor][KernelRun]tag[%s],comm outer is empty", tag_.c_str()),
+    CHK_PRT_RET(bRet, HCCL_ERROR("[CollScatterMeshExecutor][KernelRun]tag[%s],comm level0 is empty", tag_.c_str()),
         HCCL_E_INTERNAL);
 
     /* ***********第一步: 节点间scatter ****************************/
@@ -66,7 +66,7 @@ HcclResult CollScatterMeshExecutor::KernelRun(const OpParam &param, ExecMem &exe
         "userRank[%u], root[%u], subRoot[%u]", topoAttr_.userRank, param.root, subRoot), HCCL_E_INTERNAL);
     HCCL_DEBUG("[CollScatterMeshExecutor][KernelRun]GetSubRootForScatter, userRank[%u], root[%u], subRoot[%u]",
         topoAttr_.userRank, param.root, subRoot);
-    CHK_RET(KernelRunInner(execMem.inputMem, execMem.count, param.DataDes.dataType, commIndex,
+    CHK_RET(KernelRunLevel1(execMem.inputMem, execMem.count, param.DataDes.dataType, commIndex,
         param.root, subRoot, COMM_LEVEL1, stream));
 
     /* ***********第二步: 节点内scatter*****************************/
@@ -84,22 +84,22 @@ HcclResult CollScatterMeshExecutor::KernelRun(const OpParam &param, ExecMem &exe
     DeviceMem scatterMeshOutput = execMem.inputMem.range(serverSliceOffset, serverSliceSize);
     CHK_SMART_PTR_NULL(scatterMeshOutput);
 
-    std::unique_ptr<AlgTemplateBase> outerTempAlg;
-    outerTempAlg.reset(
+    std::unique_ptr<AlgTemplateBase> level0TempAlg;
+    level0TempAlg.reset(
         new (std::nothrow) ScatterMesh(dispatcher_, level0LocalRank, level0LocalRankSize));
-    CHK_SMART_PTR_NULL(outerTempAlg);
+    CHK_SMART_PTR_NULL(level0TempAlg);
 
     // 偏移需要带入prepare
-    u32 rootRankOuter = 0;
-    CHK_RET(GetRankByUserRank(COMM_LEVEL0, COMM_INDEX_0, subRoot, rootRankOuter));
-    CHK_PRT_RET(rootRankOuter == INVALID_VALUE_RANKID,
-        HCCL_ERROR("[CollScatterMeshExecutor][KernelRun]rootRankOuter[%u] is invalid, userRank[%u], subRoot[%u]",
-        rootRankOuter, topoAttr_.userRank, subRoot), HCCL_E_INTERNAL);
+    u32 rootRankLevel0 = 0;
+    CHK_RET(GetRankByUserRank(COMM_LEVEL0, COMM_INDEX_0, subRoot, rootRankLevel0));
+    CHK_PRT_RET(rootRankLevel0 == INVALID_VALUE_RANKID,
+        HCCL_ERROR("[CollScatterMeshExecutor][KernelRun]rootRankLevel0[%u] is invalid, userRank[%u], subRoot[%u]",
+        rootRankLevel0, topoAttr_.userRank, subRoot), HCCL_E_INTERNAL);
 
-    CHK_RET(outerTempAlg->Prepare(scatterMeshInput, scatterMeshOutput, execMem.inputMem, execMem.count,
-        param.DataDes.dataType, stream, HCCL_REDUCE_RESERVED, rootRankOuter, dataSegsSlice, serverSliceOffset));
+    CHK_RET(level0TempAlg->Prepare(scatterMeshInput, scatterMeshOutput, execMem.inputMem, execMem.count,
+        param.DataDes.dataType, stream, HCCL_REDUCE_RESERVED, rootRankLevel0, dataSegsSlice, serverSliceOffset));
 
-    HcclResult ret = RunTemplate(outerTempAlg, level0CommInfo);
+    HcclResult ret = RunTemplate(level0TempAlg, level0CommInfo);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollScatterMeshExecutor][KernelRun]scatter(mesh) RunTemplate failed,return[%d]", ret), ret);
 

@@ -109,26 +109,26 @@ HcclResult CollAllReduceMidCountAivRdmaExecutor::KernelRun(const OpParam &param,
 
     // 获取通信域信息
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
-    u32 commIndex = outerCommInfo.localRank;
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    u32 commIndex = level0CommInfo.localRank;
     bool isSelectAHC = (UseInterServerAHCAlgo(algType_) || UseInterServerAHCBrokeAlgo(algType_));
     CommPlane commPlaneLevel1 = isSelectAHC ? COMM_LEVEL1_AHC : COMM_LEVEL1;
     CHK_RET(CheckCommSize(commPlaneLevel1, commIndex + 1));
-    SubCommInfo innerCommInfo = GetSubCommInfo(commPlaneLevel1, commIndex);
+    SubCommInfo level1CommInfo = GetSubCommInfo(commPlaneLevel1, commIndex);
 
     // 数据准备，按照server内rankSize切片
     u32 perDataSize = SIZE_TABLE[param.DataDes.dataType];
     u64 totalSize = param.DataDes.count * perDataSize;
     std::vector<Slice> dataSegsSlice;   // 数据分成ranksize份，每份的起始偏移和大小
-    u32 sliceNum = outerCommInfo.localRankSize;
+    u32 sliceNum = level0CommInfo.localRankSize;
     CHK_RET(PrepareSliceDataWithAlignSize(totalSize, sliceNum, 0, dataSegsSlice, HCCL_ALIGN_COUNT_32_B));
     CHK_PRT_RET(commIndex >= dataSegsSlice.size(),
         HCCL_ERROR("[CollAllReduceMeshExecutor][Run]commIndex[%u] >= dataSegsSlice size[%zu]", commIndex,
         dataSegsSlice.size()), HCCL_E_INTERNAL);
-    std::vector<hccl::LINK> intraLinks = outerCommInfo.links;
-    std::vector<hccl::LINK> interLinks = innerCommInfo.links;
-    u32 intraRankSize = outerCommInfo.localRankSize;
-    u32 intraRankId = outerCommInfo.localRank;
+    std::vector<hccl::LINK> intraLinks = level0CommInfo.links;
+    std::vector<hccl::LINK> interLinks = level1CommInfo.links;
+    u32 intraRankSize = level0CommInfo.localRankSize;
+    u32 intraRankId = level0CommInfo.localRank;
 
     // reduce scatter阶段，inputMem0-31m做数据区，32M开始后的1M做标记区
     void* dataBuffers[MAX_RANK_SIZE];
@@ -141,7 +141,7 @@ HcclResult CollAllReduceMidCountAivRdmaExecutor::KernelRun(const OpParam &param,
         param.stream.ptr(), isOpbase, execMem.inputMem.size(), INTRA_RS_STEP, false));
 
     // allreduce 阶段
-    std::unique_ptr<AlgTemplateBase> innerTempAlg;
+    std::unique_ptr<AlgTemplateBase> level1TempAlg;
     DeviceMem allreduceInput = execMem.inputMem.range(dataSegsSlice[commIndex].offset, dataSegsSlice[commIndex].size);
     CHK_SMART_PTR_NULL(allreduceInput);
     DeviceMem allreduceOutput = execMem.outputMem.range(dataSegsSlice[commIndex].offset, dataSegsSlice[commIndex].size);
@@ -154,51 +154,51 @@ HcclResult CollAllReduceMidCountAivRdmaExecutor::KernelRun(const OpParam &param,
     CHK_RET(InitTask(dispatcher_, const_cast<Stream&>(param.stream), opMeta.isEnableCache, opMeta.GetCacheKey()));
 
     if (UseInterServerRingAlgo(algType_)) {
-        innerTempAlg.reset(new (std::nothrow) AllReduceRing(dispatcher_, reduceAttr));
+        level1TempAlg.reset(new (std::nothrow) AllReduceRing(dispatcher_, reduceAttr));
         HCCL_INFO("allreduce mesh: using ring algo inter-server.");
     } else if (UseInterServerNHRAlgo(algType_)) {
         u64 curSize = execMem.count * perDataSize; // 单位 byte
-        HCCL_DEBUG("allreduce mesh: curSize[%llu] deviceNumPerAggregation[%u] commOuterSize[%u]",
-            curSize, topoAttr_.deviceNumPerAggregation, outerCommInfo.localRankSize);
+        HCCL_DEBUG("allreduce mesh: curSize[%llu] deviceNumPerAggregation[%u] commLevel0Size[%u]",
+            curSize, topoAttr_.deviceNumPerAggregation, level0CommInfo.localRankSize);
         if (curSize / topoAttr_.deviceNumPerAggregation <= NHR_ALLREDUCE_SMALL_SIZE) {
-            innerTempAlg.reset(new (std::nothrow) AllReduceNHROneshot(dispatcher_, reduceAttr));
+            level1TempAlg.reset(new (std::nothrow) AllReduceNHROneshot(dispatcher_, reduceAttr));
         } else {
-            innerTempAlg.reset(new (std::nothrow) AllReduceNHR(dispatcher_, reduceAttr));
+            level1TempAlg.reset(new (std::nothrow) AllReduceNHR(dispatcher_, reduceAttr));
         }
         HCCL_INFO("allreduce mesh: using nhr algo inter-server.");
     } else if (UseInterServerNHRV1Algo(algType_)) {
-        innerTempAlg.reset(new (std::nothrow) AllReduceNHRV1(dispatcher_, reduceAttr));
+        level1TempAlg.reset(new (std::nothrow) AllReduceNHRV1(dispatcher_, reduceAttr));
         HCCL_INFO("allreduce mesh: using nhr_v1 algo inter-server.");
     } else if (UseInterServerAHCAlgo(algType_)) {
         // 获取通信域分组信息
         std::vector<std::vector<u32>> subGroups;
         CHK_RET(topoMatcher_->GetLevelSubGroups(commPlaneLevel1, subGroups));
-        innerTempAlg.reset(new (std::nothrow) AllReduceAHC(dispatcher_, reduceAttr, execMem.count, subGroups));
+        level1TempAlg.reset(new (std::nothrow) AllReduceAHC(dispatcher_, reduceAttr, execMem.count, subGroups));
         HCCL_INFO("allreduce mesh: using ahc algo inter-server.");
     } else if (UseInterServerAHCBrokeAlgo(algType_)) {
         // 获取通信域分组信息
         std::vector<std::vector<u32>> subGroups;
         CHK_RET(topoMatcher_->GetLevelSubGroups(commPlaneLevel1, subGroups));
-        innerTempAlg.reset(new (std::nothrow) AllReduceAHCBroke(dispatcher_, reduceAttr, execMem.count, subGroups));
+        level1TempAlg.reset(new (std::nothrow) AllReduceAHCBroke(dispatcher_, reduceAttr, execMem.count, subGroups));
         HCCL_INFO("allreduce mesh: using ahc-broke algo inter-server.");
     } else if (UseInterServerNBAlgo(algType_)) {
-        innerTempAlg.reset(new (std::nothrow) AllReduceNB(dispatcher_, reduceAttr));
+        level1TempAlg.reset(new (std::nothrow) AllReduceNB(dispatcher_, reduceAttr));
         HCCL_INFO("allreduce mesh: using nb algo inter-server.");
     } else {
-        innerTempAlg.reset(new (std::nothrow) AllReduceRecursiveHalvingDoubling(dispatcher_, reduceAttr));
+        level1TempAlg.reset(new (std::nothrow) AllReduceRecursiveHalvingDoubling(dispatcher_, reduceAttr));
         HCCL_INFO("allreduce mesh: using Recursive halving-doubling algo inter-server.");
     }
-    CHK_SMART_PTR_NULL(innerTempAlg);
+    CHK_SMART_PTR_NULL(level1TempAlg);
 
-    u32 rankSize = innerCommInfo.localRankSize;
+    u32 rankSize = level1CommInfo.localRankSize;
     u64 hdCount = dataSegsSlice[commIndex].size / perDataSize;
-    CHK_RET(innerTempAlg->Prepare(allreduceInput, allreduceOutput, allreduceOutput, hdCount,
+    CHK_RET(level1TempAlg->Prepare(allreduceInput, allreduceOutput, allreduceOutput, hdCount,
         param.DataDes.dataType, param.stream, param.reduceType,
-        OUTER_BRIDGE_RANK_ID, std::vector<Slice>(0), dataSegsSlice[commIndex].offset));
+        LEVEL0_BRIDGE_RANK_ID, std::vector<Slice>(0), dataSegsSlice[commIndex].offset));
 
-    CHK_RET(innerTempAlg->RegisterProfiler((rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) +
-        innerCommInfo.localRank, PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
-    CHK_RET(RunTemplate(innerTempAlg, innerCommInfo));
+    CHK_RET(level1TempAlg->RegisterProfiler((rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) +
+        level1CommInfo.localRank, PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
+    CHK_RET(RunTemplate(level1TempAlg, level1CommInfo));
     HCCL_INFO("[CollAllReduceMidCountAivRdmaExecutor] rdma stage run success.");
     CHK_RET(LaunchTask(dispatcher_, const_cast<Stream&>(param.stream)));
 

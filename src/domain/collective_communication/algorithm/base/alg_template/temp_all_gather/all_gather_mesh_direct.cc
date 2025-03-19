@@ -65,31 +65,62 @@ HcclResult AllgatherMeshDirect::SubRecordMain()
 // allgather的入口函数
 HcclResult AllgatherMeshDirect::RunAsync(const u32 rank, const u32 rankSize, const std::vector<LINK> &links)
 {
-    HCCL_INFO("AllGatherMesh run: rank[%u] totalrank[%u] inputMem[%p] outputMem[%p] count[%llu]",
+    CHK_SMART_PTR_NULL(dispatcher_);
+    CHK_PTR_NULL(stream_.ptr());
+    HCCL_INFO("AllGatherMeshDirect run: rank[%u] totalrank[%u] inputMem[%p] outputMem[%p] count[%llu]", 
         rank, rankSize, inputMem_.ptr(), outputMem_.ptr(), count_);
-    u32 unitSize = DataUnitSize(dataType_);
-    u64 sdmaSize = count_ * unitSize; // 当前count
-    u64 sliceSize = opInfo_->count * unitSize; // 总输入count
-    DeviceMem src;
-    DeviceMem dst;
 
     char* curUerMemInPtr = static_cast<char *>(opInfo_->inputAddr);
     char* curUerMemOutPtr = static_cast<char *>(opInfo_->outputAddr);
     char* curCommMemOutPtr = static_cast<char *>(outputMem_.ptr());
 
+    u32 unitSize = DataUnitSize(dataType_);
+    u64 curSize = count_ * unitSize; // 当前count
+    u64 sliceSize = opInfo_->count * unitSize; // 总输入count
+
     if (rankSize == 1) {
         if (opInfo_->inputAddr != opInfo_->outputAddr) {
-            DeviceMem userMemIn = DeviceMem::create(curUerMemInPtr, sdmaSize);
-            DeviceMem userMemOut = DeviceMem::create(curUerMemOutPtr, sdmaSize);
+            HCCL_DEBUG("rank[%u] mem copy async from input to output", rank);
+            DeviceMem userMemIn = DeviceMem::create(curUerMemInPtr, curSize);
+            DeviceMem userMemOut = DeviceMem::create(curUerMemOutPtr, curSize);
             CHK_RET(HcclD2DMemcpyAsync(dispatcher_, userMemOut, userMemIn, stream_));
         }
         return HCCL_SUCCESS;
     }
+
     DeviceMem emptyMem = outputMem_.range(0, 0);
 
-    src = DeviceMem::create(curUerMemInPtr, sdmaSize);
-    u64 localOffsetByte = (sliceSize * rank) % HCCL_MIN_SLICE_ALIGN_910B;
-    dst = DeviceMem::create(curCommMemOutPtr + localOffsetByte, sdmaSize);
+    std::vector<Slice> inputSlices(slices_);
+    if (slices_.size() == 0) {
+        // slices_为空，临时构造等长slices
+        slices_.resize(interRankSize_);
+        inputSlices.resize(interRankSize_);
+
+        for (u32 i = 0; i < interRankSize_; i++) {
+            slices_[i].size = curSize;
+            slices_[i].offset = (i * sliceSize);
+
+            inputSlices[i].size = curSize;
+            inputSlices[i].offset = (inputMem_.size() < outputMem_.size()) ? 0 : (sliceSize * i);
+        }
+    } else {
+        // allgather_v场景下走else分支，每张卡的数据在CCLbuffer上偏移地址相同
+        for(u32 i = 0; i < interRankSize_; i++) {
+            inputSlices[i].offset = 0;
+        }
+    }
+
+    for (u32 i = 0; i < interRankSize_; i++) {
+        HCCL_DEBUG("[AllGatherMeshDirect][Slice]: rank[%u], outputslice: size[%llu] offset[%llu]   "
+            "inputslice: size[%llu]  offset[%llu]",
+            i, slices_[i].size, slices_[i].offset, inputSlices[i].size, inputSlices[i].offset);
+    }
+
+    DeviceMem src;
+    DeviceMem dst;
+    src = DeviceMem::create(curUerMemInPtr, inputSlices[rank].size);
+    u64 localOffsetByte = inputSlices[rank].offset % HCCL_MIN_SLICE_ALIGN_910B;
+    dst = DeviceMem::create(curCommMemOutPtr + localOffsetByte, inputSlices[rank].size);
     CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dst, src, stream_));
 
     CHK_RET(MainRecordSub());
@@ -111,7 +142,7 @@ HcclResult AllgatherMeshDirect::RunAsync(const u32 rank, const u32 rankSize, con
     CHK_RET(MainRecordSub());
 
     src = dst;
-    dst = DeviceMem::create(curUerMemOutPtr + rank * sliceSize, sdmaSize);
+    dst = DeviceMem::create(curUerMemOutPtr + slices_[rank].offset, slices_[rank].size);
     CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dst, src, stream_));
 
     for (u32 round = 1; round < rankSize; round++) {
@@ -119,11 +150,11 @@ HcclResult AllgatherMeshDirect::RunAsync(const u32 rank, const u32 rankSize, con
         Stream& subStream = meshStreams_[round - 1];
         // 本rank要收数据
         void *remMemPtr = nullptr;
-        // 从对端的input内存拿数据，input==output也没有关系
+        // DMA消减场景，从对端的ccl out内存拿数据到本端的user out
         CHK_RET(links[dstRank]->GetRemoteMem(UserMemType::OUTPUT_MEM, &remMemPtr));
-        u64 remoteOffsetByte = (sliceSize * dstRank) % HCCL_MIN_SLICE_ALIGN_910B;
-        src = DeviceMem::create(static_cast<char *>(remMemPtr) + remoteOffsetByte, sdmaSize);
-        dst = DeviceMem::create(curUerMemOutPtr + dstRank * sliceSize, sdmaSize);
+        u64 remoteOffsetByte = inputSlices[dstRank].offset % HCCL_MIN_SLICE_ALIGN_910B;
+        src = DeviceMem::create(static_cast<char *>(remMemPtr) + remoteOffsetByte, inputSlices[dstRank].size);
+        dst = DeviceMem::create(curUerMemOutPtr + slices_[dstRank].offset, slices_[dstRank].size);
         CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dst, src, subStream,
             links[dstRank]->GetRemoteRank(), links[dstRank]->GetLinkType()));
         CHK_RET(links[dstRank]->TxDataSignal(subStream));
@@ -133,7 +164,7 @@ HcclResult AllgatherMeshDirect::RunAsync(const u32 rank, const u32 rankSize, con
     CHK_RET(MainWaitSub());
     CHK_RET(HcclD2DMemcpyAsync(dispatcher_, emptyMem, emptyMem, stream_));
     
-    HCCL_INFO("AllGatherMesh finished: rank[%u]", rank);
+    HCCL_INFO("AllGatherMeshDirect finished: rank[%u]", rank);
     return HCCL_SUCCESS;
 }
 } // namespace hccl

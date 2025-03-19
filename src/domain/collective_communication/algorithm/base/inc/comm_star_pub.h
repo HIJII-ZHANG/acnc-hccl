@@ -21,11 +21,11 @@ public:
                       const HcclDispatcher dispatcher, const std::unique_ptr<NotifyPool> &notifyPool,
                       std::map<HcclIpAddress, HcclNetDevCtx> &netDevCtxMap,
                       const IntraExchanger &exchanger, const std::vector<RankInfo> paraVector,
-                      const DeviceMem& inputMem, const DeviceMem& outputMem, const bool isUsedRdmaOuter,
+                      const DeviceMem& inputMem, const DeviceMem& outputMem, const bool isUsedRdmaLevel0,
                       const void* transportResourceInfoAddr, size_t transportResourceInfoSize,
                       const std::string &tag = "",
                       const NICDeployment nicDeployInner = NICDeployment::NIC_DEPLOYMENT_DEVICE,
-                      const u32 subUserRankRoot = INVALID_VALUE_RANKID);
+                      const u32 subUserRankRoot = INVALID_VALUE_RANKID, bool isHaveCpuRank = false);
 
     ~CommStar() override;
 
@@ -36,7 +36,7 @@ protected:
     HcclResult MakeServerInfo(const u32 dstRank, RankInfo &dstRankInfo, bool isInterRdma, bool isInterHccs) override;
     HcclResult CreateInterLinks() override;
     HcclResult SetMachinePara(MachineType machineType, const std::string &serverId, u32 dstRank,
-        const std::vector<std::shared_ptr<HcclSocket> > &sockets, MachinePara &machinePara);
+        const std::vector<std::shared_ptr<HcclSocket> > &sockets, MachinePara &machinePara) override;
     void SetTransportParam(TransportPara &para, MachinePara &machinePara) override;
     HcclResult CreateExchangerNetwork() override; // server间HCCS通信模式下，创建节点间的建链关系
     HcclResult GetChipType(int64_t &devType, u32 devLogicId);

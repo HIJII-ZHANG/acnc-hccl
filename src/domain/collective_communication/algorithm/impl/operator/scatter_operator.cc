@@ -10,7 +10,7 @@
 
 #include "scatter_operator.h"
 #include "device_capacity.h"
-#include "rank_consistent.h"
+#include "rank_consistentcy_checker.h"
 #include "executor_impl.h"
 #include "hccl_alg.h"
 #include "coll_alg_utils.h"
@@ -52,8 +52,9 @@ HcclResult ScatterOperator::SelectAlg(const std::string& tag, const OpParam& par
         }
     }
 
-    // 由于scatter只支持server间ring,nb和NHR，如果不是需要重定向到ring
-    if (!UseInterServerRingAlgo(algType_)) {
+    // 由于scatter只支持server间ring,nb和NHR，如果不是需要重定向到ring；910_93仅支持server间ring
+    if ((!UseInterServerRingAlgo(algType_) && (deviceType_ == DevType::DEV_TYPE_910_93)) ||
+        (!UseInterServerNHRAlgo(algType_) && !UseInterServerNBAlgo(algType_) && !UseInterServerRingAlgo(algType_))) {
         HCCL_INFO("[ScatterOperator][Scatter] algType[%s] is not supported, reset algType=ring",
             AlgTypeToStr(algType_).c_str());
         ret = SetInterServerRingAlgo(algType_);

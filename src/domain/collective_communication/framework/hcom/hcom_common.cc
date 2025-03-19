@@ -22,7 +22,7 @@
 #include "hccl/hcom.h"
 #include "hcom_common.h"
 #include "hcom_executor.h"
-#include "rank_consistent.h"
+#include "rank_consistentcy_checker.h"
 #include "gradient_segment_pub.h"
 #include "profiling_manager_pub.h"
 #include "topoinfo_ranktableParser_pub.h"
@@ -900,7 +900,7 @@ HcclResult HcomDestroyOneDevice(HcomInfo &hcomInfo)
     HCCL_RUN_INFO("Entry-HcomDestroy:void");
 
     // 模型运行结束后hcom destroy时，将CheckInfo信息清空
-    RankConsistent::GetInstance().ClearCheckInfo();
+    RankConsistentcyChecker::GetInstance().ClearCheckInfo();
 
     shared_ptr<RemoteAccess> &remoteAccess = HcomGetCtxRemoteAccess();
     vector<MemRegisterAddr> &remoteAddrInfos = HcomGetCtxRemoteAddrInfos();
@@ -1140,9 +1140,11 @@ HcclResult InitHcomMiscInfo(hccl::HcclCommParams &params, const char *rankTable)
 {
     CHK_PTR_NULL(rankTable);
 
+    RankConsistentcyChecker::GetInstance().SetCheckCannVersionSwitch(true); // 打开CANN软件版本校验开关
+
     // 记录版本信息
     std::string curVersion = GetExternalInputCannVersion();
-    CHK_RET(RankConsistent::GetInstance().RecordVerInfo(curVersion));
+    CHK_RET(RankConsistentcyChecker::GetInstance().RecordVerInfo(curVersion));
     HcomInfo &hcomInfo = HcomGetCtxHomInfo();
     // 计算rankTable的crc值并保存
     HcclResult ret = HcomCalcCRC(params, rankTable);
@@ -1350,7 +1352,6 @@ HcclResult HcomInitByFile(const char *rankTablePath, const char *identify)
     CHK_RET(HcomCheckInitClusterInfo(rankTableM.c_str(), identify));
     HCCL_RUN_INFO("Entry-HcomInitByFile:rankTablePath[%s], identify[%s]", realFilePath.c_str(), identify);
 
-    RankConsistent::GetInstance().SetCheckCannVersionSwitch(true); // 打开CANN软件版本校验开关
     CHK_RET(InitExternalInput());
 
     // 调用初始化接口

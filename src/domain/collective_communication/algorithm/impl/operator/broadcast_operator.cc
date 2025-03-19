@@ -10,7 +10,7 @@
 
 #include "broadcast_operator.h"
 #include "device_capacity.h"
-#include "rank_consistent.h"
+#include "rank_consistentcy_checker.h"
 #include "executor_impl.h"
 #include "stream_active_manager.h"
 #include "coll_alg_op_registry.h"
@@ -34,7 +34,9 @@ HcclResult BroadCastOperator::SelectAlg(const std::string& tag, const OpParam& p
                                         std::string& newTag)
 {
     HcclResult ret;
-    if (Is310P3Common(isHaveCpuRank_, deviceType_)) {
+    if (isDiffDeviceType_) {
+        ret = SelectAlgforMix(param, algName);
+    } else if (Is310P3Common(isHaveCpuRank_, deviceType_)) {
         ret = SelectAlgfor310P3(param, algName);
     } else if (Is310PDevice() && topoType_ == TopoType::TOPO_TYPE_2P_MESH) {
         ret = SelectAlgfor310P(param, algName);
@@ -74,6 +76,29 @@ HcclResult BroadCastOperator::SelectAlg(const std::string& tag, const OpParam& p
     newTag += (param.aicpuUnfoldMode ? "_device" : "_host");
     HCCL_INFO("[SelectAlg] broadcast newTag is [%s]", newTag.c_str());
     return ret;
+}
+
+HcclResult BroadCastOperator::SelectAlgforMix(const OpParam& param, std::string& algName)
+{
+    HcclResult ret;
+
+    if (gcdDeviceNumPerAggregation_ > 1) {
+        ret = SetInterServerNHRAlgo(algType_);
+        HCCL_WARNING("[BroadCastOperator][SelectAlgforMix] only support NHR in AlgoLevel1 yet, "\
+            "default is algType=NHR.");
+        algName = "BroadCastMixExecutor";
+    } else {
+        ret = SetInterServerRingAlgo(algType_);
+        HCCL_WARNING("[BroadCastOperator][SelectAlgforMix] only support ring in AlgoComm yet, "\
+            "default is algType=ring.");
+        algName = "BroadCastComm";
+    }
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[BroadCastOperator][SelectAlgforMix]errNo[0x%016llx] tag[%s], BroadCast set inter server "\
+            "failed", HCCL_ERROR_CODE(ret), param.tag.c_str()), ret);
+
+    HCCL_INFO("[SelectAlgforMix] broadcast SelectAlgforMix is algName [%s]", algName.c_str());
+    return HCCL_SUCCESS;
 }
 
 HcclResult BroadCastOperator::SelectAlgfor310P3(const OpParam& param, std::string& algName)

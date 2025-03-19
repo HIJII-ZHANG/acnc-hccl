@@ -46,8 +46,8 @@ public:
 #ifdef CCL_LLT
     TopoInfoExtractor(std::string identifier, u32 userRank, u32 userRankSize, TopoType topoType,
         DevType deviceType, std::vector<RankInfo>& rankVector, u32 meshAggregationRankSize = 0,
-        bool isUsedRdmaOuter = false, bool isUsedInterHccsMode = false, bool multiModuleDiffDeviceNumMode = false,
-        bool multiSuperPodDiffServerNumMode = false);
+        bool isUsedRdmaLevel0 = false, bool isUsedInterHccsMode = false, bool multiModuleDiffDeviceNumMode = false,
+        bool multiSuperPodDiffServerNumMode = false, bool isDiffDeviceType = false, u32 gcdDeviceNumPerAggregation = 0);
 #endif
     ~TopoInfoExtractor();
     HcclResult Init();
@@ -63,12 +63,12 @@ public:
     HcclResult CheckPlaneInfo();
     HcclResult CheckSuperPodInfo();
     HcclResult CheckServerInfo();
-    HcclResult SetSingleOuterFor8P();
-    HcclResult SetSingleOuter();
+    HcclResult SetSingleLevel0For8P();
+    HcclResult SetSingleLevel0();
     HcclResult GetServerIdx(const RankInfo &rankInfo, u32 &serverIdx) const;
     bool IsDiffDeviceModuleInServer() const;
-    HcclResult SetMultiOuter(u32 ringNum);
-    HcclResult SetMultiOuterAnyPath(std::vector<std::vector<u32> > multiOrder);
+    HcclResult SetMultiLevel0(u32 ringNum);
+    HcclResult SetMultiLevel0AnyPath(std::vector<std::vector<u32> > multiOrder);
     HcclResult GetModuleIdx(const RankInfo &rankInfo, u32 &moduleIdx);
     HcclResult SetBridgeLinkInfo(RankInfo &bridgePara, u32 bridgeUserRank);
     HcclResult SetTopoDefaultInfoFor8P();
@@ -104,11 +104,13 @@ private:
     std::map<u32, std::vector<RankInfo> > superPodToRank_;
     // 通信域内，按照 serverIdx 划分的 server 层和 superPod 层合并的 rank 信息
     std::map<u32, std::vector<RankInfo>> serverToRankMerge_;
+    // 通信域内，按照 gcdDeviceNumPerAggregation_ 划分的 server 层拆分后的 rank 信息
+    std::map<u32, std::vector<RankInfo>> gcdToRankSplit_;
     // 记录server内, 本rank和其他rank的连接关系
     std::map<s32, LinkTypeInServer> deviceLinkTypeMap_;
 
-    // 8pring 多环的commouter 顺序
-    std::vector<std::vector<u32> > multiOuterOrder_;
+    // 8pring 多环的commlevel0 顺序
+    std::vector<std::vector<u32> > multiLevel0Order_;
     // 整个通信域内rank的信息(直接调用exchanger生成，下标为userrank)
     std::vector<RankInfo> rankVector_;
     u32 meshAggregationRankSize_;
@@ -118,7 +120,7 @@ private:
     std::vector<std::vector<std::map<u32, u32>>> subCommRank2UserRank_;
     std::vector<std::vector<std::map<u32, u32>>> userRank2subCommRank_;
 
-    const bool isUsedRdmaOuter_;
+    const bool isUsedRdmaLevel0_;
     bool isUsedInterHccsMode_;
     bool isDiffAggregation_;
 
@@ -129,6 +131,10 @@ private:
     // 当前层次是否为非对称
     bool multiModuleDiffDeviceNumMode_; // 每个module内的设备数是否相等
     bool multiSuperPodDiffServerNumMode_; // 每个超节点内的server数是否相等
+
+    bool isDiffDeviceType_;
+    u32 gcdDeviceNumPerAggregation_;
+
     std::vector<bool> isAsymPlanVector_;
 
     // 保存所有 level 的通信分组关系， CommPlaneSubGroupVector_[CommPlane] : 第 CommPlane 级通信域内分组信息

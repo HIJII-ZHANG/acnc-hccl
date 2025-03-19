@@ -237,7 +237,7 @@ HcclResult TopoInfoDetect::WaitTopoExchangeServerCompelte(u32 idx) const
             if (elapsed > timeout) {
                 HCCL_ERROR("[Wait][TopoExchangeServerCompelte]wait topoExchangeServer[%u] complete timeout[%lld]",
                     idx, elapsed);
-                return HCCL_E_INTERNAL;
+                return HCCL_E_TIMEOUT;
             }
             SaluSleep(ONE_MILLISECOND_OF_USLEEP);
             continue;
@@ -279,8 +279,8 @@ HcclResult TopoInfoDetect::SetupAgent(u32 rankSize, u32 myrank, const HcclRootHa
 
     /* 首节点日志，建链失败属常见问题，在建链前记录相关信息 */
     HCCL_RUN_INFO("[HCCL_TRACE]SetupAgent rankNum[%u], rank[%u], rootInfo identifier[%s], server[%s], "
-        "logicDevId[%d], phydevId[%d], deviceIp[%s]", rankSize, myrank, rootInfo.identifier,
-        localRankInfo_.hostIP.GetReadableAddress(), localRankInfo_.deviceLogicID,
+        "deviceType[%d], logicDevId[%d], phydevId[%d], deviceIp[%s]", rankSize, myrank, rootInfo.identifier,
+        localRankInfo_.hostIP.GetReadableAddress(), localRankInfo_.deviceType, localRankInfo_.deviceLogicID,
         localRankInfo_.devicePhysicID, localRankInfo_.deviceIP[0].GetReadableIP()) ;
 
     pTopoExchangeAgent_.reset(new (nothrow) TopoInfoExchangeAgent(rootIP, rootInfo.port,
@@ -379,11 +379,11 @@ HcclResult TopoInfoDetect::ReadHostSocketWhitelist(vector<HcclIpAddress> &whitel
     RPT_ENV_ERR((GetExternalInputHcclWhiteListFile().length() == 0), "EI0001",
         vector<string>({ "env", "tips" }),
         vector<string>({ "HCCL_WHITELIST_FILE", "HCCL_WHITELIST_DISABLE is [0]"
-        "but HCCL_WHITELIST_FILE is not set" }));
+        "but HCCL_WHITELIST_FILE is not set or not exist" }));
 
     CHK_PRT_RET((GetExternalInputHcclWhiteListFile().length() == 0),
         HCCL_ERROR("[Read][HostSocketWhitelist]environmental variable HCCL_WHITELIST_DISABLE is [0], "\
-        "but HCCL_WHITELIST_FILE is not set"), HCCL_E_PARA);
+        "but HCCL_WHITELIST_FILE is not set or not exist"), HCCL_E_PARA);
 
     // 文件路径在处理外部输入时已经做过合法性判断, 无需再次校验
     HcclResult ret =

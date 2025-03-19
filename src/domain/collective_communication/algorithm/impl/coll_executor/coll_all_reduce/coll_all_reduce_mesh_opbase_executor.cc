@@ -90,10 +90,10 @@ bool CollAllReduceMeshOpbaseExecutor::IsSmallData(const u64 totalSize, const u64
 HcclResult CollAllReduceMeshOpbaseExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
     std::vector<Slice> dataSegsSlice;   // 数据分成ranksize份，每份的起始偏移和大小
-    std::unique_ptr<AlgTemplateBase> outer2TempAlg;
+    std::unique_ptr<AlgTemplateBase> level0TempAlg;
 
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
 
     CHK_RET(ActiveSlaveStreams(param.stream));
     u64 reduceAttr = GetReduceAttr(execMem.inputMem, execMem.outputMem, param.DataDes.dataType, param.reduceType);
@@ -102,20 +102,20 @@ HcclResult CollAllReduceMeshOpbaseExecutor::KernelRun(const OpParam &param, Exec
         "", execMem.inputPtr, execMem.outputPtr, execMem.count, param.DataDes.dataType, param.root, param.reduceType
     };
 
-    outer2TempAlg.reset(new (std::nothrow) AllReduceMeshDirect(dispatcher_, reduceAttr,
-        algResResp_->slaveStreams, algResResp_->notifiesM2S, algResResp_->notifiesS2M,
-        outerCommInfo.localRank, outerCommInfo.localRankSize, topoAttr_.userRank, &opInfo));
+    level0TempAlg.reset(new (std::nothrow) AllReduceMeshDirect(dispatcher_, reduceAttr,
+        algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
+        level0CommInfo.localRank, level0CommInfo.localRankSize, topoAttr_.userRank, &opInfo));
 
-    CHK_SMART_PTR_NULL(outer2TempAlg);
-    CHK_RET(outer2TempAlg->Prepare(execMem.outputMem, execMem.outputMem, execMem.inputMem, execMem.count,
-        param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID, dataSegsSlice, 0));
-    CHK_RET(outer2TempAlg->RegisterProfiler(
-        (outerCommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + outerCommInfo.localRank,
+    CHK_SMART_PTR_NULL(level0TempAlg);
+    CHK_RET(level0TempAlg->Prepare(execMem.outputMem, execMem.outputMem, execMem.inputMem, execMem.count,
+        param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID, dataSegsSlice, 0));
+    CHK_RET(level0TempAlg->RegisterProfiler(
+        (level0CommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level0CommInfo.localRank,
         PROF_STAGE_2,
         HCCL_EXEC_STEP_NOT_SET,
         param.stream));
 
-    CHK_RET(RunTemplate(outer2TempAlg, outerCommInfo));
+    CHK_RET(RunTemplate(level0TempAlg, level0CommInfo));
     HCCL_INFO("allreduce mesh opbase run success.");
     return HCCL_SUCCESS;
 }

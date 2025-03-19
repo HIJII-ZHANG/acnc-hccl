@@ -56,10 +56,10 @@ HcclResult CollAllReduceReducePlusBcastExecutor::CalcLevel0CommInfo(TransportMem
     TransportMemType outputType,
     std::vector<LevelNSubCommTransport>& opTransport)
 {
-    HCCL_INFO("[CollAllReduceReducePlusBcastExecutor][CalcOuterCommInfo]tag[%s] start", tag_.c_str());
+    HCCL_INFO("[CollAllReduceReducePlusBcastExecutor][CalcLevel0CommInfo]tag[%s] start", tag_.c_str());
     CommParaInfo commParaLevel0(COMM_LEVEL0, CommType::COMM_TAG_MESH);
     CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel0, opTransport[COMM_LEVEL0], inputType, outputType));
-    HCCL_INFO("[CollAllReduceReducePlusBcastExecutor][CalcOuterCommInfo]tag[%s] Calc RingComm finish",
+    HCCL_INFO("[CollAllReduceReducePlusBcastExecutor][CalcLevel0CommInfo]tag[%s] Calc RingComm finish",
         tag_.c_str());
     return HCCL_SUCCESS;
 }
@@ -91,8 +91,8 @@ HcclResult CollAllReduceReducePlusBcastExecutor::KernelRun(const OpParam &param,
         std::vector<Slice>(0), 0, nicRankList));
 
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
-    CHK_RET(RunTemplate(reduceTempAlg, outerCommInfo));
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    CHK_RET(RunTemplate(reduceTempAlg, level0CommInfo));
 
     // AllReduce算子实现为input->output, 所以此处将reduce算子的结果从output拷贝到input
     HcclResult ret = HcclD2DMemcpyAsync(dispatcher_,
@@ -110,8 +110,8 @@ HcclResult CollAllReduceReducePlusBcastExecutor::KernelRun(const OpParam &param,
             HCCL_INFO("allreduce ring: using ring algo inter-server.");
         } else if (UseInterServerNHRAlgo(algType_)) {
             u64 curSize = execMem.count * SIZE_TABLE[param.DataDes.dataType]; // 单位 byte
-            HCCL_DEBUG("allreduce recursive hd: curSize[%llu] deviceNumPerAggregation[%u] commOuterSize[%u]",
-                curSize, topoAttr_.deviceNumPerAggregation, outerCommInfo.localRankSize);
+            HCCL_DEBUG("allreduce recursive hd: curSize[%llu] deviceNumPerAggregation[%u] commLevel0Size[%u]",
+                curSize, topoAttr_.deviceNumPerAggregation, level0CommInfo.localRankSize);
             if (curSize / topoAttr_.deviceNumPerAggregation <= NHR_ALLREDUCE_SMALL_SIZE) {
                 allreduceTempAlg.reset(new (std::nothrow) AllReduceNHROneshot(dispatcher_, reduceAttr));
             } else {
@@ -147,8 +147,8 @@ HcclResult CollAllReduceReducePlusBcastExecutor::KernelRun(const OpParam &param,
             std::vector<Slice>(0), 0, nicRankList));
 
         CHK_RET(CheckCommSize(commPlaneLevel1, COMM_INDEX_0 + 1));
-        SubCommInfo innerCommInfo = GetSubCommInfo(commPlaneLevel1, COMM_INDEX_0);
-        CHK_RET(RunTemplate(allreduceTempAlg, innerCommInfo));
+        SubCommInfo level1CommInfo = GetSubCommInfo(commPlaneLevel1, COMM_INDEX_0);
+        CHK_RET(RunTemplate(allreduceTempAlg, level1CommInfo));
     }
 
     // 执行server内broadcast
@@ -157,7 +157,7 @@ HcclResult CollAllReduceReducePlusBcastExecutor::KernelRun(const OpParam &param,
     CHK_SMART_PTR_NULL(bcastTempAlg);
     CHK_RET(bcastTempAlg->Prepare(execMem.outputMem, execMem.outputMem, execMem.inputMem, execMem.count,
         param.DataDes.dataType, param.stream, param.reduceType, 0));
-    CHK_RET(RunTemplate(bcastTempAlg, outerCommInfo));
+    CHK_RET(RunTemplate(bcastTempAlg, level0CommInfo));
 
     return HCCL_SUCCESS;
 }

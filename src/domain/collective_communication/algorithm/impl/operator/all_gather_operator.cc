@@ -10,7 +10,7 @@
 
 #include "all_gather_operator.h"
 #include "device_capacity.h"
-#include "rank_consistent.h"
+#include "rank_consistentcy_checker.h"
 #include "executor_impl.h"
 #include "coll_alg_op_registry.h"
 #include "hccl_aiv.h"
@@ -34,14 +34,20 @@ HcclResult AllGatherOperator::SelectAlg(const std::string& tag, const OpParam& p
         return HCCL_SUCCESS;
     }
     HcclResult ret;
-    if (deviceType_ == DevType::DEV_TYPE_310P3) {
+
+    if (isDiffDeviceType_) {
+        ret = SelectAlgforMix(param, algName);
+    } else if (deviceType_ == DevType::DEV_TYPE_310P3) {
         ret = SelectAlgfor310P3(param, algName);
     } else if (deviceType_ == DevType::DEV_TYPE_910) {
         ret = SelectAlgfor910A(param, algName);
     } else if (deviceType_ == DevType::DEV_TYPE_910B) {
         ret = SelectAlgfor910B(param, algName);
-    } else {
+    } else if (deviceType_ == DevType::DEV_TYPE_910_93) {
         ret = SelectAlgfor91093(param, algName);
+    }  else {
+        HCCL_ERROR("[SelectAlg] device type[%d] is out of range for selector.", deviceType_);
+        return HCCL_E_NOT_SUPPORT;
     }
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[AllGatherSelector][SelectAlg]tag[%s], all_gather failed, return[%d]", tag.c_str(), ret), ret);
@@ -59,6 +65,29 @@ HcclResult AllGatherOperator::SelectAlg(const std::string& tag, const OpParam& p
     newTag += (param.aicpuUnfoldMode ? "_device" : "_host");
     HCCL_INFO("[SelectAlg] all_gather newTag is [%s]", newTag.c_str());
     return ret;
+}
+
+HcclResult AllGatherOperator::SelectAlgforMix(const OpParam& param, std::string& algName)
+{
+    HcclResult ret;
+
+    if (gcdDeviceNumPerAggregation_ > 1) {
+        ret = SetInterServerNHRAlgo(algType_);
+        HCCL_WARNING("[AllGatherOperator][SelectAlgforMix]only support NHR in AlgoLevel1 yet, "\
+            "default is algType=NHR.");
+        algName = "AllGatherMixExecutor";
+    } else {
+        ret = SetInterServerRingAlgo(algType_);
+        HCCL_WARNING("[AllGatherOperator][SelectAlgforMix]only support ring in AlgoComm yet, "\
+            "default is algType=ring.");
+        algName = "AllGatherComm";
+    }
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[AllGatherOperator][SelectAlgforMix]errNo[0x%016llx] tag[%s], AllGather set inter server "\
+            "failed", HCCL_ERROR_CODE(ret), param.tag.c_str()), ret);
+
+    HCCL_INFO("[SelectAlgforMix] all_gather SelectAlgforMix is algName [%s]", algName.c_str());
+    return HCCL_SUCCESS;
 }
 
 HcclResult AllGatherOperator::SelectAlgfor310P3(const OpParam& param, std::string& algName)
@@ -93,9 +122,9 @@ HcclResult AllGatherOperator::SelectAlgfor910B(const OpParam& param, std::string
     bool isRingTopo = topoType_ == TopoType::TOPO_TYPE_NP_SINGLE_RING;
 
     bool isAivMode = GetExternalInputHcclAivMode() && isSingleMeshAggregation_ &&
-        IsSupportAIVCopy(param.DataDes.dataType);
+        IsSupportAIVCopy(param.DataDes.dataType) && dataSize <= AIV_BIG_SIZE;
     if (isAivMode) {
-        if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && dataSize <= AIV_ALL_GATHER_BIG_SIZE) {
+        if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && dataSize <= AIV_ALL_GATHER_SMALL_SIZE) {
             algName = "AllGatherMeshAivSmallCountExecutor"; 
             HCCL_INFO("[SelectAlgfor910BAIV] AllGather SelectAlgfor910B is algName [%s]", algName.c_str());
         } else {
@@ -154,7 +183,7 @@ bool AllGatherOperator::SmallCountOptimMultiServer(const OpParam& param)
     bool dmaReduceLimit= (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) &&
         (((deviceNumPerAggregation_ % HCCL_DEVICE_NUM_FOUR == 0) && (commInputSize * HCCL_DEVICE_NUM_FOUR < totalSize)) ||
         ((deviceNumPerAggregation_ % HCCL_DEVICE_NUM_TWO == 0) && (commInputSize * HCCL_DEVICE_NUM_TWO < totalSize)) ||
-        ((deviceNumPerAggregation_ % HCCL_DEVICE_NUM_TWO != 0) && (commInputSize < totalSize)) || param.retryEnable);
+        ((deviceNumPerAggregation_ % HCCL_DEVICE_NUM_TWO != 0) && (commInputSize < totalSize)) || retryEnable_);
     bool smallCountOptimMultiServer =
         (deviceNumPerAggregation_ > HCCL_DEVICE_NUM_TWO) && (serverNum_ != 1) && (superPodNum_ == 1) &&
         (((deviceNumPerAggregation_ % HCCL_DEVICE_NUM_FOUR == 0) && (param.DataDes.count * unitSize <= HCCL_SMALL_COUNT_4_MB)) ||
@@ -166,6 +195,18 @@ bool AllGatherOperator::SmallCountOptimMultiServer(const OpParam& param)
 HcclResult AllGatherOperator::SelectAlgfor91093(const OpParam& param, std::string& algName)
 {
     u32 unitSize = SIZE_TABLE[param.DataDes.dataType];
+    u64 dataSize = param.DataDes.count * unitSize; // 单位：字节
+    bool isAivMode = GetExternalInputHcclAivMode() && IsSupportAIVCopy(param.DataDes.dataType) && serverNum_ == 1 &&
+        dataSize <= AIV_ALL_GATHER_A3_ENTRY_SIZE; // 满足该数据量走AIV
+    if (isAivMode) {
+        if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && dataSize <= AIV_ALL_GATHER_SMALL_SIZE) {
+            algName = "AllGatherMeshAivSmallCountExecutor"; // 目前a3 aivmode下单算子模式正好全走小数据
+        } else {
+            algName = "AllGatherMeshAivExecutor"; 
+        }
+        HCCL_INFO("[SelectAlgfor91093] all_gather SelectAlgfor91093 is algName [%s]", algName.c_str());
+        return HCCL_SUCCESS;
+    }
     bool smallCountOptimSingleServer = (serverNum_ == 1) &&
         ((workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) ||
         (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && !param.aicpuUnfoldMode)) &&
@@ -211,7 +252,9 @@ HcclResult AllGatherOperator::SelectAlgfor91093(const OpParam& param, std::strin
                 HCCL_ERROR("[AllGatherOperator][SelectAlgfor91093]errNo[0x%016llx] tag[%s], AllGather set inter server "\
                     "nhr algo failed", HCCL_ERROR_CODE(ret), param.tag.c_str()), ret);
         }
-        if (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) {
+        if (IsSupportUnifiedMarch(param, topoType_, serverNum_, superPodNum_)) {
+            algName = "AllGatherSemiRingExecutor";
+        } else if (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) {
             algName = "AlignedAllGatherDoubleRingFor91093Executor";
         } else if (topoType_ == TopoType::TOPO_TYPE_NP_SINGLE_RING){
             algName = "AllGatherRingFor91093Executor";

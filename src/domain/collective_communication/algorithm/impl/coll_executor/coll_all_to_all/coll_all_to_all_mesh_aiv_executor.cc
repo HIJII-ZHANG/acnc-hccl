@@ -102,29 +102,35 @@ HcclResult CollAlltoAllMeshAivExecutor::KernelRun(const OpParam &param, ExecMem 
     HCCL_INFO("[CollAlltoAllMeshAivExecutor][KernelRun]alltoall aiv enter.");
 
     CHK_RET(CheckCommSize(COMM_MESH_L0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_MESH_L0, COMM_INDEX_0);
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_MESH_L0, COMM_INDEX_0);
 
     void *buffersIn[MAX_RANK_SIZE];
     void *buffersOut[MAX_RANK_SIZE];
 
-    u32 localRank = outerCommInfo.localRank;
-    u32 localRankSize = outerCommInfo.localRankSize;
+    u32 localRank = level0CommInfo.localRank;
+    u32 localRankSize = level0CommInfo.localRankSize;
     HCCL_DEBUG("[CollAlltoAllMeshAivExecutor][KernelRun] userRank [%u] localRank [%u]", topoAttr_.userRank, localRank);
 
     for (u32 i = 0; i < localRankSize; i++) {
         if (i != localRank) {
-            CHK_RET(outerCommInfo.links[i]->GetRemoteMem(UserMemType::INPUT_MEM, &(buffersIn[i])));
-            CHK_RET(outerCommInfo.links[i]->GetRemoteMem(UserMemType::OUTPUT_MEM, &(buffersOut[i])));
+            CHK_RET(level0CommInfo.links[i]->GetRemoteMem(UserMemType::INPUT_MEM, &(buffersIn[i])));
+            CHK_RET(level0CommInfo.links[i]->GetRemoteMem(UserMemType::OUTPUT_MEM, &(buffersOut[i])));
         } else {
             buffersIn[i] = execMem.inputMem.ptr();
             buffersOut[i] = execMem.outputMem.ptr();
         }
     }
 
-    AlltoAllExtraArgs extraArgs;
+    ExtraArgs extraArgs;
     bool isOpbase = (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
     HcclResult ret;
-    if (param.opType == HcclCMDType::HCCL_CMD_ALLTOALLVC || param.opType == HcclCMDType::HCCL_CMD_ALLTOALL) {
+    u64 dataSize = (param.opType == HcclCMDType::HCCL_CMD_ALLTOALL ?
+        param.All2AllDataDes.sendCount * SIZE_TABLE[param.All2AllDataDes.sendType] : 0);
+    if (isOpbase && param.opType == HcclCMDType::HCCL_CMD_ALLTOALL && dataSize < AIV_ALL_TO_ALL_BIG_SIZE) {
+        ret = ExecuteKernelLaunch(HcclCMDType::HCCL_CMD_ALLTOALL, execMem.inputPtr, execMem.outputPtr,
+            param.All2AllDataDes.sendCount, param.All2AllDataDes.sendType, HCCL_REDUCE_RESERVED, localRank,
+            localRankSize, 0, buffersIn, buffersOut, param.tag, param.stream.ptr(), isOpbase, execMem.inputMem.size());
+    } else if (param.opType == HcclCMDType::HCCL_CMD_ALLTOALLVC || param.opType == HcclCMDType::HCCL_CMD_ALLTOALL) {
         for (u32 i = 0; i < localRankSize; i++) {
             u64 rankCount = 0;
             for (u32 j = 0; j < localRankSize; j++) {

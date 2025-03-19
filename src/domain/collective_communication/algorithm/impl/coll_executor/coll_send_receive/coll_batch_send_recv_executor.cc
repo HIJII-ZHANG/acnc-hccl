@@ -227,18 +227,18 @@ HcclResult CollBatchSendRecvExecutor::RunLoopInAicpuUnfoldMode(OpParam& param) {
 
 HcclResult CollBatchSendRecvExecutor::MainPostSubWait(Stream& mainStream, Stream& subStream)
 {
-    CHK_RET(LocalNotify::Post(mainStream, dispatcher_, algResResp_->notifiesS2M[STREAM_INDEX_0], PROF_STAGE_0));
+    CHK_RET(LocalNotify::Post(mainStream, dispatcher_, algResResp_->notifiesAux[STREAM_INDEX_0], PROF_STAGE_0));
     CHK_RET(LocalNotify::Wait(subStream, dispatcher_,
-        algResResp_->notifiesS2M[STREAM_INDEX_0], PROF_STAGE_0));
+        algResResp_->notifiesAux[STREAM_INDEX_0], PROF_STAGE_0));
     return HCCL_SUCCESS;
 }
 
 HcclResult CollBatchSendRecvExecutor::SubPostMainWait(Stream& mainStream, Stream& subStream)
 {
     CHK_RET(LocalNotify::Post(subStream, dispatcher_,
-        algResResp_->notifiesM2S[STREAM_INDEX_0], PROF_STAGE_0));
+        algResResp_->notifiesMain[STREAM_INDEX_0], PROF_STAGE_0));
 
-    CHK_RET(LocalNotify::Wait(mainStream, dispatcher_, algResResp_->notifiesM2S[STREAM_INDEX_0],
+    CHK_RET(LocalNotify::Wait(mainStream, dispatcher_, algResResp_->notifiesMain[STREAM_INDEX_0],
         PROF_STAGE_0));
     return HCCL_SUCCESS;
 }

@@ -19,14 +19,14 @@ ParallelTaskLoader::ParallelTaskLoader(const s32 deviceLogicId, const HcclDispat
 ParallelTaskLoader::~ParallelTaskLoader()
 {}
 
-HcclResult ParallelTaskLoader::Prepare(std::vector<Stream *> streamsPtr, SubCommInfo outerCommInfo)
+HcclResult ParallelTaskLoader::Prepare(std::vector<Stream *> streamsPtr, SubCommInfo level0CommInfo)
 {
     // 参数保存
     streamsPtr_.resize(streamsPtr.size());
     for (u32 streamIndex = 0; streamIndex < streamsPtr.size(); streamIndex++) {
         streamsPtr_[streamIndex] = streamsPtr[streamIndex];
     }
-    commInfo_ = outerCommInfo;
+    commInfo_ = level0CommInfo;
     HCCL_INFO("[ParallelTaskLoader]Prepare streams size[%u], taskLoaderNum_[%u]", streamsPtr_.size(), taskLoaderNum_);
 
     // 当前现有的taskLoader线程可以满足业务多流的使用

@@ -20,7 +20,7 @@ public:
 
     HcclResult CheckNeedRecreateComm(u64 lastScratchMemSize, bool& needRecreateAlltoallComm) override;
     HcclResult CheckNeedCreateVirtualLinks(AlgResourceRequest &resourceRequest) override;
-    HcclResult ParallelTaskLoaderProcess(const std::string &tag, Stream &stream, SubCommInfo &outerCommInfo,
+    HcclResult ParallelTaskLoaderProcess(const std::string &tag, Stream &stream, SubCommInfo &level0CommInfo,
         std::vector<Stream> &ringStreams);
 
 private:
@@ -44,7 +44,7 @@ private:
     HcclResult PrepareAlltoAllVStaged1(DeviceMem &sendBuf, DeviceMem &recvBuf, DeviceMem &scratchMem,
         std::map<u32, std::list<OneSendRecvAddrInfo>> &sendAddrInfosIntra,
         std::map<u32, std::list<OneSendRecvAddrInfo>> &recvAddrInfosIntra,
-        Stream &stream, const std::string &tag, std::unique_ptr<AlltoAllVStagedBase> &alltoallOuter,
+        Stream &stream, const std::string &tag, std::unique_ptr<AlltoAllVStagedBase> &alltoallLevel0,
         ExecMem &execMem);
     void CalcInterMeshAggregationRecvRemoteOffset(const AlltoAllUserRankInfo &userRankInfo,
         const std::vector<SendRecvInfo> &allSendRecvInfo, u32 index, u64 &remoteOffset, u32 meshAggregationRankSize);
@@ -56,7 +56,7 @@ private:
     HcclResult PrepareAlltoAllVStaged2(DeviceMem &recvBuf, DeviceMem &scratchMem,
         std::map<u32, std::list<OneSendRecvAddrInfo>> &sendAddrInfosInter,
         std::map<u32, std::list<OneSendRecvAddrInfo>> &recvAddrInfosInter,
-        Stream &stream, const std::string &tag, std::unique_ptr<AlltoAllVStagedBase> &alltoallInner,
+        Stream &stream, const std::string &tag, std::unique_ptr<AlltoAllVStagedBase> &alltoallLevel1,
         ExecMem &execMem);
 };
 

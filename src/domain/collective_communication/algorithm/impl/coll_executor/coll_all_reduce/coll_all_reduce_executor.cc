@@ -54,7 +54,7 @@ HcclResult CollAllReduceExecutor::Orchestrate(OpParam& param, AlgResourceRespons
     } else if ((param.inputPtr == algRes.cclInputMem.ptr()) && (param.outputPtr == algRes.cclOutputMem.ptr())) {
         ret = AvoidSubgraphLoop(param, algRes);
     } else {
-        if (param.isInplacePreSync == true) {
+        if (algOpContext_.opRetryHandler.isInplacePreSync == true) {
             /*当重执行场景，UserInMem > CCLBuffer时，需要在allreduce算子前增加一个PreSync函数，提升重执行成功概率*/
             ExecMem execMem;
             execMem.count = param.DataDes.count;

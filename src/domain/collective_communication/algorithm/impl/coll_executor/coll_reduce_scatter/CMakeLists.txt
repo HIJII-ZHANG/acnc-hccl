@@ -11,8 +11,10 @@ set(src_list
     ${CMAKE_CURRENT_SOURCE_DIR}/coll_reduce_scatter_ring_executor.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/coll_reduce_scatter_single_rank_executor.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/coll_reduce_scatter_double_ring_concurrent_executor.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/coll_reduce_scatter_mix_executor.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/coll_reduce_scatter_mesh_aiv_executor.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/coll_reduce_scatter_mesh_aiv_smallcount_executor.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/coll_reduce_scatter_semi_ring_executor.cc
 )
 
 target_sources(hccl_alg PRIVATE

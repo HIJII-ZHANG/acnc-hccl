@@ -36,6 +36,7 @@
 #include "comm.h"
 #include "device_capacity.h"
 #include "transport_manager.h"
+#include "zero_copy/zero_copy_memory_agent.h"
 #include "coll_alg_operator.h"
 #include "alltoall_operator.h"
 #include "opretry_manage_pub.h"
@@ -110,6 +111,9 @@ public:
     virtual HcclResult AllGatherOutPlace(const std::string &tag, void *inputPtr, void *outputPtr, u64 inputCount,
         HcclDataType dataType, HcclRtStream stream);
 
+    virtual HcclResult AllGatherVOutPlace(const std::string &tag, void *inputPtr, void *outputPtr, 
+        u64 inputCount, const void *outputCounts, const void *outputDispls, HcclDataType dataType, HcclRtStream stream);
+
     virtual HcclResult AllReduce(const std::string &tag, void *inputPtr, void *outputPtr, u64 count,
         HcclDataType dataType, HcclReduceOp op, HcclRtStream stream,
         SyncMode syncMode = SyncMode::DEFAULT_TIMEWAITSYNCMODE, const HcomCollOpInfo *opInfo = nullptr);
@@ -157,6 +161,10 @@ public:
         HcclDataType dataType, HcclReduceOp op, HcclRtStream stream, HcomCollOpInfo *opInfo = nullptr);
 
     virtual HcclResult ReduceScatterOutPlace(const std::string &tag, void *inputPtr, void *outputPtr, u64 count,
+        HcclDataType dataType, HcclReduceOp op, HcclRtStream stream);
+
+    virtual HcclResult ReduceScatterVOutPlace(const std::string &tag, void *inputPtr, void *outputPtr,
+        const void *inputCounts, const void *inputDispls, u64 outputCount, 
         HcclDataType dataType, HcclReduceOp op, HcclRtStream stream);
 
     virtual HcclResult BatchSendRecv(const std::string &tag, HcclSendRecvItem* sendRecvItemsPtr,
@@ -223,7 +231,8 @@ public:
     static bool CompareWithNicName(const NetworkInfo_t &left, const NetworkInfo_t &right);
 
     HcclResult GetOneSidedService(IHcclOneSidedService** service);
-    HcclResult InitOneSidedServiceNetDevCtx();
+    HcclResult InitOneSidedServiceNetDevCtx(u32 remoteRankId);
+    HcclResult DeInitOneSidedServiceNetDevCtx();
 
     u32 GetUserRank();
     u32 GetGroupRank();
@@ -251,6 +260,7 @@ public:
     HcclResult GetOutCCLbuffer(void* &buffer, u64 &size);
     void ReleaseCommCCLbuffer();
     HcclResult CreateCommCCLbuffer();
+    HcclResult CreateCommExpBuffer();
     HcclResult InitCCLbuffer(u64 inCCLbufferSize, u64 outCCLbufferSize);
     HcclResult SetQosCfg(const u32 qosCfg);
     HcclResult ResetQosCfg();
@@ -280,7 +290,7 @@ public:
     virtual bool GetCommResource(const std::string &tag, void **commContext);
     virtual bool GetCommResource(void *&commContext);
 
-    virtual HcclResult GetAicpuOpStreamNotify(HcclRtStream *opStream, void** aicpuNotify);
+    virtual HcclResult GetAicpuOpStreamNotify(HcclRtStream *opStream, u8 aicpuNotifyNUm, void** aicpuNotify);
 
     HcclResult GetAlgInfo(const std::string &algConfig, const std::string &tag, HcclCMDType commType,
         std::string &algName, std::string &newTag);
@@ -313,10 +323,14 @@ public:
     HcclCommState GetState();
     HcclResult ResetNotify();
     HcclResult ResetNotifyForDestRank(s64 destRank);
-
+    HcclResult InitZeroCopyMemoryAgent();
+    HcclResult DeinitZeroCopyMemoryAgent(bool inDestructor = false);
+    HcclResult SetMemoryRange(void *baseVirPtr, size_t size, size_t alignment, uint64_t flags);
+    HcclResult UnsetMemoryRange(void *baseVirPtr);
+    HcclResult ActivateCommMemory(void *virPtr, size_t size, size_t offset, void* handle, uint64_t flags);
+    HcclResult DeactivateCommMemory(void *virPtr);
     HcclResult SetTransportStatus(const HcclOpIdentifier &opId, bool statusStop,
         const std::map<u32, bool> &remoteRankPortMap, const std::map<u32, bool> &isChangeLinkMap, bool isChangeLinkFlag);
-
 private:
 
     bool IsEnableRoce();
@@ -364,9 +378,9 @@ private:
     HcclResult InitPara();
     HcclResult GetComm(const std::string &tag, CommBase **comm);
     HcclResult Mc2CreateAndLaunchContext(rtStream_t aiCpuStream, bool isOpbaseMode, void **commContext);
-    HcclResult SetCommResource(u64 commBufferSize, void *commInPtr, void *commOutPtr,
-        CommBase *comm, innerStreamInfo_t &streamInfo, Stream &stream);
-    HcclResult GetAicpuOpStreamAndNotify(HcclRtStream *opStream, void** aicpuNotify);
+    HcclResult SetCommResource(u64 commBufferSize, void *commInPtr, void *commOutPtr, void *commExpPtr,
+        CommBase *comm, level1StreamInfo_t &streamInfo, Stream &stream);
+    HcclResult GetAicpuOpStreamAndNotify(HcclRtStream *opStream, u8 aicpuNotifyNum, void** aicpuNotify);
     HcclResult SetAicpuNotifyInvaild();
     HcclResult AicpuKfcTilingDataLaunch(const OpParam &opParam, const HcclCMDType &opType, const DeviceMem &deviceContext,
     const std::string &kernelName, const AicpuOpTiling opTilingInfo);
@@ -382,7 +396,7 @@ private:
         const std::string &kernelName, const AicpuOpTiling opTilingInfo, u64 opTilingDataSize);
     HcclResult AllReduceAicpuUnfold(const std::string &tag, void *inputPtr, void *outputPtr, u64 count,
         HcclDataType dataType, HcclReduceOp op, HcclRtStream stream);
-    HcclResult CreateMutiStreamResFor310P(const std::string &tag, innerStreamInfo_t &streamInfo);
+    HcclResult CreateMutiStreamResFor310P(const std::string &tag, level1StreamInfo_t &streamInfo);
     HcclResult SetDynamicTilingDataAlltoall(const OpParam &opParam, HostMem &dynamicDataMem);
     HcclResult ProfilerDel(const OpParam &param);
     HcclResult ProfilerAdd(const OpParam &param, AlgType algType);
@@ -430,8 +444,8 @@ private:
     u32 localRank_;
     SocketHandle hostSocketHandle_;
     SocketHandle loopbackHeterogSocketHandle_;
-    bool isUsedRdmaOuter_; // 节点内是否使用rdma, 包括a+x和标卡
-    bool nicInitialized_;
+    bool isUsedRdmaLevel0_; // 节点内是否使用rdma, 包括a+x和标卡
+    std::atomic<s32> nicInitialized_;
     bool hcomGroupNicInit_;
     // profiling 相关资源
     HcomProfilingMode profilingMode_;
@@ -473,6 +487,7 @@ private:
     std::shared_ptr<ProfilerManager> profilerManager_;
     bool isStandardCard_ = false;
     bool is310PDuoCard_ = false;
+    bool isCommon310P3DUO_ = false;
     s32 hccsPortNum_ = -1;
     std::string superPodId_;
     u32 superDeviceId_ = INVALID_UINT;
@@ -513,6 +528,8 @@ private:
     HcclResult CalcTinySendRecvMem(const OpParam &opParam, AlgResourceResponse &algResResponse,
         DeviceMem &tinySendRecvMem);
     bool IsForceAicpuOpBaseMode(const OpParam &opParam, const HcclCMDType &opType);
+    HcclResult AllocOpBaseModeScratchMem(HcclCMDType opType, const OpParam &opParam,
+        AlgResourceRequest &resRequest, AlgResourceResponse &algResResponse);
     HcclResult AllocAlgResource(const std::string &tag, HcclCMDType opType, const OpParam &opParam,
         AlgResourceRequest &resRequest, AlgResourceResponse &algResResponse);
     HcclResult IncreAllocLink(const std::string &newTag, const OpParam &opParam,
@@ -540,6 +557,9 @@ private:
     HcclResult InitHDCommunicate();
     HcclResult InitOpRetry();
     HcclResult InitOpResPara();
+    HcclResult PrepareZeroCopy(HcclCMDType opType, OpParam &opParam);
+    HcclResult UpdateZeroCopy(const OpParam &opParam, const AlgResourceResponse &algResource);
+    HcclResult BuildZeroCopyParam();
     HcclResult AllocAndClearHostMem(u64 size, std::shared_ptr<HostMem> &buffer) const;
     HcclResult AllocAndClearDeviceMem(u64 size, std::shared_ptr<DeviceMem> &bufferPtr) const;
     HcclResult updateList(u64 size, void *buffer) const;
@@ -585,7 +605,8 @@ private:
         bool isRetry);
     HcclResult CheckNotifyOrQPMaxNum(u64 &existNum, const u64 &MaxNum, const bool &isNotifyRes);
     HcclResult AllocAlgNotifys(const std::string &tag, const NotifyLoadType notifyLoadType, const u32 notifyNum,
-      std::vector<std::shared_ptr<LocalNotify> > &notifiesM2S, std::vector<std::shared_ptr<LocalNotify> > &notifiesS2M);
+      std::vector<std::shared_ptr<LocalNotify> > &notifiesMain, std::vector<std::shared_ptr<LocalNotify> > &notifiesAux);
+    HcclResult CreateAndGetAiCpuNotifyWithNotifyRes(HcclSignalInfo &notifyInfo);
     HcclIpAddress loopBackIp_;
     bool profilingInitiated_;
     u64 callbackThreadId_;
@@ -611,13 +632,16 @@ private:
     Stream opStream_;
     std::vector<Stream> attachedStreams_;
     HcclRtNotify aicpuOpNotify_[2] = { nullptr };
-    std::shared_ptr<LocalNotify> localAiCpuNotify_ = { nullptr };
+    std::vector<std::shared_ptr<LocalNotify>> localAiCpuNotifyRes_;
     std::shared_ptr<LocalNotify> localAiCpuOpNotify_[2] = { nullptr };
     u32 workSpaceSize_;
     DeviceMem workSpace_;
     DeviceMem mc2DeviceMem_;
+    std::vector<DeviceMem> extraMem_;
     std::vector<HcclRtEvent> aiCpuNoIpcEvnet_;
     bool isDiffDeviceModule_;
+    bool isDiffDeviceType_;
+    u32 gcdDeviceNumPerAggregation_;
     tagCommInfo_t tagCommInfo_;    // 以tag为粒度分配comm实例和资源
     std::mutex commLock_;
     tagStreamInfo_t tagStreamInfo_;
@@ -636,14 +660,19 @@ private:
     std::unique_ptr<QueueNotifyManager> queueNotifyManagerRefac_ = { nullptr };
     std::unique_ptr<HcclSocketManager> socketManager_;
     std::unique_ptr<TransportManager> transportManager_ = { nullptr };
+    std::unique_ptr<ZeroCopyMemoryAgent> zeroCopyMemoryAgent_ = { nullptr };
     std::unordered_map<std::string, AlgResourceResponse> resMap_; // tag : AlgResourceResponse
     std::unordered_set<std::string> hostResMap_;
     std::unordered_set<std::string> hbSendRecvTags_;
     bool isSuspending = false;
     bool retryEnable_ = false;
+    bool rtsSupportChangeLink_ = true;  // RTS是否支持借轨（部分ASCEND_RT_VISIBLE_DEVICES自定义场景不支持访问同chip内的另一个die）
     bool inplaceSupportRetry_ = false; //inplace是否支持重执行
     u8 isInplaceStatus_ = 0; // 算子是不是inplace的状态
-    u8 inPlaceSupportRetryStatus_ = 0; // 算子在inplace时，是否支持重执行的状态
+    // 算子在inplace时，是否支持重执行的状态
+    InplaceSupportRetryStatus inPlaceSupportRetryStatus_ = InplaceSupportRetryStatus::INPLACE_STATUS_END;
+    bool isInplacePreSync_ = false;
+    bool isPostSync_ = false;
     HcclWorkflowMode retryOrigWorkflowMode_ = HcclWorkflowMode::HCCL_WORKFLOW_MODE_RESERVED;
     HcclOpResParam opResPara_{};
     DeviceMem opResDevicePara_;
@@ -661,6 +690,8 @@ private:
     DeviceMem serverAndsuperPodToRankDevice_;
     std::unique_ptr<IHcclOneSidedService> oneSideService_ = {nullptr};
     HcclRankLinkInfo hcclRankLinkInfo_{};
+    std::atomic<bool> isOneSidedServiceNetDevCtxInited{false};
+    std::atomic<bool> isOneSidedServiceNicInited{false};
     std::unique_ptr<OpRetryManagerPub> opRetryManager_ = { nullptr };
     std::unordered_map<u32, std::unordered_map<std::string, HccltagRemoteResV3>> rankTagRemoteRes_;  // 以rankid&tag粒度保存HccltagRemoteResV3
     std::shared_ptr<HDCommunicate> kfcControlTransferH2D_;
@@ -671,6 +702,9 @@ private:
     bool isNsRecovery_{false};
     HostMem opTilingDataBuf_;
     HostMem apiTilingDataMem_;
+    // 单机场景下多卡间能互相访问的共享buffer，除了自己rank是申请的，其余均是Ipc打开的
+    DeviceMem zeroCopyLocalBuffer_;
+    void *zeroCopyIpcPtrs_[MAX_MODULE_DEVICE_NUM] {};
     std::atomic<HcclCommState> state_{HcclCommState::IDLE};
     std::unordered_map<std::string, std::string> newTagToTagMap_;
 };

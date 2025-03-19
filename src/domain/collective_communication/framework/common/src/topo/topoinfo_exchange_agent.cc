@@ -305,6 +305,7 @@ HcclResult TopoInfoExchangeAgent::ConstructRankTableMsg(RankTable_t &clusterInfo
     myRankInfo.hostIp = localRankInfo_.hostIP;
     myRankInfo.deviceInfo.devicePhyId = localRankInfo_.devicePhysicID;
     myRankInfo.deviceInfo.deviceIp = localRankInfo_.deviceIP;
+    myRankInfo.deviceInfo.deviceType = localRankInfo_.deviceType;
     myRankInfo.deviceInfo.backupDeviceIp = localRankInfo_.backupDeviceIP;
     myRankInfo.superPodId = localRankInfo_.superPodId;
     myRankInfo.superDeviceId = localRankInfo_.superDeviceId;
@@ -555,6 +556,14 @@ HcclResult TopoInfoExchangeAgent::VerifyServerDevicePhysicID(const std::vector<R
 
 HcclResult TopoInfoExchangeAgent::VerifyClusterSuperPodInfo(const std::vector<RankInfo_t> &rankInfo) const
 {
+    DevType curDevType = rankInfo.begin()->deviceInfo.deviceType;
+    for (auto curRankInfo : rankInfo) {
+        if (curDevType != curRankInfo.deviceInfo.deviceType) {
+            HCCL_DEBUG("[Verify][SuperPodInfo] mix device type, does not need verify superPod info");
+            return HCCL_SUCCESS;
+        }
+    }
+
     bool useSuperPodMode = false;
     CHK_RET(IsSuperPodMode(useSuperPodMode));
     CHK_PRT_RET(useSuperPodMode == false,
@@ -565,7 +574,8 @@ HcclResult TopoInfoExchangeAgent::VerifyClusterSuperPodInfo(const std::vector<Ra
     std::map<std::string, std::set<u32>> superPodSdidMap; // super_pod_id -> superDeviceId
     for (u32 i = 0; i < rankInfo.size(); i++) {
         // 超节点模式下, 校验superPodId和sdid值有效
-        CHK_PRT_RET(rankInfo[i].superPodId.empty() || rankInfo[i].superDeviceId == INVALID_UINT,
+        CHK_PRT_RET((rankInfo[i].superPodId.empty() || rankInfo[i].superDeviceId == INVALID_UINT) &&
+            rankInfo[i].deviceInfo.deviceType == DevType::DEV_TYPE_910_93,
             HCCL_ERROR("[Verify][SuperPodInfo]superDeviceId[0x%x] or superPod[%s] in rank[%u] is invalid",
             rankInfo[i].superDeviceId, rankInfo[i].superPodId.c_str(), rankInfo[i].rankId), HCCL_E_PARA);
 

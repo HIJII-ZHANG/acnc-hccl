@@ -27,13 +27,13 @@ private:
         const std::vector<std::vector<Slice>> multRingsSliceZero, Stream stream, s32 profStage,
         const u64 baseOffset = 0, const HcomCollOpInfo *opInfo = nullptr,
         const std::vector<std::vector<Slice>> multRingsUserMemSlice = std::vector<std::vector<Slice>>(0),
-        const bool retryEnable = false);
+        const bool disableDMAReduce = false);
     virtual HcclResult RunIntraSeverReduceScatter(const std::string &tag, DeviceMem &inputMem, DeviceMem &outputMem,
         const u64 count, const HcclDataType &dataType, const HcclReduceOp &reductionOp,
         const std::vector<std::vector<Slice>> &multRingsSliceZero, const Stream &stream, s32 profStage,
         const u64 baseOffset = 0, const HcomCollOpInfo *opInfo = nullptr,
         const std::vector<std::vector<Slice>> &multRingsUserMemSlice = std::vector<std::vector<Slice>>(0),
-        const bool retryEnable = false) override;
+        const bool disableDMAReduce = false) override;
 };
 
 }  // namespace hccl

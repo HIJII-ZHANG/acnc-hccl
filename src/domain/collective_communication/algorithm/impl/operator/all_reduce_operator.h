@@ -31,6 +31,8 @@ public:
     HcclResult GetAllReduceScratchSize(const u32 count, const HcclDataType dataType, u64 &scratchSize);
 
 private:
+    HcclResult SelectAlgforMix(const OpParam& param, std::string& algName);
+
     HcclResult SelectAlgfor310P3DUO(const OpParam& param, std::string& algName);
 
     HcclResult SelectAlgfor310P3(const OpParam& param, std::string& algName);

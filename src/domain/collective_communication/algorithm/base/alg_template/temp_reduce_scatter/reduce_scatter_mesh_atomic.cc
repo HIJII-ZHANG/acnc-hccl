@@ -125,7 +125,6 @@ HcclResult ReduceScatterMeshAtomic::RunReduceScatter(const std::vector<LINK> &li
         CHK_RET(dstLink->TxDataSignal(stream));
         CHK_RET(dstLink->RxDataSignal(stream));
     }
-
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem_, outputMem_, streamVct[0], dispatcher_));
     return HCCL_SUCCESS;
 }
@@ -215,7 +214,7 @@ HcclResult ReduceScatterMeshAtomic::MemSlice()
         return HCCL_E_INTERNAL;
     }
 
-    if (CheckDebugLogLevel()) {
+    if (HcclCheckLogLevel(DLOG_DEBUG)) {
         for (size_t i = 0; i < slices_.size(); i++) {
             HCCL_DEBUG("[ReduceScatterMeshAtomic] rank[%u] index[%zu] size[%llu] offset[%llu]", localRank_, i,
                 slices_[i].size, slices_[i].offset);
@@ -245,7 +244,7 @@ HcclResult ReduceScatterMeshAtomic::MemSlice()
         }
     }
 
-    if (CheckDebugLogLevel()) {
+    if (HcclCheckLogLevel(DLOG_DEBUG)) {
         for (size_t i = 0; i < slices_.size(); i++) {
             HCCL_DEBUG("ReduceScatterMeshAtomic rank[%u] index[%zu] \
                 size[%llu] offset[%llu] scratch_size[%llu] scratch_offset[%llu]",

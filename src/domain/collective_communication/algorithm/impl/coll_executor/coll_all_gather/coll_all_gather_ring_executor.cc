@@ -28,15 +28,15 @@ HcclResult CollAllGatherRingExecutor::CalcStreamNum(u32& streamNum)
         case AlgType::ALG_8P_RING_PLUS_NHR_V1:
         case AlgType::ALG_8P_RING_PLUS_NB:
         case AlgType::ALG_8P_RING_PLUS_PIPELINE:
-            totalStreamNum = OUTER_PLANE_NUM_IN_8PRING;
+            totalStreamNum = LEVEL0_PLANE_NUM_IN_8PRING;
             break;
         case AlgType::ALG_NP_SINGLE_RING_PLUS_RING:
         case AlgType::ALG_NP_SINGLE_RING_PLUS_HD:
             if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
                 if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-                    totalStreamNum = OUTER_PLANE_NUM_IN_NPRING_SINGLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
+                    totalStreamNum = LEVEL0_PLANE_NUM_IN_NPRING_SINGLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
                 } else {
-                    totalStreamNum = OUTER_PLANE_NUM_IN_NPRING_SINGLE;
+                    totalStreamNum = LEVEL0_PLANE_NUM_IN_NPRING_SINGLE;
                 }
             }
             break;
@@ -77,10 +77,10 @@ HcclResult CollAllGatherRingExecutor::CalcLevel0CommInfo(TransportMemType inputT
     TransportMemType outputType,
     std::vector<LevelNSubCommTransport>& opTransport)
 {
-    HCCL_INFO("[CollAllGatherRingExecutor][CalcOuterCommInfo]tag[%s] start", tag_.c_str());
+    HCCL_INFO("[CollAllGatherRingExecutor][CalcLevel0CommInfo]tag[%s] start", tag_.c_str());
     CommParaInfo commParaLevel0(COMM_LEVEL0, CommType::COMM_TAG_RING_INNER);
     CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel0, opTransport[COMM_LEVEL0], inputType, outputType));
-    HCCL_INFO("[CollAllGatherRingExecutor][CalcOuterCommInfo]tag[%s] Calc RingComm finish", tag_.c_str());
+    HCCL_INFO("[CollAllGatherRingExecutor][CalcLevel0CommInfo]tag[%s] Calc RingComm finish", tag_.c_str());
     return HCCL_SUCCESS;
 }
 
@@ -100,38 +100,38 @@ HcclResult CollAllGatherRingExecutor::KernelRun(const OpParam &param, ExecMem &e
             HCCL_ERROR_CODE(HCCL_E_PARA), param.DataDes.dataType), HCCL_E_PARA);
 
     // 获取子通信域的信息
-    u32 ringNum = (topoType_ == TopoType::TOPO_TYPE_8P_RING) ? OUTER_PLANE_NUM_IN_8PRING :
-        OUTER_PLANE_NUM_IN_NPRING_SINGLE;
+    u32 ringNum = (topoType_ == TopoType::TOPO_TYPE_8P_RING) ? LEVEL0_PLANE_NUM_IN_8PRING :
+        LEVEL0_PLANE_NUM_IN_NPRING_SINGLE;
 
     CHK_RET(CheckCommSize(COMM_LEVEL0, ringNum));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
-    u32 commIndex = (ringNum == OUTER_PLANE_NUM_IN_8PRING) ? topoAttr_.devicePhyId : outerCommInfo.localRank;
-    u32 outerRankSize = outerCommInfo.localRankSize;
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    u32 commIndex = (ringNum == LEVEL0_PLANE_NUM_IN_8PRING) ? topoAttr_.devicePhyId : level0CommInfo.localRank;
+    u32 level0RankSize = level0CommInfo.localRankSize;
 
     CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
-    SubCommInfo innerCommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
-    u32 serverIndex = innerCommInfo.localRank;
+    SubCommInfo level1CommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
+    u32 serverIndex = level1CommInfo.localRank;
 
     //  第一步，如果非DMA消减，将数据从input内存拷贝到output内存的对应位置
     u64 inputMemSize = execMem.inputMem.size();
-    u64 baseOffset = serverIndex * inputMemSize * outerRankSize;
-    u64 outerOffset = commIndex * inputMemSize;
-    DeviceMem dstMem = execMem.outputMem.range(baseOffset + outerOffset, inputMemSize);
+    u64 baseOffset = serverIndex * inputMemSize * level0RankSize;
+    u64 level0Offset = commIndex * inputMemSize;
+    DeviceMem dstMem = execMem.outputMem.range(baseOffset + level0Offset, inputMemSize);
     CHK_SMART_PTR_NULL(dstMem);
 
     HcclResult ret = HcclD2DMemcpyAsync(dispatcher_, dstMem, execMem.inputMem, const_cast<Stream&>(param.stream));
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAllGatherRingExecutor][KernelRun]all gather 8PringHD memcpy Failed, "
-            "Offset[%llu], Size[%llu]", baseOffset + outerOffset, inputMemSize), ret);
+            "Offset[%llu], Size[%llu]", baseOffset + level0Offset, inputMemSize), ret);
 
     // 第二步，各个AI Server 内 multi ring all gather
     std::vector<Slice> dataSegsSlice; // 数据分成ranksize份，每份的起始偏移和大小
     std::vector<std::vector<Slice>> multRingsSliceZero; // 数据基于该rank上环0的偏移
-    u32 sliceNum = outerRankSize;
+    u32 sliceNum = level0RankSize;
     CHK_RET(PrepareAllgatherSlice(sliceNum, inputMemSize, dataSegsSlice));
 
     //  多环数据切分
-    if (ringNum == OUTER_PLANE_NUM_IN_8PRING) {
+    if (ringNum == LEVEL0_PLANE_NUM_IN_8PRING) {
         multRingsSliceZero = PrepareMultiRingSlice(dataSegsSlice, param.tag);
     } else {
         multRingsSliceZero.push_back(dataSegsSlice);
@@ -141,7 +141,7 @@ HcclResult CollAllGatherRingExecutor::KernelRun(const OpParam &param, ExecMem &e
             ringNum, multRingsSliceZero.size()), HCCL_E_INTERNAL);
 
     //  抽取当前用于多环all gather 的output内存数据
-    DeviceMem currentOutputMem = execMem.outputMem.range(baseOffset, inputMemSize * outerRankSize);
+    DeviceMem currentOutputMem = execMem.outputMem.range(baseOffset, inputMemSize * level0RankSize);
     CHK_SMART_PTR_NULL(currentOutputMem);
 
     CHK_RET(ActiveSlaveStreams(param.stream));
@@ -149,51 +149,51 @@ HcclResult CollAllGatherRingExecutor::KernelRun(const OpParam &param, ExecMem &e
     CHK_RET(MultiRingAllGather(param.tag, execMem.inputMem, currentOutputMem, execMem.count, param.DataDes.dataType,
                                multRingsSliceZero, param.stream, PROF_STAGE_1, baseOffset, nullptr));
 
-    HCCL_INFO("all gather 8PringHD outer run success");
+    HCCL_INFO("all gather 8PringHD level0 run success");
 
     //  第三步， AI server 间 recursive halving doubling all gather
     u64 hdSize = 0;
     std::vector<u32> nicList = const_cast<std::vector<u32>&>(topoAttr_.nicList);
     std::vector<u32>::iterator iterNic = std::find(nicList.begin(), nicList.end(), topoAttr_.devicePhyId);
     if (iterNic != nicList.end()) {
-        hdSize = inputMemSize * outerRankSize;
+        hdSize = inputMemSize * level0RankSize;
     }
     u64 hdCount = hdSize / perDataSize;
 
     bool isMultiNic = topoType_ == TopoType::TOPO_TYPE_8P_RING && nicList.size() != DEVICE_EIGHT;
     bool innRunRet = isMultiNic && (iterNic == nicList.end());
     if (!innRunRet) { // 满足以下条件, 不做server间通信: 1. 8P ring的拓扑 2. 网口不满配 3. 当前device不出网口
-        std::unique_ptr<AlgTemplateBase> innerTempAlg;
+        std::unique_ptr<AlgTemplateBase> level1TempAlg;
         if (UseInterServerRingAlgo(algType_)) {
-            innerTempAlg.reset(new (std::nothrow) AllGatherRing(dispatcher_));
+            level1TempAlg.reset(new (std::nothrow) AllGatherRing(dispatcher_));
             HCCL_INFO("allgather ring: using ring algo inter-server.");
         } else if (UseInterServerNHRAlgo(algType_)) {
-            innerTempAlg.reset(new (std::nothrow) AllGatherNHR(dispatcher_));
+            level1TempAlg.reset(new (std::nothrow) AllGatherNHR(dispatcher_));
             HCCL_INFO("allgather ring: using nhr algo inter-server.");
         } else if (UseInterServerNHRV1Algo(algType_)) {
-            innerTempAlg.reset(new (std::nothrow) AllGatherNHRV1(dispatcher_));
+            level1TempAlg.reset(new (std::nothrow) AllGatherNHRV1(dispatcher_));
             HCCL_INFO("allgather ring: using nhr_v1 algo inter-server.");
         } else if (UseInterServerNBAlgo(algType_)) {
-            innerTempAlg.reset(new (std::nothrow) AllGatherNB(dispatcher_));
+            level1TempAlg.reset(new (std::nothrow) AllGatherNB(dispatcher_));
             HCCL_INFO("allgather ring: using nonuniform-bruck algo inter-server.");
         } else {
-            innerTempAlg.reset(new (std::nothrow) AllGatherRecursiveHalvingDoubling(dispatcher_));
+            level1TempAlg.reset(new (std::nothrow) AllGatherRecursiveHalvingDoubling(dispatcher_));
             HCCL_INFO("allgather ring: using halving-doubling algo inter-server.");
         }
-        CHK_SMART_PTR_NULL(innerTempAlg);
+        CHK_SMART_PTR_NULL(level1TempAlg);
 
         //  此处虽然带入inputMem作为scratch mem, 但inputMem 不能被使用
-        CHK_RET(innerTempAlg->Prepare(execMem.outputMem, execMem.outputMem, execMem.inputMem, hdCount,
+        CHK_RET(level1TempAlg->Prepare(execMem.outputMem, execMem.outputMem, execMem.inputMem, hdCount,
             param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, INVALID_VALUE_RANKID,
             std::vector<Slice>(COMM_INDEX_0), 0));
 
-        u32 rankSize = innerCommInfo.localRankSize;
-        CHK_RET(innerTempAlg->RegisterProfiler((rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + serverIndex,
+        u32 rankSize = level1CommInfo.localRankSize;
+        CHK_RET(level1TempAlg->RegisterProfiler((rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + serverIndex,
             PROF_STAGE_2, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-        CHK_RET(RunTemplate(innerTempAlg, innerCommInfo));
+        CHK_RET(RunTemplate(level1TempAlg, level1CommInfo));
     }
-    HCCL_INFO("all gather 8PringHD inner run success");
+    HCCL_INFO("all gather 8PringHD level1 run success");
 
     //  网口裁剪：AI server 内多网口的allgather
     if (topoType_ == TopoType::TOPO_TYPE_8P_RING && nicList.size() != DEVICE_EIGHT) {
@@ -210,7 +210,7 @@ HcclResult CollAllGatherRingExecutor::KernelRun(const OpParam &param, ExecMem &e
         CHK_RET(MultiRingAllGather(param.tag, execMem.outputMem, execMem.outputMem, tempCount / DEVICE_EIGHT,
             param.DataDes.dataType, multRingsSliceZero, param.stream, PROF_STAGE_1));
 
-        HCCL_INFO("all gather 8PringHD inner chunk run success");
+        HCCL_INFO("all gather 8PringHD level1 chunk run success");
     }
     return HCCL_SUCCESS;
 }

@@ -10,3 +10,4 @@ target_sources(hccl PRIVATE
 
 add_subdirectory(resource_manager)
 add_subdirectory(one_sided_service)
+add_subdirectory(zero_copy)

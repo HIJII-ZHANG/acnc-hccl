@@ -26,14 +26,14 @@ CollBroadcastRingExecutor::CollBroadcastRingExecutor(const HcclDispatcher dispat
 
 HcclResult CollBroadcastRingExecutor::CalcStreamNum(u32& streamNum)
 {
-    u32 totalStreamNum = (topoType_ == TopoType::TOPO_TYPE_8P_RING) ? OUTER_PLANE_NUM_IN_8PRING :
-        OUTER_PLANE_NUM_IN_NPRING_SINGLE;
+    u32 totalStreamNum = (topoType_ == TopoType::TOPO_TYPE_8P_RING) ? LEVEL0_PLANE_NUM_IN_8PRING :
+        LEVEL0_PLANE_NUM_IN_NPRING_SINGLE;
 
     if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
         if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-            totalStreamNum = OUTER_PLANE_NUM_IN_NPRING_SINGLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
+            totalStreamNum = LEVEL0_PLANE_NUM_IN_NPRING_SINGLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
         } else {
-            totalStreamNum = OUTER_PLANE_NUM_IN_NPRING_SINGLE;
+            totalStreamNum = LEVEL0_PLANE_NUM_IN_NPRING_SINGLE;
         }
     }
 
@@ -55,10 +55,10 @@ HcclResult CollBroadcastRingExecutor::CalcCommInfo(std::vector<LevelNSubCommTran
 HcclResult CollBroadcastRingExecutor::CalcLevel0CommInfo(TransportMemType inputType,
     TransportMemType outputType, std::vector<LevelNSubCommTransport>& opTransport)
 {
-    HCCL_INFO("[CollBroadcastRingExecutor][CalcOuterCommInfo]tag[%s] start", tag_.c_str());
+    HCCL_INFO("[CollBroadcastRingExecutor][CalcLevel0CommInfo]tag[%s] start", tag_.c_str());
     CommParaInfo commParaLevel0(COMM_LEVEL0, CommType::COMM_TAG_RING_INNER);
     CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel0, opTransport[COMM_LEVEL0], inputType, outputType));
-    HCCL_INFO("[CollBroadcastRingExecutor][CalcOuterCommInfo]tag[%s] Calc RingComm finish", tag_.c_str());
+    HCCL_INFO("[CollBroadcastRingExecutor][CalcLevel0CommInfo]tag[%s] Calc RingComm finish", tag_.c_str());
     return HCCL_SUCCESS;
 }
 
@@ -71,8 +71,8 @@ HcclResult CollBroadcastRingExecutor::KernelRun(const OpParam &param, ExecMem &e
     std::vector<Slice> dataSegsSlice; // 数据分成ranksize份，每份的起始偏移和大小
     std::vector<std::vector<Slice> > multRingsSliceZero; // 数据基于该rank上环0的偏移
     // step1: 节点内的scatter
-    u32 ringNum = (topoType_ == TopoType::TOPO_TYPE_8P_RING) ? OUTER_PLANE_NUM_IN_8PRING :
-        OUTER_PLANE_NUM_IN_NPRING_SINGLE;
+    u32 ringNum = (topoType_ == TopoType::TOPO_TYPE_8P_RING) ? LEVEL0_PLANE_NUM_IN_8PRING :
+        LEVEL0_PLANE_NUM_IN_NPRING_SINGLE;
 
     CHK_RET(CheckCommSize(COMM_LEVEL0, ringNum));
 
@@ -86,7 +86,7 @@ HcclResult CollBroadcastRingExecutor::KernelRun(const OpParam &param, ExecMem &e
 
     /* 外层:scatter */
     // 将每slice再切分成4份，按各ring的dev顺序排列
-    if (ringNum == OUTER_PLANE_NUM_IN_8PRING) {
+    if (ringNum == LEVEL0_PLANE_NUM_IN_8PRING) {
         // 构造ring algorithm对应的scatter实例
         multRingsSliceZero = PrepareMultiRingSlice(dataSegsSlice, param.tag, false, topoAttr_.nicList);
         CHK_PRT_RET(multRingsSliceZero.size() != ringNum, HCCL_ERROR("[CollBroadcastRingExecutor]"\
@@ -111,7 +111,7 @@ HcclResult CollBroadcastRingExecutor::KernelRun(const OpParam &param, ExecMem &e
     u64 hdSize;
     u32 segmentIdx;
     u32 commIndex;
-    CHK_RET(PrepareInnerCommInfo(segmentIdx, commIndex, hdSize, level0CommInfo, multRingsSliceZero, param.tag));
+    CHK_RET(PrepareLevel1CommInfo(segmentIdx, commIndex, hdSize, level0CommInfo, multRingsSliceZero, param.tag));
 
     u64 hdCount = hdSize / perDataSize;
     auto nicList = topoAttr_.nicList;
@@ -122,33 +122,33 @@ HcclResult CollBroadcastRingExecutor::KernelRun(const OpParam &param, ExecMem &e
         CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
         SubCommInfo level1CommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
         u64 curSize = execMem.count * SIZE_TABLE[param.DataDes.dataType];
-        std::unique_ptr<AlgTemplateBase> innerTempAlg;
+        std::unique_ptr<AlgTemplateBase> level1TempAlg;
         if (UseInterServerNHRAlgo(algType_)) {
-            HCCL_DEBUG("broadcast ring: curSize[%llu] deviceNumPerAggregation[%u] commOuterSize[%u]",
+            HCCL_DEBUG("broadcast ring: curSize[%llu] deviceNumPerAggregation[%u] commLevel0Size[%u]",
                 curSize, topoAttr_.deviceNumPerAggregation, level0CommInfo.localRankSize);
             if (curSize / topoAttr_.deviceNumPerAggregation <= NHR_BCAST_SMALL_SIZE) {
-                innerTempAlg.reset(new (std::nothrow) BroadcastNHROneshot(dispatcher_));
+                level1TempAlg.reset(new (std::nothrow) BroadcastNHROneshot(dispatcher_));
             } else {
-                innerTempAlg.reset(new (std::nothrow) BroadcastNHR(dispatcher_));
+                level1TempAlg.reset(new (std::nothrow) BroadcastNHR(dispatcher_));
             }
             HCCL_INFO("broadcast ring: using nhr algo inter-server.");
         } else if (UseInterServerNHRV1Algo(algType_)) {
-            innerTempAlg.reset(new (std::nothrow) BroadcastNHRV1(dispatcher_));
+            level1TempAlg.reset(new (std::nothrow) BroadcastNHRV1(dispatcher_));
             HCCL_INFO("broadcast ring: using nhr_v1 algo inter-server.");
         } else if (UseInterServerNBAlgo(algType_)) {
-            const u32 innerRankSize = level1CommInfo.localRankSize;
-            if (ShouldUseBinaryBroadcastOfNB(curSize / topoAttr_.deviceNumPerAggregation, innerRankSize,
+            const u32 level1RankSize = level1CommInfo.localRankSize;
+            if (ShouldUseBinaryBroadcastOfNB(curSize / topoAttr_.deviceNumPerAggregation, level1RankSize,
                                              topoAttr_.userRankSize, topoAttr_.deviceNumPerAggregation)) {
-                innerTempAlg.reset(new (std::nothrow) BroadcastNBBinary(dispatcher_));
+                level1TempAlg.reset(new (std::nothrow) BroadcastNBBinary(dispatcher_));
             } else {
-                innerTempAlg.reset(new (std::nothrow) BroadcastNB(dispatcher_));
+                level1TempAlg.reset(new (std::nothrow) BroadcastNB(dispatcher_));
             }
             HCCL_INFO("broadcast ring: using nonuniform-bruck algo inter-server.");
         } else {
-            innerTempAlg.reset(new (std::nothrow) BcastRecursiveHalvingDoubling(dispatcher_));
+            level1TempAlg.reset(new (std::nothrow) BcastRecursiveHalvingDoubling(dispatcher_));
             HCCL_INFO("broadcast ring: using Recursive halving-doubling algo inter-server.");
         }
-        CHK_SMART_PTR_NULL(innerTempAlg);
+        CHK_SMART_PTR_NULL(level1TempAlg);
 
         u32 subUserrankRoot = topoMatcher_->GetSubRootUserRank(topoAttr_.userRank, param.root);
         CHK_PRT_RET(subUserrankRoot == INVALID_VALUE_RANKID,
@@ -160,13 +160,13 @@ HcclResult CollBroadcastRingExecutor::KernelRun(const OpParam &param, ExecMem &e
         CHK_RET(GetRankByUserRank(COMM_LEVEL1, commIndex, subUserrankRoot, planeRoot));
 
         // 节点间的hd 使用环0来记录
-        CHK_RET(innerTempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.outputMem, hdCount, param.DataDes.dataType,
+        CHK_RET(level1TempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.outputMem, hdCount, param.DataDes.dataType,
                 param.stream, HCCL_REDUCE_RESERVED, planeRoot, std::vector<Slice>(0), dataSegsSlice[segmentIdx].offset));
 
-        CHK_RET(innerTempAlg->RegisterProfiler((level1RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1LocalRank, \
+        CHK_RET(level1TempAlg->RegisterProfiler((level1RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1LocalRank, \
             PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-        CHK_RET(RunTemplate(innerTempAlg, level1CommInfo));
+        CHK_RET(RunTemplate(level1TempAlg, level1CommInfo));
     }
     HCCL_INFO("broadcast 8PringHD stage1 run success");
 

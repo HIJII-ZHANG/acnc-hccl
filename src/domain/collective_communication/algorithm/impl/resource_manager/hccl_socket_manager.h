@@ -123,6 +123,7 @@ public:
 
     HcclResult SetStopFlag(bool value);
     bool GetStopFlag();
+    HcclResult WaitLinkEstablish(std::shared_ptr<HcclSocket> socket, std::function<bool()> needStop = []() { return false; });
 private:
     HcclResult AddWhiteList(const std::string &commTag, bool isInterLink, NicType socketType,
         const HcclIpAddress &localIp, const std::map<u32, HcclRankLinkInfo> &whiteListMap);
@@ -158,7 +159,7 @@ private:
         const HcclIpAddress &localIp, HcclSocketRole localRole, std::vector<std::shared_ptr<HcclSocket>> &socketList);
     void SaveSockets(const std::string &commTag, u32 remoteRank, const HcclIpAddress &remoteIp,
         std::vector<std::shared_ptr<HcclSocket> > &ipSockets);
-    HcclResult WaitLinkEstablish(std::shared_ptr<HcclSocket> socket, std::function<bool()> needStop = []() { return false; });
+
     HcclResult WaitLinksEstablishCompleted(HcclSocketRole localRole,
         std::map<u32, std::vector<std::shared_ptr<HcclSocket> > > &rankSocketsMap);
 

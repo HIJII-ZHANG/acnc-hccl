@@ -31,17 +31,17 @@ HcclResult CollBroadcastFor310PCommExecutor::CalcCommInfo(std::vector<LevelNSubC
 HcclResult CollBroadcastFor310PCommExecutor::CalcLevel0CommInfo(TransportMemType inputType,
     TransportMemType outputType, std::vector<LevelNSubCommTransport>& opTransport)
 {
-    HCCL_INFO("[CollBroadcastFor310PCommExecutor][CalcOuterCommInfo]tag[%s] start", tag_.c_str());
+    HCCL_INFO("[CollBroadcastFor310PCommExecutor][CalcLevel0CommInfo]tag[%s] start", tag_.c_str());
     CommParaInfo commParaLevel0(COMM_LEVEL0, CommType::COMM_TAG_RING_INNER);
     CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel0, opTransport[COMM_LEVEL0], inputType, outputType));
-    HCCL_INFO("[CollBroadcastFor310PCommExecutor][CalcOuterCommInfo]tag[%s] Calc RingComm finish", tag_.c_str());
+    HCCL_INFO("[CollBroadcastFor310PCommExecutor][CalcLevel0CommInfo]tag[%s] Calc RingComm finish", tag_.c_str());
     return HCCL_SUCCESS;
 }
 
 HcclResult CollBroadcastFor310PCommExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
     std::unique_ptr<AlgTemplateBase> tempAlg;
 
     tempAlg.reset(new (std::nothrow) BroadcastRing(dispatcher_));
@@ -53,12 +53,12 @@ HcclResult CollBroadcastFor310PCommExecutor::KernelRun(const OpParam &param, Exe
     CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
                               param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, param.root));
 
-    u32 rankSize = outerCommInfo.localRankSize;
+    u32 rankSize = level0CommInfo.localRankSize;
     CHK_RET(tempAlg->RegisterProfiler(
-        (rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + outerCommInfo.localRank,
+        (rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level0CommInfo.localRank,
         PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-    CHK_RET(RunTemplate(tempAlg, outerCommInfo));
+    CHK_RET(RunTemplate(tempAlg, level0CommInfo));
     return HCCL_SUCCESS;
 }
 

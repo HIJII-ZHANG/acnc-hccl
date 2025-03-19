@@ -152,14 +152,14 @@ HcclResult CollReduceScatterDeterExecutor::KernelRun(const OpParam &param, ExecM
 {
     u32 unitSize = SIZE_TABLE[param.DataDes.dataType];
     std::vector<Slice> dataSegsSlice; // 数据分成ranksize份，每份的起始偏移和大小
-    std::unique_ptr<AlgTemplateBase> outerTempAlg;
+    std::unique_ptr<AlgTemplateBase> level0TempAlg;
     CommPlane commPlane = COMM_LEVEL0;
     if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93 && topoAttr_.serverNum != 1) {
         commPlane = COMM_COMBINE_ORDER;
     }
 
     CHK_RET(CheckCommSize(commPlane, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(commPlane, COMM_INDEX_0);
+    SubCommInfo level0CommInfo = GetSubCommInfo(commPlane, COMM_INDEX_0);
 
     CHK_RET(ActiveSlaveStreams(param.stream));
 
@@ -177,23 +177,23 @@ HcclResult CollReduceScatterDeterExecutor::KernelRun(const OpParam &param, ExecM
         (topoAttr_.deviceType == DevType::DEV_TYPE_910B);
 
     if (isLocalReduce91073 || isLocalReduce910B) {
-        outerTempAlg.reset(new (std::nothrow) ReduceScatterLocalReduce(dispatcher_, reduceAttr,
-            algResResp_->slaveStreams, algResResp_->notifiesM2S, algResResp_->notifiesS2M,
+        level0TempAlg.reset(new (std::nothrow) ReduceScatterLocalReduce(dispatcher_, reduceAttr,
+            algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
             topoAttr_.userRank, &opInfo));
     } else {
-        outerTempAlg.reset(new (std::nothrow) ReduceScatterHDStage(dispatcher_, reduceAttr, algResResp_->slaveStreams,
-            algResResp_->notifiesM2S, algResResp_->notifiesS2M, topoAttr_.userRank, &opInfo));
+        level0TempAlg.reset(new (std::nothrow) ReduceScatterHDStage(dispatcher_, reduceAttr, algResResp_->slaveStreams,
+            algResResp_->notifiesMain, algResResp_->notifiesAux, topoAttr_.userRank, &opInfo));
     }
 
-    CHK_SMART_PTR_NULL(outerTempAlg);
-    CHK_RET(outerTempAlg->Prepare(execMem.inputMem, execMem.scratchMem, execMem.outputMem, execMem.count,
-        param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID, dataSegsSlice, 0));
+    CHK_SMART_PTR_NULL(level0TempAlg);
+    CHK_RET(level0TempAlg->Prepare(execMem.inputMem, execMem.scratchMem, execMem.outputMem, execMem.count,
+        param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID, dataSegsSlice, 0));
 
-    CHK_RET(outerTempAlg->RegisterProfiler(
-        (outerCommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + outerCommInfo.localRank,
+    CHK_RET(level0TempAlg->RegisterProfiler(
+        (level0CommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level0CommInfo.localRank,
         PROF_STAGE_2, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-    CHK_RET(RunTemplate(outerTempAlg, outerCommInfo));
+    CHK_RET(RunTemplate(level0TempAlg, level0CommInfo));
     HCCL_INFO("reducescatter mesh deter run success");
     return HCCL_SUCCESS;
 }

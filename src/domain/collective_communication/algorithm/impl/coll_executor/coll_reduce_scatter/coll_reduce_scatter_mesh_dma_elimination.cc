@@ -92,23 +92,20 @@ bool CollReduceScatterMeshDmaEliminationExecutor::IsSmallData(const u64 totalSiz
 
 HcclResult CollReduceScatterMeshDmaEliminationExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    u32 perDataSize = SIZE_TABLE[param.DataDes.dataType];
-
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
 
-    u32 commIndex = outerCommInfo.localRank; // 找到rank所在的节点间平面
+    u32 commIndex = level0CommInfo.localRank; // 找到rank所在的节点间平面
 
     /* *******************节点内reducescatter ******************************************/
     CHK_RET(ActiveSlaveStreams(param.stream));
 
-    u32 sliceNum = outerCommInfo.localRankSize;
+    u32 sliceNum = level0CommInfo.localRankSize;
     // 根据数据量算每个环上数据的偏移和大小，把做完hd的slice均分成RankSize份
     std::vector<Slice> dataSegsSlice;
-    CHK_RET(PrepareReduceScatterSliceData(execMem.count, perDataSize, sliceNum, dataSegsSlice));
 
-    HCCL_DEBUG("inputMem.size()=%llu, outerCommInfo.localRankSize=%u, commIndex=%u",
-        execMem.inputMem.size(), outerCommInfo.localRankSize, commIndex);
+    HCCL_DEBUG("inputMem.size()=%llu, level0CommInfo.localRankSize=%u, commIndex=%u",
+        execMem.inputMem.size(), level0CommInfo.localRankSize, commIndex);
 
     HcomCollOpInfo *opInfoPtr = nullptr;
     HcomCollOpInfo opInfo = {"", execMem.inputPtr, execMem.outputPtr, param.DataDes.count, param.DataDes.dataType,

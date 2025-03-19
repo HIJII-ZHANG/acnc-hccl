@@ -139,7 +139,7 @@ HcclResult CollRunAlltoAllVTwoLevelPipeline::KernelRun(const OpParam &param, Exe
             execMem.inputMem.size()) {
         cclEnough = false;
     }
-    HCCL_DEBUG("[CollRunAlltoAllVTwoLevelPipeline][KernelRun] alltoall pipeline run %s algo",
+    HCCL_INFO("[CollRunAlltoAllVTwoLevelPipeline][KernelRun] alltoall pipeline run %s algo",
         cclEnough ? "cclEnough" : "ping pong");
     A2aPipelineMemory a2aPipelineMemory;
     a2aPipelineMemory.userInput = algResResp_->paramInputMem;
@@ -165,14 +165,14 @@ HcclResult CollRunAlltoAllVTwoLevelPipeline::KernelRun(const OpParam &param, Exe
     }
 
     CHK_RET(CheckCommSize(COMM_MESH_L0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_MESH_L0, COMM_INDEX_0);
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_MESH_L0, COMM_INDEX_0);
     CHK_RET(CheckCommSize(COMM_MESH_L1, COMM_INDEX_0 + 1));
-    SubCommInfo innerCommInfo = GetSubCommInfo(COMM_MESH_L1, COMM_INDEX_0);
+    SubCommInfo level1CommInfo = GetSubCommInfo(COMM_MESH_L1, COMM_INDEX_0);
 
     CHK_SMART_PTR_NULL(alltoallPipe);
-    CHK_RET(alltoallPipe->Prepare(topoAttr_.userRank, a2aPipelineMemory, outerCommInfo, innerCommInfo,
+    CHK_RET(alltoallPipe->Prepare(topoAttr_.userRank, a2aPipelineMemory, level0CommInfo, level1CommInfo,
         const_cast<Stream&>(param.stream), algResResp_->slaveStreams,
-        algResResp_->notifiesM2S, algResResp_->notifiesS2M));
+        algResResp_->notifiesMain, algResResp_->notifiesAux));
     CHK_RET(alltoallPipe->RunAsync());
     HCCL_INFO("[CollRunAlltoAllVTwoLevelPipeline][kernelRun] alltoall two level pipeline exec end");
     return HCCL_SUCCESS;

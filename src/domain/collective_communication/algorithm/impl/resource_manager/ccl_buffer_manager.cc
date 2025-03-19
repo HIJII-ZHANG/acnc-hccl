@@ -16,8 +16,8 @@
 
 namespace hccl {
 CCLBufferManager::CCLBufferManager()
-    :inCCLbuffer_(DeviceMem()), outCCLbuffer_(DeviceMem()),
-    inCCLbufferSize_(0), outCCLbufferSize_(0),
+    :inCCLbuffer_(DeviceMem()), outCCLbuffer_(DeviceMem()), winExpBuffer_(DeviceMem()),
+    inCCLbufferSize_(0), outCCLbufferSize_(0), winExpBufferSize_(0),
     inAlltoAllvParaBuffer_(DeviceMem()), outAlltoAllvParaBuffer_(DeviceMem())
 {
 }
@@ -25,6 +25,7 @@ CCLBufferManager::CCLBufferManager()
 CCLBufferManager::~CCLBufferManager()
 {
     ReleaseCommCCLbuffer();
+    ReleaseCommExpBuffer();
     ReleaseAlltoAllvParaBuffer();
     ReleaseCommAIVbuffer();
 }
@@ -61,6 +62,19 @@ HcclResult CCLBufferManager::CreateCommCCLbuffer()
         }
         CHK_RET(CreateCCLbuffer(outCCLbufferSize_, outCCLbuffer_));
     }
+    return HCCL_SUCCESS;
+}
+
+HcclResult CCLBufferManager::CreateCommExpBuffer()
+{
+    if (winExpBuffer_.ptr() == nullptr) {
+        if (winExpBufferSize_ == 0) {
+            winExpBufferSize_ = EXP_BUFFER_SIZE;
+        }
+        CHK_RET(CreateCCLbuffer(winExpBufferSize_, winExpBuffer_));
+        CHK_RET(hrtMemSet(winExpBuffer_.ptr(), winExpBuffer_.size(), winExpBuffer_.size()));
+    }
+
     return HCCL_SUCCESS;
 }
 
@@ -112,6 +126,20 @@ HcclResult CCLBufferManager::ReleaseCommCCLbuffer()
     return HCCL_SUCCESS;
 }
 
+HcclResult CCLBufferManager::ReleaseCommExpBuffer()
+{
+    if (winExpBuffer_.ptr() == nullptr) {
+        HCCL_RUN_INFO("[HCCL_TRACE][ReleaseCCLbuffer]CCLBuffer is null, no need to release.");
+        return HCCL_SUCCESS;
+    }
+    if (winExpBuffer_.ptr() != nullptr ){
+        HCCL_RUN_INFO("[HCCL_TRACE][ReleaseCCLbuffer]Release winExpBuffer. buffer ptr[%p], size[%llu]",
+        winExpBuffer_.ptr(), winExpBuffer_.size());
+        winExpBuffer_.free();
+    }
+    return HCCL_SUCCESS;
+}
+
 HcclResult CCLBufferManager::ReleaseCommAIVbuffer()
 {
     HCCL_RUN_INFO("[HCCL_TRACE][ReleaseAIVbuffer]Release inAIVbuffer. buffer ptr[%p], size[%llu]",
@@ -145,6 +173,11 @@ void* CCLBufferManager::GetCCLbufferAddr(const DeviceMem &buffer)
 DeviceMem& CCLBufferManager::GetInCCLbuffer()
 {
     return inCCLbuffer_;
+}
+
+DeviceMem& CCLBufferManager::GetCommExpBuffer()
+{
+    return winExpBuffer_;
 }
 
 DeviceMem& CCLBufferManager::GetInAIVbuffer()
@@ -184,6 +217,11 @@ HcclResult CCLBufferManager::GetOutCCLbuffer(void* &buffer, u64 &size)
 u64 CCLBufferManager::GetOutCCLbufferSize()
 {
     return outCCLbufferSize_;
+}
+
+u64 CCLBufferManager::GetExpBufferSize()
+{
+    return winExpBufferSize_;
 }
 
 DeviceMem CCLBufferManager::GetCommRegMem(const DeviceMem &mem, MemAttr memAttr, bool aivMode)

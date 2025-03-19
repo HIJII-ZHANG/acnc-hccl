@@ -9,8 +9,10 @@ target_sources(hccl_alg PRIVATE
 )
 
 add_subdirectory(coll_all_gather)
+add_subdirectory(coll_all_gather_v)
 add_subdirectory(coll_all_reduce)
 add_subdirectory(coll_reduce_scatter)
+add_subdirectory(coll_reduce_scatter_v)
 add_subdirectory(coll_reduce)
 add_subdirectory(coll_send_receive)
 add_subdirectory(coll_all_to_all)

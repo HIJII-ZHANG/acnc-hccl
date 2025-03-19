@@ -38,12 +38,17 @@ target_include_directories(hccl_alg PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/impl/coll_executor/coll_all_to_all
     ${CMAKE_CURRENT_SOURCE_DIR}/impl/coll_executor/coll_all_gather
     ${CMAKE_CURRENT_SOURCE_DIR}/impl/coll_executor/coll_all_gather/310P
+    ${CMAKE_CURRENT_SOURCE_DIR}/impl/coll_executor/coll_all_gather_v
+    ${CMAKE_CURRENT_SOURCE_DIR}/impl/coll_executor/coll_all_gather_v/310P
     ${CMAKE_CURRENT_SOURCE_DIR}/impl/coll_executor/coll_reduce_scatter
     ${CMAKE_CURRENT_SOURCE_DIR}/impl/coll_executor/coll_reduce_scatter/310P
+    ${CMAKE_CURRENT_SOURCE_DIR}/impl/coll_executor/coll_reduce_scatter_v
+    ${CMAKE_CURRENT_SOURCE_DIR}/impl/coll_executor/coll_reduce_scatter_v/310P
     ${CMAKE_CURRENT_SOURCE_DIR}/impl/coll_executor/coll_scatter
     ${CMAKE_CURRENT_SOURCE_DIR}/impl/coll_executor/coll_broadcast
     ${CMAKE_CURRENT_SOURCE_DIR}/impl/coll_executor/coll_broadcast/310P
     ${CMAKE_CURRENT_SOURCE_DIR}/pub_inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/health
     ${HCCL_BASE_DIR}/../../../../inc/external
     ${HCCL_BASE_DIR}/../../../../inc/external/hccl
     ${HCCL_BASE_DIR}/../../../../inc/hccl
@@ -51,6 +56,10 @@ target_include_directories(hccl_alg PRIVATE
 )
 
 if(BUILD_OPEN_PROJECT)
+    target_compile_definitions(hccl_alg PRIVATE
+        OPEN_BUILD_PROJECT
+        LOG_CPP)
+
     target_include_directories(hccl_alg PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../pub_inc
         ${CMAKE_CURRENT_SOURCE_DIR}/../../../../inc
@@ -61,6 +70,7 @@ if(BUILD_OPEN_PROJECT)
         ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/metadef/common/util/error_manager/
         ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/msprof/
         ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/runtime/
+        ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/slog/toolchain
     )
 
     target_link_directories(hccl_alg PRIVATE
@@ -72,6 +82,8 @@ else()
         ${TOP_DIR}/ace/npuruntime/inc
         ${TOP_DIR}/inc
         ${TOP_DIR}/metadef/inc/common/util/error_manager/
+        ${TOP_DIR}/metadef/inc/external/
+        ${TOP_DIR}/abl/slog/inc/toolchain
     )
 endif()
 
@@ -95,13 +107,26 @@ target_link_options(hccl_alg PRIVATE
     -Wl,-z,noexecstack
 )
 
+if(BUILD_OPEN_PROJECT)
 target_link_libraries(hccl_alg PRIVATE
     -Wl,--no-as-needed
     c_sec
+    ascendalog
     -Wl,--no-as-needed
     hccl_alg_research
     hccl_plf
 )
+else()
+target_link_libraries(hccl_alg PRIVATE
+    $<BUILD_INTERFACE:slog_headers>
+    -Wl,--no-as-needed
+    c_sec
+    slog
+    -Wl,--no-as-needed
+    hccl_alg_research
+    hccl_plf
+)
+endif()
 
 add_subdirectory(base)
 add_subdirectory(impl)

@@ -21,6 +21,8 @@ public:
     ~AllGatherOperator();
     HcclResult SelectAlg(const std::string& tag, const OpParam& param, std::string& algName, std::string& newTag) override;
 private:
+    HcclResult SelectAlgforMix(const OpParam& param, std::string& algName);
+
     HcclResult SelectAlgfor310P3(const OpParam& param, std::string& algName);
 
     HcclResult SelectAlgfor910A(const OpParam& param, std::string& algName);

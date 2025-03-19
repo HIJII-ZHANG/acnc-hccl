@@ -125,7 +125,7 @@ HcclResult AllReduceRing::PrepareRunAsync(const u32 rank, const u32 rankSize, co
             residueSize -= slices_[i].size;
         }
 
-        if (CheckDebugLogLevel()) {
+        if (HcclCheckLogLevel(DLOG_DEBUG)) {
             for (size_t j = 0; j < slices_.size(); j++) {
                 HCCL_DEBUG("rank[%u] slice[%u]: offset[%llu] size[%llu]", rank, j, slices_[j].offset, slices_[j].size);
             }

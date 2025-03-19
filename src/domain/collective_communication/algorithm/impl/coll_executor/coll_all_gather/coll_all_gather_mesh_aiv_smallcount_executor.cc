@@ -95,20 +95,20 @@ HcclResult CollAllGatherMeshAivSmallCountExecutor::KernelRun(const OpParam &para
     HCCL_INFO("[CollAllGatherMeshAivSmallCountExecutor][KernelRun]allreduce aiv enter");
  
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
  
     void *buffersIn[MAX_RANK_SIZE];
     void *buffersOut[MAX_RANK_SIZE];
  
-    u32 localRank = outerCommInfo.localRank;
-    u32 localRankSize = outerCommInfo.localRankSize;
+    u32 localRank = level0CommInfo.localRank;
+    u32 localRankSize = level0CommInfo.localRankSize;
     HCCL_DEBUG("[CollAllGatherMeshAivSmallCountExecutor][KernelRun] userRank [%d] localRank [%d]",
         topoAttr_.userRank, localRank);
  
     for (u32 i = 0; i < localRankSize; i++) {
         if (i != localRank) {
-            CHK_RET(outerCommInfo.links[i]->GetRemoteMem(UserMemType::INPUT_MEM, &(buffersIn[i])));
-            CHK_RET(outerCommInfo.links[i]->GetRemoteMem(UserMemType::OUTPUT_MEM, &(buffersOut[i])));
+            CHK_RET(level0CommInfo.links[i]->GetRemoteMem(UserMemType::INPUT_MEM, &(buffersIn[i])));
+            CHK_RET(level0CommInfo.links[i]->GetRemoteMem(UserMemType::OUTPUT_MEM, &(buffersOut[i])));
         } else {
             buffersIn[i] = execMem.inputMem.ptr();
             buffersOut[i] = execMem.outputMem.ptr();

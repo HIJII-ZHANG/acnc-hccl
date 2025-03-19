@@ -15,6 +15,7 @@
 #include "threadManage.h"
 #include "dispatcher.h"
 #include "comm_base_pub.h"
+#include "workflow_pub.h"
 #include "externalinput_pub.h"
 #include "common.h"
 
@@ -101,6 +102,7 @@ private:
     std::vector<Slice> userMemInputSlices_;
     ExecutorType executorType_ = ExecutorType::TYPE_RESERVED;
     HcclRtContext context_;
+    HcclWorkflowMode workflowMode_{HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE};
 };
 }  // namespace hccl
 

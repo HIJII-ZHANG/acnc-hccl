@@ -77,7 +77,7 @@ public:
                          const HcclDispatcher dispatcher, const std::unique_ptr<NotifyPool> &notifyPool,
                          std::map<HcclIpAddress, HcclNetDevCtx> &netDevCtxMap,
                          std::shared_ptr<TopoInfoExtractor> topoInfoEx,
-                         const bool isUsedRdmaOuter = false,
+                         const bool isUsedRdmaLevel0 = false,
                          const TopoType topoFlag = TopoType::TOPO_TYPE_COMMON,
                          const DevType deviceType = DevType::DEV_TYPE_910,
                          const std::vector<RankInfo> rankVector = std::vector<RankInfo>(0),
@@ -100,7 +100,9 @@ public:
                                const DeviceMem &inputMem,
                                const DeviceMem &outputMem,
                                const CommParaInfo &commParaInfo,
-                               std::vector<std::unique_ptr<CommBase> > &commVec);
+                               std::vector<std::unique_ptr<CommBase> > &commVec,
+                               DeviceMem expMem = DeviceMem()
+                               );
 
     // 提供bcast多环使用,根据指定root节点,获取与当前userrank所在同一平面的子root节点
     u32 GetSubRootUserRank(const u32 userRank, const u32 rootUserRank);
@@ -108,7 +110,7 @@ public:
     // 提供scatter使用,根据指定root节点和当前节点的userRank,获取与当前userRank所在同一平面的子root节点
     u32 GetSubRootForScatter(const u32 root);
     // 提供网口裁剪使用，在无节点间通信域场景下，获取本rank在节点间子通信域(多平面)内当前平面的rank号
-    u32 GetInnerCommRank(const u32 ringIdx);
+    u32 GetLevel1CommRank(const u32 ringIdx);
     HcclResult SetHDCModeInfo(
         std::unordered_map<std::string, std::map<u32, HcclIpAddress>> &rankDevicePhyIdNicInfoMap,
         std::vector<u32> &ranksPort, bool isSetHDCModeInfo, bool isUseRankPort);
@@ -149,7 +151,7 @@ private:
 
     HcclResult CreateCommMesh(const std::string &tag, const DeviceMem &inputMem, const DeviceMem &outputMem,
         const CommParaInfo &commParaInfo, const std::vector<std::vector<RankInfo> > &commPlaneVec,
-        bool isUsedRdma, std::vector<std::unique_ptr<CommBase> > &commVec);
+        bool isUsedRdma, std::vector<std::unique_ptr<CommBase> > &commVec, DeviceMem &expMem);
 
     HcclResult CreateCommP2P(const std::string &tag, const DeviceMem &inputMem, const DeviceMem &outputMem,
         const CommParaInfo &commParaInfo, const std::vector<std::vector<RankInfo> > &commPlaneVec,
@@ -181,7 +183,7 @@ private:
     const std::unique_ptr<NotifyPool> &notifyPool_;
     std::map<HcclIpAddress, HcclNetDevCtx> &netDevCtxMap_;
     std::shared_ptr<TopoInfoExtractor> topoInfoEx_;
-    const bool isUsedRdmaOuter_;
+    const bool isUsedRdmaLevel0_;
 
     // 保存所有级别的通信rank关系, CommPlaneVector_[CommPlane][ringIndex]: 第CommPlane级 第ringIndex个环
     std::vector<std::vector<std::vector<RankInfo> > > CommPlaneVector_;

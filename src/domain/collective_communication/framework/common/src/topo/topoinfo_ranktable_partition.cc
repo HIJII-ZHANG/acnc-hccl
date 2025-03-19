@@ -54,7 +54,7 @@ HcclResult TopoinfoRanktablePartition::GenerateSubRankTable(const uint32_t rankN
         CHK_PRT_RET(
             iter == rankInfoMap.end(),
             HCCL_ERROR("[TopoinfoRanktablePartition][GenerateSubRankTable]errNo[0x%016llx], " \
-                "fail to find target rank[%u] in the global communication.",
+                "fail to find target rank[%u] in the global communicator.",
                 HCCL_ERROR_CODE(HCCL_E_PARA), rankId),
             HCCL_E_PARA);
 
@@ -73,7 +73,7 @@ HcclResult TopoinfoRanktablePartition::GenerateSubRankTable(const uint32_t rankN
         HCCL_INFO(
             "[TopoinfoRanktablePartition][GenerateSubRankTable]" \
             "Pick rank[%u] from global comm as rank[%u] in sub comm, " \
-            "severId[%s], serverIdx[%u], superPodId[%s], superDeviceId[%u], devicePhyId[%d]",
+            "severId[%s], serverIdx[%u], superPodId[%s], superDeviceId[%u], devicePhyId[%d].",
             rankId, i, rankInfo.serverId.c_str(), rankInfo.serverIdx, rankInfo.superPodId.c_str(),
             rankInfo.superDeviceId, rankInfo.deviceInfo.devicePhyId);
     }
@@ -102,7 +102,7 @@ HcclResult TopoinfoRanktablePartition::GetRankTableStr(const hccl::RankTable_t &
 {
     nlohmann::json basicJson;
     HcclResult ret = Struct2JsonRankTable(subRankTable, globalParams_.deviceType, basicJson);
-    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_WARNING("cluster info to json failed, ret[%d]", ret), HCCL_E_INTERNAL);
+    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_RUN_WARNING("cluster info to json failed, ret[%d].", ret), HCCL_E_INTERNAL);
     rankTableStr = std::move(basicJson.dump());
     return HCCL_SUCCESS;
 }

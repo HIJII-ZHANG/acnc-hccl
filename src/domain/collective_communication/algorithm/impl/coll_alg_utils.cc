@@ -90,6 +90,41 @@ bool UseLevel2RingAlgo(AlgType algType)
 HcclResult SetInterServerNHRAlgo(AlgType &algType)
 {
     switch (algType) {
+        case AlgType::ALG_8P_RING_PLUS_PIPELINE:
+        case AlgType::ALG_8P_RING_PLUS_HD:
+        case AlgType::ALG_8P_RING_PLUS_NHR_V1:
+        case AlgType::ALG_8P_RING_PLUS_RING:
+        case AlgType::ALG_8P_RING_PLUS_NB:
+            algType = AlgType::ALG_8P_RING_PLUS_NHR;
+            break;
+        case AlgType::ALG_4P_MESH_PLUS_PIPELINE:
+        case AlgType::ALG_4P_MESH_PLUS_HD:
+        case AlgType::ALG_4P_MESH_PLUS_NHR_V1:
+        case AlgType::ALG_4P_MESH_PLUS_RING:
+        case AlgType::ALG_4P_MESH_PLUS_NB:
+            algType = AlgType::ALG_4P_MESH_PLUS_NHR;
+            break;
+        case AlgType::ALG_2P_MESH_PLUS_PIPELINE:
+        case AlgType::ALG_2P_MESH_PLUS_HD:
+        case AlgType::ALG_2P_MESH_PLUS_NHR_V1:
+        case AlgType::ALG_2P_MESH_PLUS_RING:
+        case AlgType::ALG_2P_MESH_PLUS_NB:
+            algType = AlgType::ALG_2P_MESH_PLUS_NHR;
+            break;
+        case AlgType::ALG_1P_MESH_PLUS_PIPELINE:
+        case AlgType::ALG_1P_MESH_PLUS_HD:
+        case AlgType::ALG_1P_MESH_PLUS_NHR_V1:
+        case AlgType::ALG_1P_MESH_PLUS_RING:
+        case AlgType::ALG_1P_MESH_PLUS_NB:
+            algType = AlgType::ALG_1P_MESH_PLUS_NHR;
+            break;
+        case AlgType::ALG_4P_RING_PLUS_PIPELINE:
+        case AlgType::ALG_4P_RING_PLUS_HD:
+        case AlgType::ALG_4P_RING_PLUS_NHR_V1:
+        case AlgType::ALG_4P_RING_PLUS_RING:
+        case AlgType::ALG_4P_RING_PLUS_NB:
+            algType = AlgType::ALG_4P_RING_PLUS_NHR;
+            break;
         case AlgType::ALG_NP_SINGLE_RING_PLUS_PIPELINE:
         case AlgType::ALG_NP_SINGLE_RING_PLUS_HD:
         case AlgType::ALG_NP_SINGLE_RING_PLUS_NHR_V1:
@@ -97,9 +132,19 @@ HcclResult SetInterServerNHRAlgo(AlgType &algType)
         case AlgType::ALG_NP_SINGLE_RING_PLUS_NB:
             algType = AlgType::ALG_NP_SINGLE_RING_PLUS_NHR;
             break;
+        case AlgType::ALG_NP_DOUBLE_RING_PLUS_PIPELINE:
         case AlgType::ALG_DOUBLE_RING_PLUS_HD:
         case AlgType::ALG_DOUBLE_RING_PLUS_RING:
+        case AlgType::ALG_NP_DOUBLE_RING_PLUS_NHR_V1:
+        case AlgType::ALG_NP_DOUBLE_RING_PLUS_NB:
             algType = AlgType::ALG_DOUBLE_RING_PLUS_NHR;
+            break;
+        case AlgType::ALG_NP_MESH_PLUS_PIPELINE:
+        case AlgType::ALG_NP_MESH_PLUS_HD:
+        case AlgType::ALG_NP_MESH_PLUS_NHR_V1:
+        case AlgType::ALG_NP_MESH_PLUS_RING:
+        case AlgType::ALG_NP_MESH_PLUS_NB:
+            algType = AlgType::ALG_NP_MESH_PLUS_NHR;
             break;
         default:
             break;
@@ -272,6 +317,14 @@ bool IsAlltoAllvcSatisfyBufferSize(const OpParam& param, u32 userRankSize) {
         }
     }
     return true;
+}
+
+bool IsSupportUnifiedMarch(const OpParam& param, const TopoType& topoType, u32 serverNum, u32 superPodNum)
+{
+    bool isGraphMode = (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB);
+    bool isDoubleRing = topoType == TopoType::TOPO_TYPE_NP_DOUBLE_RING;
+    bool isSingleServer = (serverNum == 1) && (superPodNum == 1);
+    return (param.aicpuUnfoldMode) && isDoubleRing && isGraphMode && isSingleServer;
 }
 
 bool IsSupportDirectFullmeshForAlltoallv(const OpParam& param, DevType deviceType, bool useSuperPodMode, u32 serverNum,
@@ -549,5 +602,153 @@ bool IsHcclOpInplace(const HcclCMDType &opType, const OpParam &param, u32 userRa
             break;
     }
     return IsInputOutputOverlap(param, inputDataSize, outputDataSize, isInplaceStatus);
+}
+
+bool CheckUserInMemNotLargerThanCCLInMem(const HcclCMDType &opType, OpParam &param,
+    u64 commInputSize, u32 userRankSize)
+{
+    u32 unitSize = SIZE_TABLE[param.DataDes.dataType];
+    u64 dataSize = 0;
+    if (opType == HcclCMDType::HCCL_CMD_REDUCE_SCATTER) {
+        dataSize = param.DataDes.count * unitSize * userRankSize;
+    } else if (opType == HcclCMDType::HCCL_CMD_ALLREDUCE) {
+        dataSize = param.DataDes.count * unitSize;
+    }
+
+    if (dataSize <= commInputSize) {
+        HCCL_INFO("[CollAlgOperator][OpRetry][AICPU] UserInMem[%llu] <= CCLInMem[%llu]", dataSize, commInputSize);
+    } else {
+        HCCL_INFO("[CollAlgOperator][OpRetry][AICPU] UserInMem[%llu] > CCLInMem[%llu]", dataSize, commInputSize);
+    }
+    return dataSize <= commInputSize;
+}
+
+bool ExecutorOnlySupportDMAReduce(const std::string& algName)
+{
+    return (algName == "AllReduceMeshSmallCountExecutor") || (algName == "ReduceScatterDeterExecutor");
+}
+
+bool ExecutorCanSupportDMAReduce(const std::string& algName)
+{
+    const std::set<std::string> executorCanSupportDMAReduceSet = {
+        "AllReduceRingFor91093Executor", "AllReduceDoubleRingConcurrentExecutor",
+        "AllReduceFastDoubleRingFor91093Executor", "AlignedAllReduceDoubleRingFor91093Executor",
+        "ReduceScatterRingFor91093Executor", "ReduceScatterDoubleRingConcurrentExecutor",
+        "ReduceScatterFastDoubleRingFor91093Executor", "AlignedReduceScatterDoubleRingFor91093Executor"
+        };
+    if (executorCanSupportDMAReduceSet.find(algName) != executorCanSupportDMAReduceSet.end()) {
+        return true;
+    }
+    return false;
+}
+
+bool ExecutorNoSupportDMAReduce(const std::string& algName)
+{
+    return (algName == "AllReduceComm") || (algName == "ReduceScatterComm");
+}
+
+bool ExecutorSupportInPlace(OpParam &param, const std::string& algName, bool retryEnable,
+    InplaceSupportRetryStatus &inPlaceSupportRetryStatus)
+{
+    // case 2.2
+    if (ExecutorOnlySupportDMAReduce(algName)) {
+        if (retryEnable) {
+            HCCL_INFO("[CollAlgOperator][OpRetry][AICPU]ExecutorOnlySupportDMAReduce[%s] is not allowed"
+                " for inplace case, the executor without DMAReduce will be applied.", algName.c_str());
+            inPlaceSupportRetryStatus = InplaceSupportRetryStatus::RETRY_1_ALLOW_NO_DMA_REDUCE_CASE1;
+            return true;
+        }
+        HCCL_INFO("[CollAlgOperator][OpRetry][AICPU]ExecutorOnlySupportDMAReduce[%s] is not allowed"
+            " for inplace case.", algName.c_str());
+        inPlaceSupportRetryStatus = InplaceSupportRetryStatus::RETRY_0_NOT_ALLOW_NO_DMA_REDUCE_CASE1;
+        return false;
+    } else if (ExecutorNoSupportDMAReduce(algName)) {
+        HCCL_INFO("[CollAlgOperator][OpRetry][AICPU]ExecutorNoSupportDMAReduce[%s] is allowed"
+            " for inplace case.", algName.c_str());
+        inPlaceSupportRetryStatus = InplaceSupportRetryStatus::ALWAYS_NO_DMA_REDUCE;
+        return true;
+    } else if (ExecutorCanSupportDMAReduce(algName)) {
+        if (retryEnable) {
+            // 对应的executor会感应RetryEnable环境变量，走非DMA削减逻辑
+            HCCL_INFO("[CollAlgOperator][OpRetry][AICPU]ExecutorCanSupportDMAReduce[%s] is not allowed"
+                " for inplace case, the executor without DMAReduce will be applied.", algName.c_str());
+            inPlaceSupportRetryStatus = InplaceSupportRetryStatus::RETRY_1_ALLOW_NO_DMA_REDUCE_CASE2;
+            return true;
+        }
+        HCCL_INFO("[CollAlgOperator][OpRetry][AICPU]ExecutorCanSupportDMAReduce[%s] is not allowed"
+            " for inplace case.", algName.c_str());
+        inPlaceSupportRetryStatus = InplaceSupportRetryStatus::RETRY_0_NOT_ALLOW_NO_DMA_REDUCE_CASE2;
+        return false;
+    } else {
+        HCCL_INFO("[CollAlgOperator][OpRetry][AICPU]The unknown executor[%s] does not support "
+            "for an inplace case yet.", algName.c_str());
+        inPlaceSupportRetryStatus = InplaceSupportRetryStatus::UNKONWN_EXECUTOR;
+        return false;
+    }
+}
+
+bool FitRetryConditionforInPlaceOp(
+    const HcclCMDType &opType, OpParam &param, const std::string& algName, u64 commInputSize, u32 userRankSize,
+    bool retryEnable,
+    InplaceSupportRetryStatus &inPlaceSupportRetryStatus)
+{
+    // case 1 allgather or broadcast
+    if (opType == HcclCMDType::HCCL_CMD_ALLGATHER ||
+        opType == HcclCMDType::HCCL_CMD_BROADCAST) {
+        inPlaceSupportRetryStatus = InplaceSupportRetryStatus::AG_BD_CASE;
+        return true;
+    }
+    // case 2 reducescatter or allreduce
+    if (opType == HcclCMDType::HCCL_CMD_REDUCE_SCATTER ||
+        opType == HcclCMDType::HCCL_CMD_ALLREDUCE) {
+        // case 2.1
+        if (CheckUserInMemNotLargerThanCCLInMem(opType, param, commInputSize, userRankSize)) {
+            // case 2.4: 在hccl_communicator.cc的ExecOp之前已经该让图模式走单算子模式了，理论上不会进入此条件
+            HCCL_INFO("[CollAlgOperator][OpRetry][AICPU]The retry with inplace case is expected to be supported, "
+                "therefore HcclWorkflowMode is set to [%u]",
+                static_cast<u8>(GetWorkflowMode()));
+            return ExecutorSupportInPlace(param, algName, retryEnable, inPlaceSupportRetryStatus);
+        } else {
+            // case 2.3 UsrIn > CCLIn
+            inPlaceSupportRetryStatus = InplaceSupportRetryStatus::USER_LARGER_THAN_CCL;
+            return false;
+        }
+    }
+    // 其他算子类型不支持
+    inPlaceSupportRetryStatus = InplaceSupportRetryStatus::NOT_BASIC_OP_CASE;
+    return false;
+}
+
+u32 CalGCD(std::vector<u32> &nums)
+{
+    if (nums.size() == 0) {
+        return 1;
+    }
+    std::sort(nums.begin(), nums.end(), [](const u32 &num1, const u32 &num2) {
+        return num1 > num2;
+    });
+
+    u32 curGcd = nums[0];
+    for (u32 i = 1; i < nums.size(); i++) {
+        curGcd = CalGCD(curGcd, nums[i]);
+    }
+    HCCL_DEBUG("[CalGCD]size[%u], gcd[%u]", nums.size(), curGcd);
+    return curGcd;
+}
+
+u32 CalGCD(u32 a, u32 b)
+{
+    if (a == 0 || b == 0) {
+        return 1;
+    }
+
+    u32 gcd = b;
+    while (a % b != 0) {
+        gcd = a % b;
+        a = b;
+        b = gcd;
+    }
+    HCCL_DEBUG("[CalGCD]a[%u] b[%u], gcd[%u]", a, b, gcd);
+    return gcd;
 }
 }

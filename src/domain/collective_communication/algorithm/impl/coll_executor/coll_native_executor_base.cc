@@ -105,38 +105,38 @@ HcclResult CollNativeExecutorBase::CalcLevel1CommInfo(TransportMemType inputType
     TransportMemType outputType,
     std::vector<LevelNSubCommTransport>& opTransport)
 {
-    HCCL_INFO("[CollNativeExecutorBase][CalcInnerCommInfo]tag[%s] start", tag_.c_str());
+    HCCL_INFO("[CollNativeExecutorBase][CalcLevel1CommInfo]tag[%s] start", tag_.c_str());
     u32 root = root_;
     if (opType_ == HcclCMDType::HCCL_CMD_BROADCAST && topoAttr_.superPodNum > 1) {
         root = topoMatcher_->GetSubRootWithSuperPod(topoAttr_.userRank, root_);
-        HCCL_DEBUG("[CollNativeExecutorBase][CalcInnerCommInfo]tag[%s] subroot is %u usrRank is %u root_ is %u",
+        HCCL_DEBUG("[CollNativeExecutorBase][CalcLevel1CommInfo]tag[%s] subroot is %u usrRank is %u root_ is %u",
             tag_.c_str(), root, topoAttr_.userRank, root_);
     }
         CommParaInfo commParaLevel1(COMM_LEVEL1, CommType::COMM_TAG_MAX, root);
 
     if (UseInterServerRingAlgo(algType_)) {
         commParaLevel1.commType = CommType::COMM_TAG_RING_INNER;
-        HCCL_INFO("[CollNativeExecutorBase][CalcInnerCommInfo]tag[%s] Calc RingCommInfo", tag_.c_str());
+        HCCL_INFO("[CollNativeExecutorBase][CalcLevel1CommInfo]tag[%s] Calc RingCommInfo", tag_.c_str());
     } else if (UseInterServerNHRAlgo(algType_)) {
         commParaLevel1.commType = CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING;
-        HCCL_INFO("[CollNativeExecutorBase][CalcInnerCommInfo]tag[%s] Calc NHRCommInfo", tag_.c_str());
+        HCCL_INFO("[CollNativeExecutorBase][CalcLevel1CommInfo]tag[%s] Calc NHRCommInfo", tag_.c_str());
     } else if (UseInterServerNHRV1Algo(algType_)) {
         commParaLevel1.commType = CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING_V1;
-        HCCL_INFO("[CollNativeExecutorBase][CalcInnerCommInfo]tag[%s] Calc NHRV1CommInfo", tag_.c_str());
+        HCCL_INFO("[CollNativeExecutorBase][CalcLevel1CommInfo]tag[%s] Calc NHRV1CommInfo", tag_.c_str());
     } else if (UseInterServerAHCAlgo(algType_)) {
         commParaLevel1.commPlane = CommPlane::COMM_LEVEL1_AHC;
         commParaLevel1.commType = CommType::COMM_TAG_ASYMMETRIC_HIERARCHICAL_CONCATENATE;
-        HCCL_INFO("[CollNativeExecutorBase][CalcInnerCommInfo]tag[%s] Calc AHCCommInfo", tag_.c_str());
+        HCCL_INFO("[CollNativeExecutorBase][CalcLevel1CommInfo]tag[%s] Calc AHCCommInfo", tag_.c_str());
     } else if (UseInterServerAHCBrokeAlgo(algType_)) {
         commParaLevel1.commPlane = CommPlane::COMM_LEVEL1_AHC;
         commParaLevel1.commType = CommType::COMM_TAG_ASYMMETRIC_HIERARCHICAL_CONCATENATE_BROKE;
-        HCCL_INFO("[CollNativeExecutorBase][CalcInnerCommInfo]tag[%s] Calc AHCBrokeCommInfo", tag_.c_str());
+        HCCL_INFO("[CollNativeExecutorBase][CalcLevel1CommInfo]tag[%s] Calc AHCBrokeCommInfo", tag_.c_str());
     } else if (UseInterServerNBAlgo(algType_)) {
         commParaLevel1.commType = CommType::COMM_TAG_NONUNIFORM_BRUCK;
-        HCCL_INFO("[CollNativeExecutorBase][CalcInnerCommInfo]tag[%s] Calc NBCommInfo", tag_.c_str());
+        HCCL_INFO("[CollNativeExecutorBase][CalcLevel1CommInfo]tag[%s] Calc NBCommInfo", tag_.c_str());
     } else {
         commParaLevel1.commType = CommType::COMM_TAG_HALVING_DOUBLING;
-        HCCL_INFO("[CollNativeExecutorBase][CalcInnerCommInfo]tag[%s] Calc HDCommInfo", tag_.c_str());
+        HCCL_INFO("[CollNativeExecutorBase][CalcLevel1CommInfo]tag[%s] Calc HDCommInfo", tag_.c_str());
     }
     commParaLevel1.forceRdma = false;
     CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel1, opTransport[commParaLevel1.commPlane], inputType, outputType));
@@ -152,7 +152,7 @@ HcclResult CollNativeExecutorBase::CalcLevel1CommInfo(TransportMemType inputType
         outputType));
         HCCL_INFO("[CollNativeExecutorBase][COMM_LEVEL1_ANYPATH]tag[%s] Calc CommInfo Finish", tag_.c_str());
     }
-    HCCL_INFO("[CollNativeExecutorBase][CalcInnerCommInfo]tag[%s] Calc CommInfo Finish", tag_.c_str());
+    HCCL_INFO("[CollNativeExecutorBase][CalcLevel1CommInfo]tag[%s] Calc CommInfo Finish", tag_.c_str());
 
     return HCCL_SUCCESS;
 }
@@ -337,9 +337,9 @@ bool CollNativeExecutorBase::OpSyncCheckCommSize(const CommPlane levelIndex, con
 
 HcclResult CollNativeExecutorBase::InplaceOpSync(OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollNativeExecutorBase][InplaceOpSync] The op with param.isInplacePreSync[%d] "
-        "or param.isPostSync[%d] starts.",
-        param.isInplacePreSync, param.isPostSync);
+    HCCL_INFO("[CollNativeExecutorBase][InplaceOpSync] The op with algOpContext_.opRetryHandler.isInplacePreSync[%d] "
+        "or algOpContext_.opRetryHandler.isPostSync[%d] starts.",
+        algOpContext_.opRetryHandler.isInplacePreSync, algOpContext_.opRetryHandler.isPostSync);
     u32 level0ServerIndex = 0;
     if (OpSyncCheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1)) {
         SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
@@ -378,9 +378,9 @@ HcclResult CollNativeExecutorBase::InplaceOpSync(OpParam &param, ExecMem &execMe
         HCCL_INFO("[CollNativeExecutorBase][InplaceOpSync]combineOrderCommInfo.links check starts again.");
         CHK_RET(SendRecvSignalOnLinks(param, execMem, combineOrderCommInfo.links));
     }
-    HCCL_INFO("[CollNativeExecutorBase][InplaceOpSync] The op with param.isInplacePreSync[%d] "
-        "or param.isPostSync[%d] ends.",
-        param.isInplacePreSync, param.isPostSync);
+    HCCL_INFO("[CollNativeExecutorBase][InplaceOpSync] The op with algOpContext_.opRetryHandler.isInplacePreSync[%d] "
+        "or algOpContext_.opRetryHandler.isPostSync[%d] ends.",
+        algOpContext_.opRetryHandler.isInplacePreSync, algOpContext_.opRetryHandler.isPostSync);
     return HCCL_SUCCESS;
 }
 }

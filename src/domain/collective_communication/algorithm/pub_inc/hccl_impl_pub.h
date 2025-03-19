@@ -16,7 +16,7 @@
 #include "heartbeat_pub.h"
 
 namespace hccl {
-constexpr u32 OUTER_BRIDGE_RANK_ID = 0;
+constexpr u32 LEVEL0_BRIDGE_RANK_ID = 0;
 
 constexpr s32 PROF_RANKSIZE_OFFSET_OF_PLANEID = 16;
 constexpr s32 PROF_RINGINDEX_OFFSET_OF_PLANEID = 28;
@@ -28,7 +28,7 @@ constexpr u32 PROF_STAGE_2 = 2;
 constexpr u8 DETERMINISTIC_CONFIG_DISABLE = 0;  // 不开启确定性计算
 constexpr u8 DETERMINISTIC_CONFIG_ENABLE = 1;   // 开启确定性计算
 
-using innerStreamInfo_t = struct InnerStreamInfo {
+using level1StreamInfo_t = struct Level1StreamInfo {
     u32 ringNum; /* 至少有1个ring */
     std::vector<std::shared_ptr<LocalNotify>> ringSignal;
     std::vector<std::shared_ptr<LocalNotify>> ringSignalAux;
@@ -39,23 +39,23 @@ using innerStreamInfo_t = struct InnerStreamInfo {
     std::vector<std::shared_ptr<LocalNotify>> ringDeviceSignal;
     std::vector<std::shared_ptr<LocalNotify>> ringDeviceSignalAux;
 
-    InnerStreamInfo() : ringNum(1)
+    Level1StreamInfo() : ringNum(1)
     {
     }
 };
 
-using tagStreamInfo_t = std::map<std::string, InnerStreamInfo>;
+using tagStreamInfo_t = std::map<std::string, Level1StreamInfo>;
 
 using CommInfo = struct TagCommInfo {
-    std::vector<std::unique_ptr<CommBase> > commInner;
-    std::vector<std::unique_ptr<CommBase> > commInnerRdma;
-    std::vector<std::unique_ptr<CommBase> > commOuter;
-    std::vector<std::unique_ptr<CommBase> > commOuterRdma;
+    std::vector<std::unique_ptr<CommBase> > commLevel1;
+    std::vector<std::unique_ptr<CommBase> > commLevel1Rdma;
+    std::vector<std::unique_ptr<CommBase> > commLevel0;
+    std::vector<std::unique_ptr<CommBase> > commLevel0Rdma;
     std::vector<std::unique_ptr<CommBase> > commLevel2;
     std::vector<std::unique_ptr<CommBase> > commP2P;
     std::unique_ptr<CommBase> commIntraServer;
 
-    TagCommInfo() : commInner(0), commInnerRdma(0), commOuter(0), commOuterRdma(0), commP2P(0), commIntraServer(nullptr)
+    TagCommInfo() : commLevel1(0), commLevel1Rdma(0), commLevel0(0), commLevel0Rdma(0), commP2P(0), commIntraServer(nullptr)
     {
     }
 };
@@ -64,7 +64,7 @@ using tagCommInfo_t = std::map<std::string, CommInfo>;
 using HcclAlgoAttr = struct HcclAlgoAttrDef {
     bool isHaveCpuRank;              // 是否有cpu参与通信
     bool inlineReduceSwitchOn;       // 收到数量时同时完成Reduce计算
-    bool isUsedRdmaOuter;            // Outer 通信域是否使用RDMA
+    bool isUsedRdmaLevel0;            // Level0 通信域是否使用RDMA
     bool isUsedInterHccsMode;       // 超节点内节点间是否使用HCCS模式
     std::string identifier;
     std::string collectiveId;
@@ -74,7 +74,7 @@ using HcclAlgoAttr = struct HcclAlgoAttrDef {
     HcclAlgoAttrDef()
         : isHaveCpuRank(false),
         inlineReduceSwitchOn(true),
-        isUsedRdmaOuter(false),
+        isUsedRdmaLevel0(false),
         isUsedInterHccsMode(false),
         identifier(""),
         collectiveId(""),
@@ -91,6 +91,9 @@ using HcclTopoAttr = struct HcclTopoAttrDef {
     u32 deviceNumPerAggregation;     // 每个module中的Device数量
     bool multiModuleDiffDeviceNumMode; // 每个module内的设备数是否相等，如果不相同即为多module不同卡模式 （走大RING环）
     bool multiSuperPodDiffServerNumMode; // 每个超节点内的server数是否相等
+    
+    bool isDiffDeviceType;
+    u32 gcdDeviceNumPerAggregation;
 
     u32 meshAggregationRankSize;
     bool isDiffDeviceModule;
@@ -110,6 +113,7 @@ using HcclTopoAttr = struct HcclTopoAttrDef {
     DevType deviceType;
     bool isStandardCard;
     bool is310PDuoCard;
+    bool isCommon310P3DUO; // 310p duo 2卡4芯场景
     s32 hccsPortNum;
 
     std::vector<u32> nicList;
@@ -125,6 +129,8 @@ using HcclTopoAttr = struct HcclTopoAttrDef {
         deviceNumPerAggregation(0),
         multiModuleDiffDeviceNumMode(false),
         multiSuperPodDiffServerNumMode(false),
+        isDiffDeviceType(false),
+        gcdDeviceNumPerAggregation(0),
         meshAggregationRankSize(0),
         isDiffDeviceModule(false),
         isSingleMeshAggregation(false),
@@ -139,6 +145,7 @@ using HcclTopoAttr = struct HcclTopoAttrDef {
         deviceType(DevType::DEV_TYPE_COUNT),
         isStandardCard(false),
         is310PDuoCard(false),
+        isCommon310P3DUO(false),
         hccsPortNum(-1),
         nicList(0),
         pairLinkCounter(0),

@@ -20,6 +20,8 @@
 
 namespace hccl {
 const u32 DISPLAY_RANKNUM_PERLINE = 8;
+const s32 SOCKET_ACCEPT_TIMEOUT = 60;  //Server调用Accept等待的最大超时时间 60s
+const u32 SOCKET_PRINT_COUNT = 3;    //未建链打印的数量
 using namespace std;
 TopoInfoExchangeServer::TopoInfoExchangeServer(HcclIpAddress &hostIP, u32 hostPort,
     const std::vector<HcclIpAddress> whitelist, HcclNetDevCtx netDevCtx,
@@ -102,6 +104,8 @@ HcclResult TopoInfoExchangeServer::Connect(std::map<std::string, std::shared_ptr
     auto timeout = std::chrono::seconds(GetExternalInputHcclLinkTimeOut());
     u32 expectSocketNum = 1;
     u32 previousRankNum = 0;
+    bool isFirstAcceptTimeOut = false;
+
     while (expectSocketNum > 0) {
         if ((std::chrono::steady_clock::now() - startTime) >= timeout) {
             HCCL_ERROR("[Get][Connection]topo exchange server get socket timeout! timeout[%d s]",
@@ -112,7 +116,7 @@ HcclResult TopoInfoExchangeServer::Connect(std::map<std::string, std::shared_ptr
 
         std::shared_ptr<HcclSocket> socket;
         std::string tag = TOPO_DETECT_TAG + "_" + identifier_ + "_" + std::to_string(hostPort_);
-        HcclResult ret = listenSocket_->Accept(tag, socket);
+        HcclResult ret = listenSocket_->Accept(tag, socket, SOCKET_ACCEPT_TIMEOUT);
         if (ret == HCCL_SUCCESS) {
             HCCL_INFO("listenSocket_->Accept completed.");
             u32 rankNum = 0;
@@ -121,8 +125,66 @@ HcclResult TopoInfoExchangeServer::Connect(std::map<std::string, std::shared_ptr
             CHK_RET(VerifyRemoteRankNum(previousRankNum, rankNum));
 
             expectSocketNum -= 1;
+            isFirstAcceptTimeOut = false;
+        } else if (ret == HCCL_E_TIMEOUT) {
+            HCCL_INFO("listenSocket_->Accept TimeOut[%lld s]", SOCKET_ACCEPT_TIMEOUT);
+            if (isFirstAcceptTimeOut) {
+                continue;
+            }
+            isFirstAcceptTimeOut = true;
+
+            DisplayConnectingStatus(previousRankNum, expectSocketNum, connectSockets);
+        } else if (ret == HCCL_E_TCP_CONNECT) {
+            HCCL_INFO("listenSocket_->Accept E_TCP_CONNECT");
+            continue;
         }
     }
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoInfoExchangeServer::DisplayConnectingStatus(u32 totalSockets, u32 waitSockets,
+    const std::map<std::string, std::shared_ptr<HcclSocket>> &connectSockets)
+{
+    // 单算子模式阶段性打印内容
+    if (!isByMasterInfo_) {
+        std::vector<bool> rankinfos(totalSockets, false);
+        for (auto it : connectSockets) { //建立映射
+            u32 rankid = 0;
+            CHK_RET(SalStrToULong(it.first, HCCL_BASE_DECIMAL, rankid));
+            rankinfos.at(rankid) = true;
+        }
+
+        u32 unRankCount = 0;// 只打印前三条未建链的rank
+        std::vector<string> unsocketinfos;
+        for (u32 rankid = 0 ; rankid < totalSockets; rankid++) {
+            if (unRankCount >= SOCKET_PRINT_COUNT) {
+                break;
+            }
+            if (!rankinfos[rankid]) {
+                unRankCount++;
+                std::string rankID = std::to_string(rankid);
+                std::string agentID = std::string(16 - rankID.length(), '0') + rankID;
+                unsocketinfos.push_back(agentID);
+            }
+        }
+
+        std::string infoStr = "succ sockets is [" + std::to_string((totalSockets - waitSockets)) +
+            "], waiting sockets is [" + std::to_string(waitSockets) + "], wait sockets rankid: ";
+        for (u32 index = 0; index < unsocketinfos.size(); index++) {
+            if (index == (unsocketinfos.size()-1)) {
+                infoStr += "["+ unsocketinfos[index]  +"]";
+            } else {
+                infoStr += "["+ unsocketinfos[index]  +"],";
+            }
+        }
+
+        HCCL_RUN_INFO("[HCCL_TRACE] %s", infoStr.c_str());
+    } else {
+        std::string infoStr = "connected Ranks[" + std::to_string(totalSockets - waitSockets) +
+        "], waiting Ranks[" + std::to_string(waitSockets) + "]";
+        HCCL_RUN_INFO("[HCCL_TRACE] %s , isByMasterInfo[%d]", infoStr.c_str(), isByMasterInfo_);
+    }
+
     return HCCL_SUCCESS;
 }
 

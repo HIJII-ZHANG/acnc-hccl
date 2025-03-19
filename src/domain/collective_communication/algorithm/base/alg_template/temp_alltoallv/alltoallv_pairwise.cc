@@ -111,7 +111,7 @@ HcclResult AlltoAllVPairWise::RunBCopyAlltoAll(const u32 rank, const u32 rankSiz
         CHK_SMART_PTR_NULL(prevTransport);
         CHK_SMART_PTR_NULL(nextTransport);
 
-        HCCL_DEBUG("[AlltoAllVPairWise][RunBCopyAlltoAll]:prevRank[%u] nextRank[%u], step[%u]", prevRank, nextRank, i);
+        HCCL_DEBUG("[AlltoAllVPairWise][RunBCopyAlltoAll]: prevRank[%u] nextRank[%u], step[%u]", prevRank, nextRank, i);
 
         u64 sendBytes = sendBuffer_.counts[nextRank] * sendDataUnitBytes_;
         u64 recvBytes = recvBuffer_.counts[prevRank] * recvDataUnitBytes_;
@@ -145,7 +145,7 @@ HcclResult AlltoAllVPairWise::RunBCopyAlltoAll(const u32 rank, const u32 rankSiz
 
             HcclResult ret = SendRecv(curSendBytes, curRecvBytes, sendAddr, recvAddr, prevTransport, nextTransport);
             CHK_PRT_RET(ret != HCCL_SUCCESS,
-                HCCL_ERROR("[AlltoAllVPairWise][RunBCopyAlltoAll]errNo[0x%016llx] "\
+                HCCL_ERROR("[AlltoAllVPairWise][RunBCopyAlltoAll]: errNo[0x%016llx] "\
                 "curSendBytes[%llu] curRecvBytes[%llu] sendAddr[%p] recvAddr[%p]",
                 HCCL_ERROR_CODE(ret), curSendBytes, curRecvBytes, sendAddr, recvAddr),
                 ret);

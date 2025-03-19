@@ -11,3 +11,5 @@ set(src_list
 target_sources(hccl_alg PRIVATE
     ${src_list}
 )
+
+add_subdirectory(310P)

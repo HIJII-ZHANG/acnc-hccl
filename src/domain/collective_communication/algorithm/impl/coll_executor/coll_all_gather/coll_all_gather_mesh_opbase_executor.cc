@@ -87,7 +87,7 @@ HcclResult CollAllGatherMeshOpbaseExecutor::KernelRun(const OpParam &param, Exec
 
     // 获取子通信域信息
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
 
     u64 inputMemSize = execMem.inputMem.size();
     u64 baseOffset = 0;
@@ -104,23 +104,23 @@ HcclResult CollAllGatherMeshOpbaseExecutor::KernelRun(const OpParam &param, Exec
         "", execMem.inputPtr, execMem.outputPtr, param.DataDes.count, param.DataDes.dataType, 0, HCCL_REDUCE_RESERVED
     };
 
-    std::unique_ptr<AlgTemplateBase> outerTempAlg;
-    outerTempAlg.reset(
+    std::unique_ptr<AlgTemplateBase> level0TempAlg;
+    level0TempAlg.reset(
         new (std::nothrow) AllgatherMeshDirect(dispatcher_, algResResp_->slaveStreams,
-        algResResp_->notifiesM2S, algResResp_->notifiesS2M, outerCommInfo.localRank, outerCommInfo.localRankSize,
+        algResResp_->notifiesMain, algResResp_->notifiesAux, level0CommInfo.localRank, level0CommInfo.localRankSize,
         topoAttr_.userRank, &opInfo));
-    CHK_SMART_PTR_NULL(outerTempAlg);
-    CHK_RET(outerTempAlg->Prepare(currentOutputMem, currentOutputMem, execMem.inputMem, execMem.count,
-        param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, OUTER_BRIDGE_RANK_ID,
+    CHK_SMART_PTR_NULL(level0TempAlg);
+    CHK_RET(level0TempAlg->Prepare(currentOutputMem, currentOutputMem, execMem.inputMem, execMem.count,
+        param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, LEVEL0_BRIDGE_RANK_ID,
         dataSegsSlice, baseOffset));
 
-    u32 rankSize = outerCommInfo.localRankSize;
-    CHK_RET(outerTempAlg->RegisterProfiler((rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + outerCommInfo.localRank,
+    u32 rankSize = level0CommInfo.localRankSize;
+    CHK_RET(level0TempAlg->RegisterProfiler((rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level0CommInfo.localRank,
         PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-    CHK_RET(RunTemplate(outerTempAlg, outerCommInfo));
+    CHK_RET(RunTemplate(level0TempAlg, level0CommInfo));
 
-    HCCL_INFO("all gather mesh outer run success");
+    HCCL_INFO("all gather mesh level0 run success");
     return HCCL_SUCCESS;
 }
 

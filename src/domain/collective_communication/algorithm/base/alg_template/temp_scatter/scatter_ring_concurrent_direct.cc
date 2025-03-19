@@ -144,7 +144,7 @@ HcclResult ScatterRingConcurrentDirect::SetSlices(const u32 rank, const u32 rank
                        slices_[i].size);
         }
     }
-    if (UNLIKELY(HcclCheckLogLevel(HCCL_LOG_DEBUG) == 1)) {
+    if (UNLIKELY(HcclCheckLogLevel(DLOG_DEBUG))) {
         for (u32 i = 0; i < slices_.size(); i++) {
             HCCL_DEBUG("[ScatterRingConcurrentDirect][SetSlices]rank[%u], slices[%u].offset=[%llu], slices[%u].size=[%llu]",
                     rank, i, slices_[i].offset, i, slices_[i].size);

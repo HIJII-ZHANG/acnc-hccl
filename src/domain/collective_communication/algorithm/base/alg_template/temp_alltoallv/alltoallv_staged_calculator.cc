@@ -57,7 +57,7 @@ void AlltoAllVStagedCalculator::CalcWorkSpaceMemSize(const AlltoAllUserRankInfo 
         HCCL_INFO("[AlltoAllVStagedCalculator][CalcWorkSpaceMemSize] workspaceMemSize is 0, use tiny mem size");
         workspaceMemSize = TINY_MEM_SIZE;
     }
-    HCCL_INFO("[AlltoAllVStagedCalculator][CalcWorkSpaceMemSize] workspaceMemSize[%llu]", workspaceMemSize);
+    HCCL_INFO("[AlltoAllVStagedCalculator][CalcWorkSpaceMemSize]: workspaceMemSize[%llu]", workspaceMemSize);
 }
 // / STATIC MEMBER FUNCTIONS ENDS
 } // namespace hccl

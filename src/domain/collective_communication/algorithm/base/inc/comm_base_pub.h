@@ -21,6 +21,7 @@
 #include "hccl_socket_manager.h"
 #include "transport_pub.h"
 #include "alg_template_base_pub.h"
+#include "workflow_pub.h"
 #include "common.h"
 
 
@@ -43,13 +44,14 @@ public:
                       const std::unique_ptr<NotifyPool> &notifyPool,
                       std::map<HcclIpAddress, HcclNetDevCtx> &netDevCtxMap,
                       const IntraExchanger &exchanger,
-                      const DeviceMem &inputMem, const DeviceMem &outputMem, const bool isUsedRdmaOuter,
+                      const DeviceMem &inputMem, const DeviceMem &outputMem, const bool isUsedRdmaLevel0,
                       const void* transportResourceInfoAddr = nullptr, size_t transportResourceInfoSize = 0,
                       const std::string &tag = "",
                       const NICDeployment nicDeployInner = NICDeployment::NIC_DEPLOYMENT_DEVICE,
                       bool isAlltoAllCommMesh = false, const bool useOneDoorbell = false,
                       const bool isAicpuModeEn = false, const u32 rankRoot = INVALID_UINT,
-                      const bool isHaveCpuRank = false, const bool useSuperPodMode = false);
+                      const bool isHaveCpuRank = false, const bool useSuperPodMode = false,
+                      DeviceMem expMem = DeviceMem());
     virtual ~CommBase();
 
     inline const std::string &CollectiveId() const
@@ -193,7 +195,7 @@ protected:
     std::map <u32, std::vector<std::shared_ptr<HcclSocket> > > intraSocketsMap_;
     const DeviceMem inputMem_;
     const DeviceMem outputMem_;
-    const bool isUsedRdmaOuter_;
+    const bool isUsedRdmaLevel0_;
 
     const void* transportResourceInfoAddr_;
     size_t transportResourceInfoSize_;
@@ -216,6 +218,7 @@ protected:
     bool isAlltoAllCommMesh_;
     NICDeployment nicDeployInner_;
     std::vector<u32> transportStatus_;
+    std::vector<bool> checkStatus_;
     bool isNeedHeterogP2P_;
     bool useOneDoorbell_;
 
@@ -252,6 +255,7 @@ protected:
     bool IsSupportInterHccs(const u32 dstRank); // 是否支持走节点间HCCS通信
     u32 GetInterRemotePort(s32 devicePhyId, u32 dstUserRank);
     void PrintCreateInterLinksInfo(); // 打印当前rank在服务器间建链通信topo对
+    HcclResult CheckExchangeInfo(const std::shared_ptr<Transport> &link, const s32 deviceId);
     const bool isAicpuModeEn_;
     std::unique_ptr<HcclSocketManager> interSocketManager_;
     const u32 subUserRankRoot_;
@@ -260,7 +264,9 @@ protected:
     bool isUseRankPort_{ false };
     bool isHaveCpuRank_{ false };
     bool useSuperPodMode_{ false };
+    const DeviceMem expMem_;
     std::shared_ptr<HcclSocketManager> socketManager_{ nullptr };
+    HcclWorkflowMode workflowMode_{HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE};
 };
 }  // namespace hccl
 

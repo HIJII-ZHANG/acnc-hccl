@@ -73,8 +73,6 @@ private:
     HcclResult RunRDMA();
 
     Stream mainStream_;
-    std::vector<std::shared_ptr<LocalNotify>> meshSignalMainToSub_;
-    std::vector<std::shared_ptr<LocalNotify>> meshSignalSubToMain_;
     u32 userRank_;
     u32 userRankSize_;
     u32 podStartRank_;  // 表示一个pod内起始的userRankId

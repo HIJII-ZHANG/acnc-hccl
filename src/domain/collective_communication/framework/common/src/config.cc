@@ -171,8 +171,8 @@ HcclResult DisplayRanktableInfo(hccl::HcclCommParams &params, hccl::RankTable_t 
     }
     nicName += "],";
     HCCL_DEBUG(
-        "rank_table: \"Unique deviceNum\":\"%u\",  \"Unique serverNum\":\"%u\",  \"para_plane_nic_location\""\
-        ":\"%u\",  \"para_plane_nic_num\":\"%u\",  %s",
+        "rank_table: \"Unique deviceNum\":\"%u\", \"Unique serverNum\":\"%u\", \"para_plane_nic_location\""\
+        ":\"%u\", \"para_plane_nic_num\":\"%u\";%s",
         rankTable.deviceNum, rankTable.serverNum, rankTable.nicDeploy,
         rankTable.nicNum, nicName.c_str());
 
@@ -192,8 +192,8 @@ HcclResult DisplayRanktableInfo(const hccl::RankTable_t &rankTable)
     nicName += "]";
 
     HCCL_INFO(
-        "rank_table: \"Unique deviceNum\":\"%u\",  \"Unique serverNum\":\"%u\",  \"para_plane_nic_location\""\
-        ":\"%u\",  \"para_plane_nic_num\":\"%u\",%s",
+        "rank_table: \"Unique deviceNum\":\"%u\", \"Unique serverNum\":\"%u\", \"para_plane_nic_location\""\
+        ":\"%u\", \"para_plane_nic_num\":\"%u\";%s",
         rankTable.deviceNum, rankTable.serverNum, rankTable.nicDeploy,
         rankTable.nicNum, nicName.c_str());
 
@@ -202,6 +202,7 @@ HcclResult DisplayRanktableInfo(const hccl::RankTable_t &rankTable)
         deviceInfoStr += "{rankID[" + to_string(rankTable.rankList[i].rankId) + "],";
         deviceInfoStr += "serverId[" + rankTable.rankList[i].serverId + "],";
         deviceInfoStr += "deviceId[" + to_string(rankTable.rankList[i].deviceInfo.devicePhyId) + "],";
+        deviceInfoStr += "deviceType[" + to_string(u32(rankTable.rankList[i].deviceInfo.deviceType)) + "],";
         string tmpString = rankTable.rankList[i].deviceInfo.deviceIp[0].GetReadableAddress();
         deviceInfoStr += "deviceIp[" + tmpString + "],";
         tmpString = rankTable.rankList[i].hostIp.GetReadableAddress();

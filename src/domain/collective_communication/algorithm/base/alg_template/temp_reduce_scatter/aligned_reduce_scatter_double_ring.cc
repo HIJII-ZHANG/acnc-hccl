@@ -249,7 +249,7 @@ HcclResult AlignedReduceScatterDoubleRing::MemcpyInitSlices(
     u64 ringIndex, DeviceMem &dstInit, DeviceMem &srcInit, DeviceMem &dstSubInit, DeviceMem &srcSubInit)
 {
     CHK_RET(MemcpyInitSlicesOnMainStreams(ringIndex, dstInit, srcInit));
-    if (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB && (!retryEnable_)) {
+    if (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB && (!disableDMAReduce_)) {
         HCCL_DEBUG("[AlignedReduceScatterDoubleRing][MemcpyInitSlices] no graph mode");
         CHK_RET(LocalNotify::Post(subStreams_[ringIndex + 1], dispatcher_, mainSignals_[ringIndex + 1], profilerInput_.stage));
         CHK_RET(LocalNotify::Wait(subStreams_[ringIndex + 1], dispatcher_, subSignals_[ringIndex + 1], profilerInput_.stage));
@@ -473,7 +473,7 @@ HcclResult AlignedReduceScatterDoubleRing::LocalMemcpy(const u32 step, const u32
     DeviceMem &localSrcMem, DeviceMem &localDstMem)
 {
     // 通过校验流数判断是单算子模式还是图模式
-    if (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB && (!retryEnable_)) {
+    if (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB && (!disableDMAReduce_)) {
         CHK_RET(LocalNotify::Post(subStreams_[ringIndex + 1], dispatcher_, mainSignals_[ringIndex + 1], profilerInput_.stage));
         CHK_RET(LocalNotify::Wait(subStreams_[ringIndex + 1], dispatcher_, subSignals_[ringIndex + 1], profilerInput_.stage));
         if (localSrcMem != localDstMem && step != rankSize - DMA_REDUCE_TWO_OFFSET) {
@@ -636,7 +636,7 @@ HcclResult AlignedReduceScatterDoubleRing::GetActiveSubstreamNum(u32 &activeSubs
 {
     activeSubstreamNum = subStreams_.size();
     if (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB &&
-        retryEnable_) {
+        disableDMAReduce_) {
         if (subStreams_.size() <= 2) {
             HCCL_ERROR("[AlignedReduceScatterDoubleRing][GetActiveSubstreamNum]subStreams_.size()[%zu] <= 2",
                 subStreams_.size());

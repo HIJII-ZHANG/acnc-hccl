@@ -23,12 +23,14 @@ constexpr u32 SERVER_RANK_SIZE = 8;
 TopoInfoExtractor::TopoInfoExtractor(HcclAlgoAttr &algoAttr, HcclTopoAttr &topoAttr, const TopoType topoType)
     : identifier_(algoAttr.identifier), userRank_(topoAttr.userRank), userRankSize_(topoAttr.userRankSize),
       topoType_(topoType), deviceType_(topoAttr.deviceType), rankVector_(topoAttr.rankInfoList),
-      meshAggregationRankSize_(topoAttr.meshAggregationRankSize), isUsedRdmaOuter_(algoAttr.isUsedRdmaOuter),
+      meshAggregationRankSize_(topoAttr.meshAggregationRankSize), isUsedRdmaLevel0_(algoAttr.isUsedRdmaLevel0),
       isUsedInterHccsMode_(algoAttr.isUsedInterHccsMode), isDiffAggregation_(topoAttr.isDiffDeviceModule),
       isConfigAHC_(false),
       isConfigNULL_(false),
       multiModuleDiffDeviceNumMode_(topoAttr.multiModuleDiffDeviceNumMode),
       multiSuperPodDiffServerNumMode_(topoAttr.multiSuperPodDiffServerNumMode),
+      isDiffDeviceType_(topoAttr.isDiffDeviceType),
+      gcdDeviceNumPerAggregation_(topoAttr.gcdDeviceNumPerAggregation),
       isAsymPlanVector_(COMM_LEVEL_RESERVED),
       CommPlaneSubGroupVector_(COMM_LEVEL_RESERVED),
       CommPlaneVector_(COMM_LEVEL_RESERVED)
@@ -38,13 +40,14 @@ TopoInfoExtractor::TopoInfoExtractor(HcclAlgoAttr &algoAttr, HcclTopoAttr &topoA
 // 为了适配老的LLT框架提供的构造函数
 TopoInfoExtractor::TopoInfoExtractor(std::string identifier, u32 userRank, u32 userRankSize, TopoType topoType,
     DevType deviceType, std::vector<RankInfo>& rankVector, u32 meshAggregationRankSize,
-    bool isUsedRdmaOuter, bool isUsedInterHccsMode, bool multiModuleDiffDeviceNumMode,
-    bool multiSuperPodDiffServerNumMode)
+    bool isUsedRdmaLevel0, bool isUsedInterHccsMode, bool multiModuleDiffDeviceNumMode,
+    bool multiSuperPodDiffServerNumMode, bool isDiffDeviceType, u32 gcdDeviceNumPerAggregation)
     : identifier_(identifier), userRank_(userRank), userRankSize_(userRankSize), topoType_(topoType),
       deviceType_(deviceType), rankVector_(rankVector), meshAggregationRankSize_(meshAggregationRankSize),
-      isUsedRdmaOuter_(isUsedRdmaOuter), isUsedInterHccsMode_(isUsedInterHccsMode), isDiffAggregation_(false),
+      isUsedRdmaLevel0_(isUsedRdmaLevel0), isUsedInterHccsMode_(isUsedInterHccsMode), isDiffAggregation_(false),
       multiModuleDiffDeviceNumMode_(multiModuleDiffDeviceNumMode),
       multiSuperPodDiffServerNumMode_(multiSuperPodDiffServerNumMode),
+      isDiffDeviceType_(isDiffDeviceType), gcdDeviceNumPerAggregation_(gcdDeviceNumPerAggregation),
       isConfigAHC_(false),
       isConfigNULL_(false),
       CommPlaneVector_(COMM_LEVEL_RESERVED),
@@ -172,7 +175,7 @@ HcclResult TopoInfoExtractor::SetRankInfo()
         CHK_RET(GetModuleIdx(rankVector_[index], moduleIdx));
         moduleIdxs.insert(moduleIdx);
         // 填充serverRankMap_, 只记录本superPod下的serverIdx -> rankInfo
-        if (rankVector_[index].superPodId == rankData_.superPodId) {
+        if (rankVector_[index].superPodId == rankData_.superPodId || isDiffDeviceType_) {
             auto itServer = serverToRank_.find(moduleIdx);
             if (itServer != serverToRank_.end()) {  // 存在该服务器内相关rank的对应信息
                 itServer->second.push_back(rankVector_[index]);
@@ -211,6 +214,11 @@ HcclResult TopoInfoExtractor::SetRankInfo()
     }
 
     u32 rankNumPerAggregation = userRankSize_ / static_cast<u32>(moduleIdxs.size());
+    if (isDiffDeviceType_) {
+        rankNumPerAggregation = gcdDeviceNumPerAggregation_;
+        HCCL_INFO("[SetRankInfo] isDiffDeviceType[%u] userRankSize[%u] moduleIdxs.size[%u] rankNumPerAggregation[%u]",
+            isDiffDeviceType_, userRankSize_, moduleIdxs.size(), rankNumPerAggregation);
+    }
 
     // 调整每个server内的user_rank排序(server内device id从小到大,但不一定连续)
     for (auto iterMap = serverToRank_.begin(); iterMap != serverToRank_.end(); iterMap++) {
@@ -230,6 +238,14 @@ HcclResult TopoInfoExtractor::SetRankInfo()
     for (auto iterMap = serverToRankMerge_.begin(); iterMap!= serverToRankMerge_.end(); iterMap++) {
         if (!(iterMap->second).empty()) {
             std::sort(iterMap->second.begin(), iterMap->second.end(), Ascending);
+        }
+    }
+
+    for (auto it = serverToRank_.begin(); it != serverToRank_.end(); it++) {
+        HCCL_DEBUG("[SetRankInfo][MIX_DEBUG] serverID[%u]", it->first);
+        for (auto index = it->second.begin(); index != it->second.end(); index++) {
+            HCCL_DEBUG("[SetRankInfo][MIX_DEBUG] userRank[%u], devicePhyId[%d], serverIdx[%u], superPodId[%s]",
+                index->userRank, index->devicePhyId, index->serverIdx, index->superPodId.c_str());
         }
     }
 
@@ -439,6 +455,80 @@ HcclResult TopoInfoExtractor::SetTopoDefaultInfo()
     return HCCL_SUCCESS;
 }
 
+HcclResult TopoInfoExtractor::CheckPlaneInfo()
+{
+    bool isTopoComm = (topoType_ == TopoType::TOPO_TYPE_COMMON) && (CommPlaneVector_[COMM_COMBINE].size() != 1);
+    CHK_PRT_RET(isTopoComm,
+        HCCL_ERROR("[Check][PlaneInfo]topo type[%d] and combined plane nub[%llu] are not match",
+        topoType_, CommPlaneVector_[COMM_COMBINE].size()), HCCL_E_INTERNAL);
+
+    bool isTopo8pring = (topoType_ == TopoType::TOPO_TYPE_8P_RING) &&
+        ((CommPlaneVector_[COMM_LEVEL0].size() != meshAggregationRankSize_) ||
+        (ranksOneNode_[static_cast<u32>(topoType_)] != CommPlaneVector_[COMM_LEVEL1].size()));
+    CHK_PRT_RET(isTopo8pring,
+        HCCL_ERROR("[Check][PlaneInfo]topo type[%d], level0 plane nub[%llu], level1 plane nub[%llu], is not match",
+        topoType_, CommPlaneVector_[COMM_LEVEL0].size(), CommPlaneVector_[COMM_LEVEL1].size()), HCCL_E_INTERNAL);
+
+    bool isTopo2pring = (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) &&
+        ((CommPlaneVector_[COMM_LEVEL0].size() != 2) || // 2表示一个节点内通信域里面是否只有2个ring
+        (ranksOneNode_[static_cast<u32>(topoType_)] != CommPlaneVector_[COMM_LEVEL1].size()));
+    CHK_PRT_RET(isTopo2pring,
+        HCCL_ERROR("[Check][PlaneInfo]topo type[%d], level0 plane nub[%llu], level1 plane nub[%llu], is not match",
+        topoType_, CommPlaneVector_[COMM_LEVEL0].size(), CommPlaneVector_[COMM_LEVEL1].size()), HCCL_E_INTERNAL);
+
+    bool isTopo4pRing = (topoType_ == TopoType::TOPO_TYPE_4P_RING) &&
+        ((CommPlaneVector_[COMM_LEVEL0].size() != 1) ||    // 1表示一个节点内通信域里面是否只有一个device
+        (ranksOneNode_[static_cast<u32>(topoType_)] != CommPlaneVector_[COMM_LEVEL1].size()));
+    CHK_PRT_RET(isTopo4pRing,
+        HCCL_ERROR("[Check][PlaneInfo]topo type[%d], level0 plane nub[%llu], level1 plane nub[%llu], is not match",
+        topoType_, CommPlaneVector_[COMM_LEVEL0].size(), CommPlaneVector_[COMM_LEVEL1].size()), HCCL_E_INTERNAL);
+
+    bool isTopo4pMesh = (topoType_ == TopoType::TOPO_TYPE_4P_MESH) &&
+        ((CommPlaneVector_[COMM_LEVEL0].size() !=  (ranksOneNode_[static_cast<u32>(topoType_)] - 1)) ||
+        (ranksOneNode_[static_cast<u32>(topoType_)] != CommPlaneVector_[COMM_LEVEL1].size()));
+    CHK_PRT_RET(isTopo4pMesh,
+        HCCL_ERROR("[Check][PlaneInfo]topo type[%d], level0 plane nub[%llu], level1 plane nub[%llu], is not match",
+        topoType_, CommPlaneVector_[COMM_LEVEL0].size(), CommPlaneVector_[COMM_LEVEL1].size()), HCCL_E_INTERNAL);
+
+    bool isTopoNpMesh = (topoType_ == TopoType::TOPO_TYPE_NP_MESH) &&
+        ((CommPlaneVector_[COMM_LEVEL0].size() != (ranksOneNode_[static_cast<u32>(topoType_)] - 1)) ||
+        (ranksOneNode_[static_cast<u32>(topoType_)] != CommPlaneVector_[COMM_LEVEL1].size()));
+    CHK_PRT_RET(isTopoNpMesh,
+        HCCL_ERROR("[Check][PlaneInfo]topo type[%d], level0 plane nub[%llu], level1 plane nub[%llu], is not match",
+        topoType_, CommPlaneVector_[COMM_LEVEL0].size(), CommPlaneVector_[COMM_LEVEL1].size()), HCCL_E_INTERNAL);
+
+    // 1表示一个module里面是否只有一个device
+    bool isTopo2pMesh = (topoType_ == TopoType::TOPO_TYPE_2P_MESH) &&
+        ((CommPlaneVector_[COMM_LEVEL0].size() != 1) ||
+        (ranksOneNode_[static_cast<u32>(topoType_)] != CommPlaneVector_[COMM_LEVEL1].size()));
+    CHK_PRT_RET(isTopo2pMesh,
+        HCCL_ERROR("[Check][PlaneInfo]topo type[%d], level0 plane nub[%llu], level1 plane nub[%llu], is not match",
+        topoType_, CommPlaneVector_[COMM_LEVEL0].size(), CommPlaneVector_[COMM_LEVEL1].size()), HCCL_E_INTERNAL);
+
+    bool isTopo1pMesh = (topoType_ == TopoType::TOPO_TYPE_1P_MESH) &&
+        ((CommPlaneVector_[COMM_LEVEL0].size() != 1) ||    // 1表示一个节点内通信域里面是否只有一个device
+        (ranksOneNode_[static_cast<u32>(topoType_)] != CommPlaneVector_[COMM_LEVEL1].size()));
+    CHK_PRT_RET(isTopo1pMesh,
+        HCCL_ERROR("[Check][PlaneInfo]topo type[%d], level0 plane nub[%llu], level1 plane nub[%llu], is not match",
+        topoType_, CommPlaneVector_[COMM_LEVEL0].size(), CommPlaneVector_[COMM_LEVEL1].size()), HCCL_E_INTERNAL);
+
+    bool isTopoNpSingleRing = (topoType_ == TopoType::TOPO_TYPE_NP_SINGLE_RING) && (!IsDiffDeviceModuleInServer()) &&
+        ((CommPlaneVector_[COMM_LEVEL0].size() != 1) ||
+        (CommPlaneVector_[COMM_LEVEL1].size() != ranksOneNode_[static_cast<u32>(topoType_)]));
+    CHK_PRT_RET(isTopoNpSingleRing,
+        HCCL_ERROR("[Check][PlaneInfo]topo type[%d], level0 plane nub[%llu], level1 plane nub[%llu], is not match",
+        topoType_, CommPlaneVector_[COMM_LEVEL0].size(), CommPlaneVector_[COMM_LEVEL1].size()), HCCL_E_INTERNAL);
+
+    HCCL_RUN_INFO(
+        "plane info:topo type[%d], device type[%d], COMM_COMBINE size[%llu], COMM_LEVEL0 size[%llu], COMM_LEVEL1 " \
+        "size[%llu], COMM_LEVEL2 size[%llu], COMM_MESH_L0 size[%llu], COMM_MESH_L1 size[%llu]",
+        topoType_, deviceType_, CommPlaneVector_[COMM_COMBINE].size(), CommPlaneVector_[COMM_LEVEL0].size(),
+        CommPlaneVector_[COMM_LEVEL1].size(), CommPlaneVector_[COMM_LEVEL2].size(),
+        CommPlaneVector_[COMM_MESH_L0].size(), CommPlaneVector_[COMM_MESH_L1].size());
+
+    return HCCL_SUCCESS;
+}
+
 HcclResult TopoInfoExtractor::SetTopoInfoForLevel0()
 {
     u32 moduleIdx = 0;
@@ -450,7 +540,7 @@ HcclResult TopoInfoExtractor::SetTopoInfoForLevel0()
     // 查询本rank所在服务器的rank数
     u32 ranksSize = (iterRank->second).size();
 
-    multiOuterOrder_.clear();
+    multiLevel0Order_.clear();
     // 生成mockNicList
     std::vector<u32> mockNicList;
     mockNicList.reserve(ranksSize);
@@ -458,18 +548,18 @@ HcclResult TopoInfoExtractor::SetTopoInfoForLevel0()
         mockNicList.push_back(startIndex);
     }
 
-    multiOuterOrder_ = GetRingsOrderByTopoType(ranksSize, topoType_, mockNicList);
+    multiLevel0Order_ = GetRingsOrderByTopoType(ranksSize, topoType_, mockNicList);
 
-    HCCL_DEBUG("[TopoInfoExtractor] The ring number is %zu, the rank size is %lu.", multiOuterOrder_.size(), ranksSize);
-    if (multiOuterOrder_.size() == 1) {
-        CHK_RET(SetSingleOuter());
+    HCCL_DEBUG("[TopoInfoExtractor] The ring number is %zu, the rank size is %lu.", multiLevel0Order_.size(), ranksSize);
+    if (multiLevel0Order_.size() == 1) {
+        CHK_RET(SetSingleLevel0());
     } else {    // 8p-ring/np ring 环场景
-        u32 ringNum = multiOuterOrder_.size();
-        CHK_RET(SetMultiOuter(ringNum)); // 8P_RING场景下，外层拓扑中有四个环; 910_93场景中适配双环
+        u32 ringNum = multiLevel0Order_.size();
+        CHK_RET(SetMultiLevel0(ringNum)); // 8P_RING场景下，外层拓扑中有四个环; 910_93场景中适配双环
         // SDMA&RDMA并发特性
         if (GetExternalInputEnableRdmaSdmaConcurrent()) {
             std::vector<std::vector<u32> > multiOrder = GetRingsOrderForAnyPath(ranksSize, topoType_, mockNicList);
-            SetMultiOuterAnyPath(multiOrder);
+            SetMultiLevel0AnyPath(multiOrder);
         }
     }
 
@@ -608,7 +698,7 @@ HcclResult TopoInfoExtractor::SetTopoInfoForLevel1(bool prepareAHC)
 HcclResult TopoInfoExtractor::SetTopoInfoForLevel2()
 {
     // 对称场景需要初始化多个平面，非对称 level1 和 level2 合并无需切分平面
-    if (!multiModuleDiffDeviceNumMode_ && !multiSuperPodDiffServerNumMode_) {
+    if (!multiModuleDiffDeviceNumMode_ && !multiSuperPodDiffServerNumMode_ && !isDiffDeviceType_) {
         HCCL_INFO("[Set][TopoInfoForLevel2] select origin proc");
 
         // 找到当前rank在本超节点内部的序号
@@ -708,132 +798,15 @@ HcclResult TopoInfoExtractor::SetTopoInfoForMeshL1()
     return HCCL_SUCCESS;
 }
 
-HcclResult TopoInfoExtractor::CheckPlaneInfo()
+HcclResult TopoInfoExtractor::SetSingleLevel0()
 {
-    bool isTopoComm = (topoType_ == TopoType::TOPO_TYPE_COMMON) && (CommPlaneVector_[COMM_COMBINE].size() != 1);
-    CHK_PRT_RET(isTopoComm,
-        HCCL_ERROR("[Check][PlaneInfo]topo type[%d] and combined plane nub[%llu] are not match",
-        topoType_, CommPlaneVector_[COMM_COMBINE].size()), HCCL_E_INTERNAL);
-
-    bool isTopo8pring = (topoType_ == TopoType::TOPO_TYPE_8P_RING) &&
-        ((CommPlaneVector_[COMM_LEVEL0].size() != meshAggregationRankSize_) ||
-        (ranksOneNode_[static_cast<u32>(topoType_)] != CommPlaneVector_[COMM_LEVEL1].size()));
-    CHK_PRT_RET(isTopo8pring,
-        HCCL_ERROR("[Check][PlaneInfo]topo type[%d], outer plane nub[%llu], inner plane nub[%llu], is not match",
-        topoType_, CommPlaneVector_[COMM_LEVEL0].size(), CommPlaneVector_[COMM_LEVEL1].size()), HCCL_E_INTERNAL);
-
-    bool isTopo2pring = (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) &&
-        ((CommPlaneVector_[COMM_LEVEL0].size() != 2) || // 2表示一个节点内通信域里面是否只有2个ring
-        (ranksOneNode_[static_cast<u32>(topoType_)] != CommPlaneVector_[COMM_LEVEL1].size()));
-    CHK_PRT_RET(isTopo2pring,
-        HCCL_ERROR("[Check][PlaneInfo]topo type[%d], outer plane nub[%llu], inner plane nub[%llu], is not match",
-        topoType_, CommPlaneVector_[COMM_LEVEL0].size(), CommPlaneVector_[COMM_LEVEL1].size()), HCCL_E_INTERNAL);
-
-    bool isTopo4pRing = (topoType_ == TopoType::TOPO_TYPE_4P_RING) &&
-        ((CommPlaneVector_[COMM_LEVEL0].size() != 1) ||    // 1表示一个节点内通信域里面是否只有一个device
-        (ranksOneNode_[static_cast<u32>(topoType_)] != CommPlaneVector_[COMM_LEVEL1].size()));
-    CHK_PRT_RET(isTopo4pRing,
-        HCCL_ERROR("[Check][PlaneInfo]topo type[%d], outer plane nub[%llu], inner plane nub[%llu], is not match",
-        topoType_, CommPlaneVector_[COMM_LEVEL0].size(), CommPlaneVector_[COMM_LEVEL1].size()), HCCL_E_INTERNAL);
-
-    bool isTopo4pMesh = (topoType_ == TopoType::TOPO_TYPE_4P_MESH) &&
-        ((CommPlaneVector_[COMM_LEVEL0].size() !=  (ranksOneNode_[static_cast<u32>(topoType_)] - 1)) ||
-        (ranksOneNode_[static_cast<u32>(topoType_)] != CommPlaneVector_[COMM_LEVEL1].size()));
-    CHK_PRT_RET(isTopo4pMesh,
-        HCCL_ERROR("[Check][PlaneInfo]topo type[%d], outer plane nub[%llu], inner plane nub[%llu], is not match",
-        topoType_, CommPlaneVector_[COMM_LEVEL0].size(), CommPlaneVector_[COMM_LEVEL1].size()), HCCL_E_INTERNAL);
-
-    bool isTopoNpMesh = (topoType_ == TopoType::TOPO_TYPE_NP_MESH) &&
-        ((CommPlaneVector_[COMM_LEVEL0].size() != (ranksOneNode_[static_cast<u32>(topoType_)] - 1)) ||
-        (ranksOneNode_[static_cast<u32>(topoType_)] != CommPlaneVector_[COMM_LEVEL1].size()));
-    CHK_PRT_RET(isTopoNpMesh,
-        HCCL_ERROR("[Check][PlaneInfo]topo type[%d], outer plane nub[%llu], inner plane nub[%llu], is not match",
-        topoType_, CommPlaneVector_[COMM_LEVEL0].size(), CommPlaneVector_[COMM_LEVEL1].size()), HCCL_E_INTERNAL);
-
-    // 1表示一个module里面是否只有一个device
-    bool isTopo2pMesh = (topoType_ == TopoType::TOPO_TYPE_2P_MESH) &&
-        ((CommPlaneVector_[COMM_LEVEL0].size() != 1) ||
-        (ranksOneNode_[static_cast<u32>(topoType_)] != CommPlaneVector_[COMM_LEVEL1].size()));
-    CHK_PRT_RET(isTopo2pMesh,
-        HCCL_ERROR("[Check][PlaneInfo]topo type[%d], outer plane nub[%llu], inner plane nub[%llu], is not match",
-        topoType_, CommPlaneVector_[COMM_LEVEL0].size(), CommPlaneVector_[COMM_LEVEL1].size()), HCCL_E_INTERNAL);
-
-    bool isTopo1pMesh = (topoType_ == TopoType::TOPO_TYPE_1P_MESH) &&
-        ((CommPlaneVector_[COMM_LEVEL0].size() != 1) ||    // 1表示一个节点内通信域里面是否只有一个device
-        (ranksOneNode_[static_cast<u32>(topoType_)] != CommPlaneVector_[COMM_LEVEL1].size()));
-    CHK_PRT_RET(isTopo1pMesh,
-        HCCL_ERROR("[Check][PlaneInfo]topo type[%d], outer plane nub[%llu], inner plane nub[%llu], is not match",
-        topoType_, CommPlaneVector_[COMM_LEVEL0].size(), CommPlaneVector_[COMM_LEVEL1].size()), HCCL_E_INTERNAL);
-
-    bool isTopoNpSingleRing = (topoType_ == TopoType::TOPO_TYPE_NP_SINGLE_RING) && (!IsDiffDeviceModuleInServer()) &&
-        ((CommPlaneVector_[COMM_LEVEL0].size() != 1) ||
-        (CommPlaneVector_[COMM_LEVEL1].size() != ranksOneNode_[static_cast<u32>(topoType_)]));
-    CHK_PRT_RET(isTopoNpSingleRing,
-        HCCL_ERROR("[Check][PlaneInfo]topo type[%d], outer plane nub[%llu], inner plane nub[%llu], is not match",
-        topoType_, CommPlaneVector_[COMM_LEVEL0].size(), CommPlaneVector_[COMM_LEVEL1].size()), HCCL_E_INTERNAL);
-
-    HCCL_RUN_INFO(
-        "plane info:topo type[%d], device type[%d], COMM_COMBINE size[%llu], COMM_LEVEL0 size[%llu], COMM_LEVEL1 " \
-        "size[%llu], COMM_LEVEL2 size[%llu], COMM_MESH_L0 size[%llu], COMM_MESH_L1 size[%llu]",
-        topoType_, deviceType_, CommPlaneVector_[COMM_COMBINE].size(), CommPlaneVector_[COMM_LEVEL0].size(),
-        CommPlaneVector_[COMM_LEVEL1].size(), CommPlaneVector_[COMM_LEVEL2].size(),
-        CommPlaneVector_[COMM_MESH_L0].size(), CommPlaneVector_[COMM_MESH_L1].size());
-
-    return HCCL_SUCCESS;
-}
-
-HcclResult TopoInfoExtractor::SetSingleOuterFor8P()
-{
-    // 该函数处理场景:8P满配、非8P_RING算法(8P满配下走4PMESH)
-    std::vector<RankInfo> tmpOuterVector;
+    // 填充level0_rank_vector_，该函数处理场景非8P_RING算法
+    std::vector<RankInfo> tmpLevel0Vector;
     u32 moduleIdx = 0;
     CHK_RET(GetModuleIdx(rankData_, moduleIdx));
     auto iterRank = serverToRank_.find(moduleIdx); // 查询本rank所在服务器
     bool check = (iterRank == serverToRank_.end());
-    CHK_PRT_RET(check, HCCL_ERROR("[Set][SingleOuterFor8P]can't find serverId[%s] in rank map",
-        rankData_.serverId.c_str()), HCCL_E_NOT_FOUND);
-
-    u32 startIndex = (rankData_.devicePhyId < static_cast<s32>(meshAggregationRankSize_)) ?
-        0 : meshAggregationRankSize_;
-    u32 devcount = 0;
-    // 维护topo输出的信息
-    std::string outLogInfo = "userRank/devicePhyId: ";
-    RankInfo tempRankData;
-    while (devcount < meshAggregationRankSize_) {
-        u32 outerStartRank = (iterRank->second)[startIndex].userRank;
-        bool checkError = (rankVector_.size() <= outerStartRank);
-        CHK_PRT_RET(checkError, HCCL_ERROR("[Set][SingleOuterFor8P]outer userRank[%u] is bigger than rank vector",
-            outerStartRank), HCCL_E_INTERNAL);
-        tempRankData = rankVector_[outerStartRank];
-
-        outLogInfo.append(std::to_string(tempRankData.userRank));
-        outLogInfo.append("/");
-        outLogInfo.append(std::to_string(tempRankData.devicePhyId));
-        outLogInfo.append("; ");
-        tmpOuterVector.push_back(tempRankData);
-        startIndex++;
-        devcount++;
-    }
-
-    // 4PMESH场景下，外层拓扑3个平面
-    u32 outerSize = ranksOneNode_[static_cast<u32>(topoType_)] -1;
-    for (u32 index = 0; index < outerSize; index++) {
-        CommPlaneVector_[COMM_LEVEL0].push_back(tmpOuterVector);
-    }
-    HCCL_RUN_INFO("SetTopoInfoForLevel0: identifier[%s], userRank[%u], userRankSize[%u], topoRankInfo[%s]",
-        identifier_.c_str(), userRank_, userRankSize_, outLogInfo.c_str());
-    return HCCL_SUCCESS;
-}
-
-HcclResult TopoInfoExtractor::SetSingleOuter()
-{
-    // 填充outer_rank_vector_，该函数处理场景非8P_RING算法
-    std::vector<RankInfo> tmpOuterVector;
-    u32 moduleIdx = 0;
-    CHK_RET(GetModuleIdx(rankData_, moduleIdx));
-    auto iterRank = serverToRank_.find(moduleIdx); // 查询本rank所在服务器
-    bool check = (iterRank == serverToRank_.end());
-    CHK_PRT_RET(check, HCCL_ERROR("[Set][SingleOuter]can't find serverId[%s] in rank map", rankData_.serverId.c_str()),
+    CHK_PRT_RET(check, HCCL_ERROR("[Set][SingleLevel0]can't find serverId[%s] in rank map", rankData_.serverId.c_str()),
         HCCL_E_NOT_FOUND);
 
     std::vector<s32> devicePhyIdVector;
@@ -845,7 +818,7 @@ HcclResult TopoInfoExtractor::SetSingleOuter()
     if (((iterRank->second).size() == DEVICE_PER_MODULE &&
         maxPhyId < DEVICE_PER_MODULE) &&
         (topoType_ == TopoType::TOPO_TYPE_4P_MESH || topoType_ == TopoType::TOPO_TYPE_NP_MESH)) {
-        return SetSingleOuterFor8P(); // 服务器内dev个数相同已在hcom层做过校验
+        return SetSingleLevel0For8P(); // 服务器内dev个数相同已在hcom层做过校验
     }
 
     // 维护topo输出的信息
@@ -853,25 +826,68 @@ HcclResult TopoInfoExtractor::SetSingleOuter()
     RankInfo tempRankData;
     // 其他场景 + 16P使用右边module
     for (u32 startIndex = 0; startIndex < (iterRank->second).size(); startIndex++) {
-        u32 outerStartRank = (iterRank->second)[startIndex].userRank;
-        bool checkError = (rankVector_.size() <= outerStartRank);
-        CHK_PRT_RET(checkError, HCCL_ERROR("[Set][SingleOuter]outer userRank[%u] is bigger than rank vector",
-            outerStartRank), HCCL_E_INTERNAL);
-        tempRankData = rankVector_[outerStartRank];
+        u32 level0StartRank = (iterRank->second)[startIndex].userRank;
+        bool checkError = (rankVector_.size() <= level0StartRank);
+        CHK_PRT_RET(checkError, HCCL_ERROR("[Set][SingleLevel0]level0 userRank[%u] is bigger than rank vector",
+            level0StartRank), HCCL_E_INTERNAL);
+        tempRankData = rankVector_[level0StartRank];
 
         outLogInfo.append(std::to_string(tempRankData.userRank));
         outLogInfo.append("/");
         outLogInfo.append(std::to_string(tempRankData.devicePhyId));
         outLogInfo.append("; ");
-        tmpOuterVector.push_back(tempRankData);
+        tmpLevel0Vector.push_back(tempRankData);
     }
 
     // NPmesh或4Pmesh场景下，外层拓扑平面为device数量-1
-    u32 outerSize = (topoType_ == TopoType::TOPO_TYPE_4P_MESH || topoType_ == TopoType::TOPO_TYPE_NP_MESH) ?
+    u32 level0Size = (topoType_ == TopoType::TOPO_TYPE_4P_MESH || topoType_ == TopoType::TOPO_TYPE_NP_MESH) ?
         (ranksOneNode_[static_cast<u32>(topoType_)] - 1) : 1;
 
-    for (u32 index = 0; index < outerSize; index++) {
-        CommPlaneVector_[COMM_LEVEL0].push_back(tmpOuterVector);
+    for (u32 index = 0; index < level0Size; index++) {
+        CommPlaneVector_[COMM_LEVEL0].push_back(tmpLevel0Vector);
+    }
+    HCCL_RUN_INFO("SetTopoInfoForLevel0: identifier[%s], userRank[%u], userRankSize[%u], topoRankInfo[%s]",
+        identifier_.c_str(), userRank_, userRankSize_, outLogInfo.c_str());
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoInfoExtractor::SetSingleLevel0For8P()
+{
+    // 该函数处理场景:8P满配、非8P_RING算法(8P满配下走4PMESH)
+    std::vector<RankInfo> tmpLevel0Vector;
+    u32 moduleIdx = 0;
+    CHK_RET(GetModuleIdx(rankData_, moduleIdx));
+    auto iterRank = serverToRank_.find(moduleIdx); // 查询本rank所在服务器
+    bool check = (iterRank == serverToRank_.end());
+    CHK_PRT_RET(check, HCCL_ERROR("[Set][SingleLevel0For8P]can't find serverId[%s] in rank map",
+        rankData_.serverId.c_str()), HCCL_E_NOT_FOUND);
+
+    u32 startIndex = (rankData_.devicePhyId < static_cast<s32>(meshAggregationRankSize_)) ?
+        0 : meshAggregationRankSize_;
+    u32 devcount = 0;
+    // 维护topo输出的信息
+    std::string outLogInfo = "userRank/devicePhyId: ";
+    RankInfo tempRankData;
+    while (devcount < meshAggregationRankSize_) {
+        u32 level0StartRank = (iterRank->second)[startIndex].userRank;
+        bool checkError = (rankVector_.size() <= level0StartRank);
+        CHK_PRT_RET(checkError, HCCL_ERROR("[Set][SingleLevel0For8P]level0 userRank[%u] is bigger than rank vector",
+            level0StartRank), HCCL_E_INTERNAL);
+        tempRankData = rankVector_[level0StartRank];
+
+        outLogInfo.append(std::to_string(tempRankData.userRank));
+        outLogInfo.append("/");
+        outLogInfo.append(std::to_string(tempRankData.devicePhyId));
+        outLogInfo.append("; ");
+        tmpLevel0Vector.push_back(tempRankData);
+        startIndex++;
+        devcount++;
+    }
+
+    // 4PMESH场景下，外层拓扑3个平面
+    u32 level0Size = ranksOneNode_[static_cast<u32>(topoType_)] -1;
+    for (u32 index = 0; index < level0Size; index++) {
+        CommPlaneVector_[COMM_LEVEL0].push_back(tmpLevel0Vector);
     }
     HCCL_RUN_INFO("SetTopoInfoForLevel0: identifier[%s], userRank[%u], userRankSize[%u], topoRankInfo[%s]",
         identifier_.c_str(), userRank_, userRankSize_, outLogInfo.c_str());
@@ -888,79 +904,79 @@ bool TopoInfoExtractor::IsDiffDeviceModuleInServer() const
     return deviceType_ == DevType::DEV_TYPE_910B && isDiffAggregation_;
 }
 
-HcclResult TopoInfoExtractor::SetMultiOuter(u32 ringNum)
+HcclResult TopoInfoExtractor::SetMultiLevel0(u32 ringNum)
 {
-    std::vector<u32> tmpOuterOrder;
+    std::vector<u32> tmpLevel0Order;
     u32 moduleIdx = 0;
     CHK_RET(GetModuleIdx(rankData_, moduleIdx));
     auto iterRank = serverToRank_.find(moduleIdx); // 查询本rank所在服务器
     bool check = (iterRank == serverToRank_.end());
-    CHK_PRT_RET(check, HCCL_ERROR("[Set][MultiOuter]can't find serverId[%s] in rank map", rankData_.serverId.c_str()),
+    CHK_PRT_RET(check, HCCL_ERROR("[Set][MultiLevel0]can't find serverId[%s] in rank map", rankData_.serverId.c_str()),
         HCCL_E_NOT_FOUND);
 
     // 维护topo输出的信息
     std::string outLogInfo = "";
     RankInfo tempRankData;
     for (u32 ringIndex = 0; ringIndex < ringNum; ringIndex++) {
-        tmpOuterOrder = multiOuterOrder_[ringIndex]; // 获取每一个环的设备物理ID排序
-        std::vector<RankInfo> tmpOuterVector;
+        tmpLevel0Order = multiLevel0Order_[ringIndex]; // 获取每一个环的设备物理ID排序
+        std::vector<RankInfo> tmpLevel0Vector;
         outLogInfo = "userRank/devicePhyId: ";
         for (u32 startIndex = 0; startIndex < (iterRank->second).size(); startIndex++) {
-            u32 devIndex = tmpOuterOrder[startIndex];
-            u32 outerRingUserank = (iterRank->second)[devIndex].userRank;
-            bool checkError = (rankVector_.size() <= outerRingUserank);
-            CHK_PRT_RET(checkError, HCCL_ERROR("[Set][MultiOuter]outer userRank[%u] is bigger than rank vector",
-                outerRingUserank), HCCL_E_INTERNAL);
-            tempRankData = rankVector_[outerRingUserank];
+            u32 devIndex = tmpLevel0Order[startIndex];
+            u32 level0RingUserank = (iterRank->second)[devIndex].userRank;
+            bool checkError = (rankVector_.size() <= level0RingUserank);
+            CHK_PRT_RET(checkError, HCCL_ERROR("[Set][MultiLevel0]level0 userRank[%u] is bigger than rank vector",
+                level0RingUserank), HCCL_E_INTERNAL);
+            tempRankData = rankVector_[level0RingUserank];
             outLogInfo.append(std::to_string(tempRankData.userRank));
             outLogInfo.append("/");
             outLogInfo.append(std::to_string(tempRankData.devicePhyId));
             outLogInfo.append("; ");
-            tmpOuterVector.push_back(tempRankData);
+            tmpLevel0Vector.push_back(tempRankData);
         }
         HCCL_RUN_INFO("SetTopoInfoForLevel0: identifier[%s], userRank[%u], userRankSize[%u], topoRankInfo[%s]",
             identifier_.c_str(), userRank_, userRankSize_, outLogInfo.c_str());
-        CommPlaneVector_[COMM_LEVEL0].push_back(tmpOuterVector);
+        CommPlaneVector_[COMM_LEVEL0].push_back(tmpLevel0Vector);
     }
     return HCCL_SUCCESS;
 }
 
 // anypath创建通信域
-HcclResult TopoInfoExtractor::SetMultiOuterAnyPath(std::vector<std::vector<u32> > multiOrder)
+HcclResult TopoInfoExtractor::SetMultiLevel0AnyPath(std::vector<std::vector<u32> > multiOrder)
 {
     u32 ringNum = multiOrder.size();
-    std::vector<u32> tmpOuterOrder;
+    std::vector<u32> tmpLevel0Order;
     u32 moduleIdx = 0;
     CHK_RET(GetModuleIdx(rankData_, moduleIdx));
     auto iterRank = serverToRank_.find(moduleIdx); // 查询本rank所在服务器
     bool check = (iterRank == serverToRank_.end());
-    CHK_PRT_RET(check, HCCL_ERROR("[Set][MultiOuter]can't find serverId[%s] in rank map", rankData_.serverId.c_str()),
+    CHK_PRT_RET(check, HCCL_ERROR("[Set][MultiLevel0]can't find serverId[%s] in rank map", rankData_.serverId.c_str()),
         HCCL_E_NOT_FOUND);
 
     // 维护topo输出的信息
     std::string outLogInfo = "";
     RankInfo tempRankData;
     for (u32 ringIndex = 0; ringIndex < ringNum; ringIndex++) {
-        tmpOuterOrder = multiOrder[ringIndex]; // 获取每一个环的设备物理ID排序
-        std::vector<RankInfo> tmpOuterVector;
+        tmpLevel0Order = multiOrder[ringIndex]; // 获取每一个环的设备物理ID排序
+        std::vector<RankInfo> tmpLevel0Vector;
         outLogInfo = "userRank/devicePhyId: ";
         for (u32 startIndex = 0; startIndex < (iterRank->second).size(); startIndex++) {
-            u32 devIndex = tmpOuterOrder[startIndex];
-            u32 outerRingUserank = (iterRank->second)[devIndex].userRank;
-            bool checkError = (rankVector_.size() <= outerRingUserank);
-            CHK_PRT_RET(checkError, HCCL_ERROR("[Set][MultiOuter]outer userRank[%u] is bigger than rank vector",
-                outerRingUserank), HCCL_E_INTERNAL);
-            tempRankData = rankVector_[outerRingUserank];
+            u32 devIndex = tmpLevel0Order[startIndex];
+            u32 level0RingUserank = (iterRank->second)[devIndex].userRank;
+            bool checkError = (rankVector_.size() <= level0RingUserank);
+            CHK_PRT_RET(checkError, HCCL_ERROR("[Set][MultiLevel0]level0 userRank[%u] is bigger than rank vector",
+                level0RingUserank), HCCL_E_INTERNAL);
+            tempRankData = rankVector_[level0RingUserank];
             outLogInfo.append(std::to_string(tempRankData.userRank));
             outLogInfo.append("/");
             outLogInfo.append(std::to_string(tempRankData.devicePhyId));
             outLogInfo.append("; ");
-            tmpOuterVector.push_back(tempRankData);
+            tmpLevel0Vector.push_back(tempRankData);
         }
         HCCL_RUN_INFO("[AnyPath]SetTopoInfoForLevel0: identifier[%s], userRank[%u], userRankSize[%u], topoRankInfo[%s]",
             identifier_.c_str(), userRank_, userRankSize_, outLogInfo.c_str());
-        CommPlaneVector_[COMM_LEVEL0_ANYPATH_SDMA].push_back(tmpOuterVector);
-        CommPlaneVector_[COMM_LEVEL0_ANYPATH_RDMA].push_back(tmpOuterVector);
+        CommPlaneVector_[COMM_LEVEL0_ANYPATH_SDMA].push_back(tmpLevel0Vector);
+        CommPlaneVector_[COMM_LEVEL0_ANYPATH_RDMA].push_back(tmpLevel0Vector);
     }
 
     return HCCL_SUCCESS;
@@ -973,7 +989,12 @@ HcclResult TopoInfoExtractor::GetModuleIdx(const RankInfo &rankInfo, u32 &module
     // 获取moduleIdx，在16P同时使用左右两个module时，moduleIdx标识当前rank所在的module，其他场景下moduleIdx等同于serverIdx
     u32 serverIdx = 0;
     CHK_RET(GetServerIdx(rankInfo, serverIdx));
-    if (IsDiffDeviceModuleInServer()) {
+    if (isDiffDeviceType_) {
+        moduleIdx = rankInfo.userRank / gcdDeviceNumPerAggregation_;
+        HCCL_DEBUG("[TopoInfoExtractor][GetModuleIdx]serverIdx [%u] devicePhyId[%u] userRank[%u] moduleIdx[%u] "
+            "gcdDeviceNumPerAggregation[%u]", serverIdx, rankInfo.devicePhyId, rankInfo.userRank, moduleIdx,
+            gcdDeviceNumPerAggregation_);
+    } else if (IsDiffDeviceModuleInServer()) {
         moduleIdx = serverIdx * FACTOR_NUM_TWO + rankInfo.devicePhyId / DEVICE_PER_MODULE;
     } else {
         moduleIdx = serverIdx;
@@ -1070,11 +1091,11 @@ HcclResult TopoInfoExtractor::GetIsUsedRdmaMap(std::unordered_map<u32, bool> &is
         }
         // 使能RDMA的场景: 1.跨超节点  2.跨server且不使能HCCS  3.PCIE连接且使能RDMA开关
         bool isUsedRdma = (isInterSuperPod) ||
-                (isInterServer && !isUsedInterHccsMode_) || (isConnectedWithPcie && isUsedRdmaOuter_);
+                (isInterServer && !isUsedInterHccsMode_) || (isConnectedWithPcie && isUsedRdmaLevel0_);
         isUsedRdmaMap[dstRank.userRank] = isUsedRdma;
         HCCL_DEBUG("[GetIsUsedRdma]isUsedRdma[%u], isInterSuperPod[%u], isInterServer[%u], isUsedInterHccsMode_[%u], "\
-            "isConnectedWithPcie[%u], isUsedRdmaOuter_[%u], dstRank[%u]", isUsedRdma, isInterSuperPod, isInterServer,
-            isUsedInterHccsMode_, isConnectedWithPcie, isUsedRdmaOuter_, dstRank.userRank);
+            "isConnectedWithPcie[%u], isUsedRdmaLevel0_[%u], dstRank[%u]", isUsedRdma, isInterSuperPod, isInterServer,
+            isUsedInterHccsMode_, isConnectedWithPcie, isUsedRdmaLevel0_, dstRank.userRank);
     }
     return HCCL_SUCCESS;
 }
@@ -1238,7 +1259,6 @@ bool CompareWithUserRankAscend(const RankInfo &left, const RankInfo &right)
     return left.userRank < right.userRank;
 }
 
-// 适配ROH平面网段隔离，奇数rank互通，偶数rank互通，奇偶不通
 bool CheckSdmaWithRohTopo(const std::vector<u32> &nicList, std::vector<u32> &topoList)
 {
     std::vector<u32> tmpNicList(nicList);
@@ -1256,35 +1276,35 @@ std::vector<std::vector<u32>> GetRingsOrderByTopoType(u32 ranksSize, TopoType to
     std::vector<std::vector<u32>> multiRingOrder;
     if (topoType == TopoType::TOPO_TYPE_8P_RING) { // 4 ring 场景
         // 每个环的排序是按照设备物理ID进行的
-        std::vector<u32> tmpOuter0 = { 0, 1, 2, 6, 5, 4, 7, 3 }; // 环0
-        std::vector<u32> tmpOuter1 = { 0, 3, 7, 4, 5, 6, 2, 1 }; // 环1
-        std::vector<u32> tmpOuter2 = { 0, 2, 3, 1, 5, 7, 6, 4 }; // 环2
-        std::vector<u32> tmpOuter3 = { 0, 4, 6, 7, 5, 1, 3, 2 }; // 环3
+        std::vector<u32> tmpLevel00 = { 0, 1, 2, 6, 5, 4, 7, 3 }; // 环0
+        std::vector<u32> tmpLevel01 = { 0, 3, 7, 4, 5, 6, 2, 1 }; // 环1
+        std::vector<u32> tmpLevel02 = { 0, 2, 3, 1, 5, 7, 6, 4 }; // 环2
+        std::vector<u32> tmpLevel03 = { 0, 4, 6, 7, 5, 1, 3, 2 }; // 环3
 
-        // 填充8pring 多环的comm outer 四个环的顺序
-        multiRingOrder.push_back(tmpOuter0);
-        multiRingOrder.push_back(tmpOuter1);
-        multiRingOrder.push_back(tmpOuter2);
-        multiRingOrder.push_back(tmpOuter3);
+        // 填充8pring 多环的comm level0 四个环的顺序
+        multiRingOrder.push_back(tmpLevel00);
+        multiRingOrder.push_back(tmpLevel01);
+        multiRingOrder.push_back(tmpLevel02);
+        multiRingOrder.push_back(tmpLevel03);
     } else if (topoType == TopoType::TOPO_TYPE_NP_DOUBLE_RING) { // 2 ring 场景
-        std::vector<u32> tmpOuter0;   // 环0
-        std::vector<u32> tmpOuter1;  // 环1
-        tmpOuter0 = nicList;  // { 0, 1, 2, 3, 4, 5, 6, 7 };
-        tmpOuter1.reserve(ranksSize);
-        tmpOuter1.push_back(nicList[0]);
-        tmpOuter1.insert(tmpOuter1.end(), tmpOuter0.rbegin(), tmpOuter0.rend() - 1);
+        std::vector<u32> tmpLevel00;   // 环0
+        std::vector<u32> tmpLevel01;  // 环1
+        tmpLevel00 = nicList;  // { 0, 1, 2, 3, 4, 5, 6, 7 };
+        tmpLevel01.reserve(ranksSize);
+        tmpLevel01.push_back(nicList[0]);
+        tmpLevel01.insert(tmpLevel01.end(), tmpLevel00.rbegin(), tmpLevel00.rend() - 1);
         HCCL_INFO("[GetRingsOrderByTopoType] TopoType:TOPO_TYPE_NP_DOUBLE_RING");
-        // 填充 double ring 两环的comm outer的顺序
-        multiRingOrder.push_back(tmpOuter0);
-        multiRingOrder.push_back(tmpOuter1);
+        // 填充 double ring 两环的comm level0的顺序
+        multiRingOrder.push_back(tmpLevel00);
+        multiRingOrder.push_back(tmpLevel01);
     } else { // 1 ring 场景
-        std::vector<u32> tmpOuter0 = nicList; // 环0
+        std::vector<u32> tmpLevel00 = nicList; // 环0
 
-        // 填充 single ring 单环的comm outer的顺序
-        multiRingOrder.push_back(tmpOuter0);
+        // 填充 single ring 单环的comm level0的顺序
+        multiRingOrder.push_back(tmpLevel00);
     }
     // 打印多个环
-    if (UNLIKELY(CheckDebugLogLevel())) {
+    if (UNLIKELY(HcclCheckLogLevel(DLOG_DEBUG))) {
         for (size_t i = 0; i < multiRingOrder.size(); i++) {
             auto ring = multiRingOrder[i];
             std::ostringstream stringRepresentation;
@@ -1303,28 +1323,28 @@ std::vector<std::vector<u32>> GetRingsOrderForAnyPath(u32 ranksSize, TopoType to
 {
     std::vector<std::vector<u32>> multiRingOrder;
     if (topoType == TopoType::TOPO_TYPE_NP_DOUBLE_RING) { // 2 ring 场景
-        std::vector<u32> tmpOuter0;   // 环0
-        std::vector<u32> tmpOuter1;  // 环1
-        std::vector<u32> rohOuter;
-        if (CheckSdmaWithRohTopo(nicList, rohOuter)) {
-            tmpOuter0 = rohOuter;          // 环0, 8卡 { 0, 1, 3, 2, 4, 5, 7, 6 };
-            tmpOuter1.reserve(ranksSize);  // 环1, 8卡 { 0, 6, 7, 5, 4, 2, 3, 1 };
-            tmpOuter1.push_back(rohOuter[0]);
-            tmpOuter1.insert(tmpOuter1.end(), rohOuter.rbegin(), rohOuter.rend() - 1);
+        std::vector<u32> tmpLevel00;   // 环0
+        std::vector<u32> tmpLevel01;  // 环1
+        std::vector<u32> rohLevel0;
+        if (CheckSdmaWithRohTopo(nicList, rohLevel0)) {
+            tmpLevel00 = rohLevel0;          // 环0, 8卡 { 0, 1, 3, 2, 4, 5, 7, 6 };
+            tmpLevel01.reserve(ranksSize);  // 环1, 8卡 { 0, 6, 7, 5, 4, 2, 3, 1 };
+            tmpLevel01.push_back(rohLevel0[0]);
+            tmpLevel01.insert(tmpLevel01.end(), rohLevel0.rbegin(), rohLevel0.rend() - 1);
         } else {
-            tmpOuter0 = nicList;  // { 0, 1, 2, 3, 4, 5, 6, 7 };
-            tmpOuter1.reserve(ranksSize);
-            tmpOuter1.push_back(nicList[0]);
-            tmpOuter1.insert(tmpOuter1.end(), tmpOuter0.rbegin(), tmpOuter0.rend() - 1);
+            tmpLevel00 = nicList;  // { 0, 1, 2, 3, 4, 5, 6, 7 };
+            tmpLevel01.reserve(ranksSize);
+            tmpLevel01.push_back(nicList[0]);
+            tmpLevel01.insert(tmpLevel01.end(), tmpLevel00.rbegin(), tmpLevel00.rend() - 1);
         }
-        // 填充 double ring 两环的comm outer的顺序
-        multiRingOrder.push_back(tmpOuter0);
-        multiRingOrder.push_back(tmpOuter1);
+        // 填充 double ring 两环的comm level0的顺序
+        multiRingOrder.push_back(tmpLevel00);
+        multiRingOrder.push_back(tmpLevel01);
     } else { // 1 ring 场景
-        std::vector<u32> tmpOuter0 = nicList; // 环0
+        std::vector<u32> tmpLevel00 = nicList; // 环0
 
-        // 填充 single ring 单环的comm outer的顺序
-        multiRingOrder.push_back(tmpOuter0);
+        // 填充 single ring 单环的comm level0的顺序
+        multiRingOrder.push_back(tmpLevel00);
     }
     // 打印多个环
     for (size_t i = 0; i < multiRingOrder.size(); i++) {
@@ -1339,4 +1359,5 @@ std::vector<std::vector<u32>> GetRingsOrderForAnyPath(u32 ranksSize, TopoType to
     }
     return multiRingOrder;
 }
+
 }

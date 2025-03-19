@@ -131,7 +131,7 @@ HcclResult CollAllReduceCommExecutor::KernelRun(const OpParam &param, ExecMem &e
     u32 rankSize = combinedCommInfo.localRankSize;
     CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
         param.DataDes.dataType, param.stream, param.reduceType,
-        OUTER_BRIDGE_RANK_ID, std::vector<Slice>(0), 0));
+        LEVEL0_BRIDGE_RANK_ID, std::vector<Slice>(0), 0));
 
     CHK_RET(tempAlg->RegisterProfiler(
         (rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) +

@@ -29,6 +29,7 @@ public:
 
     HcclResult SetCCLInBuffer(u64 cclbufferSize);
     HcclResult SetIsSupportSDMAReduce(bool isSupportSDMAReduce);
+    HcclResult SetAlgOpContext(AlgOpContext algOpContext);
 
     virtual HcclResult CalcResRequest(const OpParam& param, AlgResourceRequest &resourceRequest) = 0;
     virtual HcclResult Orchestrate(OpParam& param, AlgResourceResponse& algRes) = 0;
@@ -48,6 +49,7 @@ protected:
     AlgType algType_; // 算法类型
     std::unique_ptr<TopoMatcher> &topoMatcher_;
     bool isSupportSDMAReduce_ = false;
+    AlgOpContext algOpContext_;
 };
 }
 #endif

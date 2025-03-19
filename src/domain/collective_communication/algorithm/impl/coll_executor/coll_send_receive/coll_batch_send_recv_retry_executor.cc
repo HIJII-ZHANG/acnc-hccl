@@ -136,12 +136,12 @@ HcclResult CollBatchSendRecvRetryExecutor::Orchestrate(OpParam& param, AlgResour
     // 重执行正常执行场景，前后需和控制流做同步
     if (param.BatchSendRecvDataDes.curMode == BatchSendRecvCurMode::SEND_RECV) {
         HCCL_INFO("[BatchSendRecv] Stream sync: main stream record, subStream wait.");
-        CHK_RET(LocalNotify::Post(param.stream, dispatcher_, algResResp_->notifiesS2M[STREAM_INDEX_0], PROF_STAGE_0));
+        CHK_RET(LocalNotify::Post(param.stream, dispatcher_, algResResp_->notifiesAux[STREAM_INDEX_0], PROF_STAGE_0));
         CHK_RET(LocalNotify::Wait(algResResp_->slaveStreams[STREAM_INDEX_0], dispatcher_,
-            algResResp_->notifiesS2M[STREAM_INDEX_0], PROF_STAGE_0));
-        CHK_RET(LocalNotify::Post(param.stream, dispatcher_, algResResp_->notifiesS2M[STREAM_INDEX_1], PROF_STAGE_1));
+            algResResp_->notifiesAux[STREAM_INDEX_0], PROF_STAGE_0));
+        CHK_RET(LocalNotify::Post(param.stream, dispatcher_, algResResp_->notifiesAux[STREAM_INDEX_1], PROF_STAGE_1));
         CHK_RET(LocalNotify::Wait(algResResp_->slaveStreams[STREAM_INDEX_1], dispatcher_,
-            algResResp_->notifiesS2M[STREAM_INDEX_1], PROF_STAGE_1));
+            algResResp_->notifiesAux[STREAM_INDEX_1], PROF_STAGE_1));
     }
     // run sendrecv
     CHK_RET(RunLoop(param, algResource, sendRecvPair));
@@ -149,19 +149,19 @@ HcclResult CollBatchSendRecvRetryExecutor::Orchestrate(OpParam& param, AlgResour
     if (param.BatchSendRecvDataDes.curMode == BatchSendRecvCurMode::SEND_RECV) {
         HCCL_INFO("[BatchSendRecv] Stream sync: subStream record, main stream wait.");
         CHK_RET(LocalNotify::Post(algResResp_->slaveStreams[STREAM_INDEX_0], dispatcher_,
-            algResResp_->notifiesM2S[STREAM_INDEX_0], PROF_STAGE_0));
-        CHK_RET(LocalNotify::Wait(param.stream, dispatcher_, algResResp_->notifiesM2S[STREAM_INDEX_0],
+            algResResp_->notifiesMain[STREAM_INDEX_0], PROF_STAGE_0));
+        CHK_RET(LocalNotify::Wait(param.stream, dispatcher_, algResResp_->notifiesMain[STREAM_INDEX_0],
             PROF_STAGE_0));
         CHK_RET(LocalNotify::Post(algResResp_->slaveStreams[STREAM_INDEX_1], dispatcher_,
-            algResResp_->notifiesM2S[STREAM_INDEX_1], PROF_STAGE_1));
-        CHK_RET(LocalNotify::Wait(param.stream, dispatcher_, algResResp_->notifiesM2S[STREAM_INDEX_1],
+            algResResp_->notifiesMain[STREAM_INDEX_1], PROF_STAGE_1));
+        CHK_RET(LocalNotify::Wait(param.stream, dispatcher_, algResResp_->notifiesMain[STREAM_INDEX_1],
             PROF_STAGE_1));
     } else if (param.BatchSendRecvDataDes.curMode == BatchSendRecvCurMode::SEND) {
         CHK_RET(LocalNotify::Post(algResResp_->slaveStreams[STREAM_INDEX_0], dispatcher_,
-            algResResp_->notifiesM2S[STREAM_INDEX_0], PROF_STAGE_0));
+            algResResp_->notifiesMain[STREAM_INDEX_0], PROF_STAGE_0));
     } else if (param.BatchSendRecvDataDes.curMode == BatchSendRecvCurMode::RECV) {
         CHK_RET(LocalNotify::Post(algResResp_->slaveStreams[STREAM_INDEX_1], dispatcher_,
-            algResResp_->notifiesM2S[STREAM_INDEX_1], PROF_STAGE_1));
+            algResResp_->notifiesMain[STREAM_INDEX_1], PROF_STAGE_1));
     }
 
     CHK_RET(LaunchTaskExtend(dispatcher_, param.stream, algResResp_->slaveStreams));
@@ -221,7 +221,7 @@ HcclResult CollBatchSendRecvRetryExecutor::RunLoop(OpParam &param, AlgResourceRe
 
 HcclResult CollBatchSendRecvRetryExecutor::CalcStreamNum(u32& streamNum)
 {
-    streamNum = OUTER_PLANE_NUM_IN_NPRING_DOUBLE;
+    streamNum = LEVEL0_PLANE_NUM_IN_NPRING_DOUBLE;
     HCCL_INFO("[CollBatchSendRecvRetryExecutor][CalcScratchMemSize] tag_[%s], streamNum[%u].", tag_.c_str(), streamNum);
     return HCCL_SUCCESS;
 }

@@ -33,6 +33,14 @@ namespace hccl {
         ExceptionHandler::ThrowIfErrorCode(ret, errString, __FILE__, __LINE__, __func__); \
     } while (0)
 
+#define EXCEPTION_THROW_IF_COND_ERR(condition, errString) \
+    do { \
+        if (condition) { \
+            HcclResult ret = HCCL_E_INTERNAL; \
+            ExceptionHandler::ThrowIfErrorCode(ret, errString, __FILE__, __LINE__, __func__); \
+        } \
+    } while (0)
+
 // 异常处理器类
 class ExceptionHandler {
 public:

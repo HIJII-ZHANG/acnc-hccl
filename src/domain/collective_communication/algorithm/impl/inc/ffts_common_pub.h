@@ -106,6 +106,20 @@ using HcclOpMetaInfo = struct HcclOpMetaInfoDef {
         return meta;
     }
 
+    static HcclOpMetaInfoDef GetOneForAllGatherV(u32 algolevel1Type = 0, bool hugeData = false, bool smallCount = false,
+        CopyPattern copyPattern = CopyPattern::BCOPY, bool dataSplit = false)
+    {
+        HcclOpMetaInfoDef meta;
+        meta.opType = HcclCMDType::HCCL_CMD_ALLGATHER_V;
+        meta.copyPattern = copyPattern;
+        meta.algolevel1Type = algolevel1Type;
+        meta.hugeData = hugeData;
+        meta.isSmallCount = smallCount; 
+        meta.isEnableCache = CheckEnableCache(meta);
+        meta.dataSplit = dataSplit;
+        return meta;
+    }
+
     static HcclOpMetaInfoDef GetOneForBroadcast(bool isRootRank, uint32_t rootRank,
         bool hugeData = false, bool isSmallCount = false, u64 sliceNum = 1, CopyPattern copyPattern = CopyPattern::BCOPY)
     {
@@ -139,6 +153,26 @@ using HcclOpMetaInfo = struct HcclOpMetaInfoDef {
     {
         HcclOpMetaInfoDef meta;
         meta.opType = HcclCMDType::HCCL_CMD_REDUCE_SCATTER;
+        meta.reduceType = reduceType;
+        meta.dataType = dataType;
+        meta.algolevel1Type = algolevel1Type;
+        meta.hugeData = hugeData;
+        meta.isSmallCount = isSmallCount; // 是否小数据
+        meta.copyPattern = copyPattern;
+        meta.isEnableCache = CheckEnableCache(meta);
+        meta.dataSplit = dataSplit;
+        meta.isDeterministic = isDeterministic;
+        return meta;
+    }
+
+    static HcclOpMetaInfoDef GetOneForReduceScatterV(
+        u32 algolevel1Type = 0, HcclDataType dataType = HCCL_DATA_TYPE_RESERVED,
+        ReduceType reduceType = ReduceType::INLINE_REDUCE, bool hugeData = false,
+        bool isSmallCount = false, CopyPattern copyPattern = CopyPattern::BCOPY, bool dataSplit = false,
+        bool isDeterministic = false)
+    {
+        HcclOpMetaInfoDef meta;
+        meta.opType = HcclCMDType::HCCL_CMD_REDUCE_SCATTER_V;
         meta.reduceType = reduceType;
         meta.dataType = dataType;
         meta.algolevel1Type = algolevel1Type;

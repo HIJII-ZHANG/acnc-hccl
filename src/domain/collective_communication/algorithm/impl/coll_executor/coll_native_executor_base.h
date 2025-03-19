@@ -16,10 +16,10 @@
 #include "dispatcher.h"
 #include "stream_active_manager.h"
 #include "comm_factory_pub.h"
-#include "rank_consistent.h"
+#include "rank_consistentcy_checker.h"
 
 namespace hccl {
-constexpr u64 HCCL_INPLACE_MEMCOPY_SIZE = 1048576; // 1M数据量 = 1048576B数据量
+constexpr u64 HCCL_INPLACE_MEMCOPY_SIZE = 131072; // 128K数据量 = 131072B数据量
 
 struct ExecMem {
     u64 count = 0;
@@ -52,11 +52,11 @@ protected:
         std::vector<LevelNSubCommTransport>& opTransport);
     virtual HcclResult CalcStreamNum(u32& streamNum);
     virtual HcclResult CalcScratchMemSize(u64& scratchMemSize);
-    HcclResult CalcNotifyNum(u32 streamNum, u32 &notifyNum);
+    virtual HcclResult CalcNotifyNum(u32 streamNum, u32 &notifyNum);
     virtual HcclResult GetIfNeedAivBuffer(bool &needAivBuffer);
 
     // 考虑新建一个资源计算类ResourceCalculator，将资源推导、资源解析的都放进去。
-    // 推导通信域信息的公用函数，不同Executor的在计算inner、outer、level2时使用。
+    // 推导通信域信息的公用函数，不同Executor的在计算Level0、Level1、Level2时使用。
     HcclResult CalcCommPlaneInfo(const std::string &tag, const CommParaInfo &commParaInfo,
         std::vector<SingleSubCommTransport> &commTransport, TransportMemType inPutMemType,
         TransportMemType outPutMemType);
@@ -65,7 +65,7 @@ protected:
     HcclResult PrintTransportRequest(AlgResourceRequest& resourceRequest);
     /* *************** 算法编排 *************** */
     // 虚函数，执行具体的数据搬运、reduce操作。  各Executor重载。
-    // 按Inner、Outer、Level2可继续进行拆分。
+    // 按Level0、Level1、Level2可继续进行拆分。
     virtual HcclResult KernelRun(const OpParam &param, ExecMem &execMem);
 
     // 图模式下激活从流

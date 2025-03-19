@@ -29,11 +29,11 @@ HcclResult CollReduceRingPlusHdExecutor::CalcStreamNum(u32& streamNum)
         case AlgType::ALG_8P_RING_PLUS_NHR_V1:
         case AlgType::ALG_8P_RING_PLUS_NB:
         case AlgType::ALG_8P_RING_PLUS_PIPELINE:
-            totalStreamNum = OUTER_PLANE_NUM_IN_8PRING;
+            totalStreamNum = LEVEL0_PLANE_NUM_IN_8PRING;
             break;
         case AlgType::ALG_NP_SINGLE_RING_PLUS_RING:
         case AlgType::ALG_NP_SINGLE_RING_PLUS_HD:
-            totalStreamNum = OUTER_PLANE_NUM_IN_NPRING_SINGLE;
+            totalStreamNum = LEVEL0_PLANE_NUM_IN_NPRING_SINGLE;
             break;
         default:
             break;
@@ -72,10 +72,10 @@ HcclResult CollReduceRingPlusHdExecutor::CalcLevel0CommInfo(TransportMemType inp
     TransportMemType outputType,
     std::vector<LevelNSubCommTransport>& opTransport)
 {
-    HCCL_INFO("[CollReduceRingPlusHdExecutor][CalcOuterCommInfo]tag[%s] start", tag_.c_str());
+    HCCL_INFO("[CollReduceRingPlusHdExecutor][CalcLevel0CommInfo]tag[%s] start", tag_.c_str());
     CommParaInfo commParaLevel0(COMM_LEVEL0, CommType::COMM_TAG_RING_INNER);
     CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel0, opTransport[COMM_LEVEL0], inputType, outputType));
-    HCCL_INFO("[CollReduceRingPlusHdExecutor][CalcOuterCommInfo]tag[%s] Calc RingComm finish", tag_.c_str());
+    HCCL_INFO("[CollReduceRingPlusHdExecutor][CalcLevel0CommInfo]tag[%s] Calc RingComm finish", tag_.c_str());
     return HCCL_SUCCESS;
 }
 
@@ -87,19 +87,19 @@ HcclResult CollReduceRingPlusHdExecutor::KernelRun(const OpParam &param, ExecMem
     std::vector<std::vector<Slice> > mulRingSlice; // 数据基于该rank上环0的偏移
 
     // step1: 节点内的reducescatter
-    u32 ringNum = (topoType_ == TopoType::TOPO_TYPE_8P_RING) ? OUTER_PLANE_NUM_IN_8PRING :
-        OUTER_PLANE_NUM_IN_NPRING_SINGLE;
+    u32 ringNum = (topoType_ == TopoType::TOPO_TYPE_8P_RING) ? LEVEL0_PLANE_NUM_IN_8PRING :
+        LEVEL0_PLANE_NUM_IN_NPRING_SINGLE;
 
     CHK_RET(CheckCommSize(COMM_LEVEL0, ringNum));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
 
     // 按ranksize得到内存切分slice数为8
-    u32 sliceNum = outerCommInfo.localRankSize;
+    u32 sliceNum = level0CommInfo.localRankSize;
     CHK_RET(AlgTemplateBase::PrepareSliceData(execMem.count, perDataSize, sliceNum, 0, dataSegsSlice));
 
     /* 外层:reducescatter */
     // 将每slice再切分成4份，按各ring的dev顺序排列
-    if (ringNum == OUTER_PLANE_NUM_IN_8PRING) {
+    if (ringNum == LEVEL0_PLANE_NUM_IN_8PRING) {
         // 构造ring algorithm对应的reduce-scatter实例
         mulRingSlice = PrepareMultiRingSlice(dataSegsSlice, tag_, false, topoAttr_.nicList);
         CHK_PRT_RET(mulRingSlice.size() != ringNum, HCCL_ERROR("[CollReduceRingPlusHdExecutor]ringNum[%u] "\
@@ -117,15 +117,15 @@ HcclResult CollReduceRingPlusHdExecutor::KernelRun(const OpParam &param, ExecMem
     u64 hdSize;
     u32 segmentIdx;
     u32 commIndex;
-    CHK_RET(PrepareInnerCommInfo(segmentIdx, commIndex, hdSize, outerCommInfo, mulRingSlice, tag_));
+    CHK_RET(PrepareLevel1CommInfo(segmentIdx, commIndex, hdSize, level0CommInfo, mulRingSlice, tag_));
 
     u64 hdCount = hdSize / perDataSize;
 
-    HCCL_DEBUG("commIdx:%u TagCommInfo[%s].commInner.size():%u", commIndex, tag_.c_str(),
-        outerCommInfo.localRankSize);
+    HCCL_DEBUG("commIdx:%u TagCommInfo[%s].commLevel1.size():%u", commIndex, tag_.c_str(),
+        level0CommInfo.localRankSize);
 
     CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
-    SubCommInfo innerCommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
+    SubCommInfo level1CommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
 
     DeviceMem reduceInput = execMem.inputMem.range(dataSegsSlice[segmentIdx].offset, hdSize);
     CHK_SMART_PTR_NULL(reduceInput);
@@ -134,13 +134,13 @@ HcclResult CollReduceRingPlusHdExecutor::KernelRun(const OpParam &param, ExecMem
 
     u64 reduceAttr = GetReduceAttr(reduceInput, reduceOutput, param.DataDes.dataType, param.reduceType);
 
-    std::unique_ptr<AlgTemplateBase> innerTempAlg;
+    std::unique_ptr<AlgTemplateBase> level1TempAlg;
     if (UseInterServerRingAlgo(algType_)) {
-        innerTempAlg.reset(new (std::nothrow) ReduceRing(dispatcher_, reduceAttr));
+        level1TempAlg.reset(new (std::nothrow) ReduceRing(dispatcher_, reduceAttr));
     } else {
-        innerTempAlg.reset(new (std::nothrow) ReduceRecursiveHalvingDoubling(dispatcher_, reduceAttr));
+        level1TempAlg.reset(new (std::nothrow) ReduceRecursiveHalvingDoubling(dispatcher_, reduceAttr));
     }
-    CHK_SMART_PTR_NULL(innerTempAlg);
+    CHK_SMART_PTR_NULL(level1TempAlg);
 
     u32 subUserrankRoot = topoMatcher_->GetSubRootUserRank(topoAttr_.userRank, param.root);
     CHK_PRT_RET(subUserrankRoot == INVALID_VALUE_RANKID,
@@ -150,24 +150,24 @@ HcclResult CollReduceRingPlusHdExecutor::KernelRun(const OpParam &param, ExecMem
     u32 planeRoot = 0;
     CHK_RET(GetRankByUserRank(COMM_LEVEL1, commIndex, subUserrankRoot, planeRoot));
 
-    u32 ranksize = innerCommInfo.localRankSize;
+    u32 ranksize = level1CommInfo.localRankSize;
     // 节点间的hd 使用环0来记录
-    CHK_RET(innerTempAlg->Prepare(reduceInput, reduceOutput, reduceOutput, hdCount, param.DataDes.dataType,
+    CHK_RET(level1TempAlg->Prepare(reduceInput, reduceOutput, reduceOutput, hdCount, param.DataDes.dataType,
         param.stream, param.reduceType, planeRoot, std::vector<Slice>(0), dataSegsSlice[segmentIdx].offset));
 
-    CHK_RET(innerTempAlg->RegisterProfiler((ranksize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + innerCommInfo.localRank, \
+    CHK_RET(level1TempAlg->RegisterProfiler((ranksize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1CommInfo.localRank, \
         PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-    CHK_RET(RunTemplate(innerTempAlg, innerCommInfo));
+    CHK_RET(RunTemplate(level1TempAlg, level1CommInfo));
 
     HCCL_INFO("reduce 8PringHD stage1 run success");
 
     // step3: 节点内的gatherring，只有在root所在server内进行gather操作
-    SingleSubCommTransport &outerTransportInfo =
+    SingleSubCommTransport &level0TransportInfo =
         const_cast<SingleSubCommTransport&>(algResResp_->opTransportResponse[COMM_LEVEL0][COMM_INDEX_0]);
 
-    if (outerTransportInfo.userRank2subCommRank.find(param.root) !=
-        outerTransportInfo.userRank2subCommRank.end()) {
+    if (level0TransportInfo.userRank2subCommRank.find(param.root) !=
+        level0TransportInfo.userRank2subCommRank.end()) {
         CHK_RET(MultiRingGather(tag_, execMem.outputMem, execMem.outputMem, hdCount, param.DataDes.dataType,
             mulRingSlice, param.reduceType, param.root, const_cast<Stream &>(param.stream), PROF_STAGE_2));
     }

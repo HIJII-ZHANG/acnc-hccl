@@ -73,19 +73,30 @@ HcclResult ReduceScatterMeshDirect::RunAsync(const u32 rank, const u32 rankSize,
 
     // 数据准备
     u32 unitSize = SIZE_TABLE[dataType_];
-    u64 sliceSize = count_ * unitSize;
+
+    if (slices_.size() == 0) {
+        // slices_为空，临时构造等长slices
+        slices_.resize(rankSize);
+        u64 curSize = count_ * unitSize;
+        u64 sliceSize = (opInfo_->count) * unitSize;
+
+        for (u32 i = 0; i < rankSize; i++) {
+            slices_[i].size = curSize;
+            slices_[i].offset = (i * sliceSize);
+        }
+    }
 
     DeviceMem userMemIn =
-        DeviceMem::create(static_cast<char *>(opInfo_->inputAddr) + ((opInfo_->count) * unitSize * rank), sliceSize);
-    DeviceMem userMemOut = DeviceMem::create(static_cast<char *>(opInfo_->outputAddr), sliceSize);
+        DeviceMem::create(static_cast<char *>(opInfo_->inputAddr) + slices_[rank].offset, slices_[rank].size);
+    DeviceMem userMemOut = DeviceMem::create(static_cast<char *>(opInfo_->outputAddr), slices_[rank].size);
     DeviceMem commMemOut = DeviceMem::create(outputMem_.ptr(), outputMem_.size());
-
+    
     DeviceMem src;
     DeviceMem dst;
-
-    dst = commMemOut.range(0, sliceSize);
+    
+    dst = commMemOut.range(0, slices_[rank].size);
     CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dst, userMemIn, stream_));
-
+    
     CHK_RET(MainRecordSub());
     CHK_RET(SubWaitMain());
 
@@ -116,10 +127,10 @@ HcclResult ReduceScatterMeshDirect::RunAsync(const u32 rank, const u32 rankSize,
         void *remMemPtr = nullptr;
         // 获取远端的commoutMem
         CHK_RET(dstLink->GetRemoteMem(UserMemType::INPUT_MEM, &remMemPtr));
-        dst = DeviceMem::create(static_cast<char *>(remMemPtr), sliceSize);
-        u64 suboffset = (opInfo_->count) * unitSize * dstRank;
-        src = DeviceMem::create(static_cast<char *>(opInfo_->inputAddr) + suboffset, sliceSize);
-        CHK_RET(HcclReduceAsync(dispatcher_, static_cast<void *>(src.ptr()), count_, dataType_, reductionOp_,
+        dst = DeviceMem::create(static_cast<char *>(remMemPtr), slices_[dstRank].size);
+        src = DeviceMem::create(static_cast<char *>(opInfo_->inputAddr) + slices_[dstRank].offset, slices_[dstRank].size);
+        u64 curCount = slices_[dstRank].size / unitSize;
+        CHK_RET(HcclReduceAsync(dispatcher_, static_cast<void *>(src.ptr()), curCount, dataType_, reductionOp_,
             subStream, static_cast<void *>(dst.ptr()), dstLink->GetRemoteRank(), dstLink->GetLinkType(),
             INLINE_REDUCE_BIT));
 
@@ -131,7 +142,7 @@ HcclResult ReduceScatterMeshDirect::RunAsync(const u32 rank, const u32 rankSize,
     CHK_RET(MainWaitSub());
 
     // commout--> useroutput
-    DeviceMem srcMem = commMemOut.range(0, sliceSize);
+    DeviceMem srcMem = commMemOut.range(0, slices_[rank].size);
     CHK_RET(HcclD2DMemcpyAsync(dispatcher_, userMemOut, srcMem, stream_));
 
     HCCL_INFO("ReduceScatterMeshDirect finished: rank[%u]", rank);

@@ -95,7 +95,7 @@ HcclResult CollAllGatherSmallCountExecutor::KernelRun(const OpParam &param, Exec
     HcomCollOpInfo opInfo = {"", execMem.inputPtr, execMem.outputPtr, param.DataDes.count, param.DataDes.dataType,
         param.root, param.reduceType};
     executor.reset(new (std::nothrow) AllGatherHDStage(dispatcher_, algResResp_->slaveStreams,
-        algResResp_->notifiesM2S, algResResp_->notifiesS2M, topoAttr_.userRank, &opInfo));
+        algResResp_->notifiesMain, algResResp_->notifiesAux, topoAttr_.userRank, &opInfo));
     CHK_SMART_PTR_NULL(executor);
 
     CHK_RET(executor->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,

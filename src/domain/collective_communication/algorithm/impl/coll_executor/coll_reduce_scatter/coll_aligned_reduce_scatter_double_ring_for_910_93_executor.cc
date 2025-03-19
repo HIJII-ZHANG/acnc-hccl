@@ -23,7 +23,7 @@ HcclResult CollAlignedReduceScatterDoubleRingFor91093Executor::DoubleRingReduceS
     const u64 count, const HcclDataType dataType, const HcclReduceOp reductionOp,
     const std::vector<std::vector<Slice> > multRingsSliceZero, Stream stream, s32 profStage,
     const u64 baseOffset, const HcomCollOpInfo *opInfo,
-    const std::vector<std::vector<Slice>> multRingsUserMemSlice, const bool retryEnable)
+    const std::vector<std::vector<Slice>> multRingsUserMemSlice, const bool disableDMAReduce)
 {
     (void)tag;
     HCCL_INFO(
@@ -33,14 +33,14 @@ HcclResult CollAlignedReduceScatterDoubleRingFor91093Executor::DoubleRingReduceS
     CHK_RET(CheckCommSize(COMM_LEVEL0, ringNum));
 
     // 拿到ring环映射关系
-    SubCommInfo outerZeroCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    SubCommInfo level0ZeroCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
     auto nicList = topoAttr_.nicList;
     std::vector<std::vector<u32>> multiRingsOrder =
-        GetRingsOrderByTopoType(outerZeroCommInfo.localRankSize, topoType_, nicList);
+        GetRingsOrderByTopoType(level0ZeroCommInfo.localRankSize, topoType_, nicList);
 
     u64 reduceAttr = GetReduceAttr(inputMem, outputMem, dataType, reductionOp);
 
-    SubCommInfo outerRingCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    SubCommInfo level0RingCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
     // 生成两个ring上的userMemIn_上对应的slices
     std::vector<std::vector<Slice>> userMemInputSlicesOfDoubleRing;
     CHK_RET(CollectMultiRingsUserMemSlices(ringNum, dataType,
@@ -54,25 +54,25 @@ HcclResult CollAlignedReduceScatterDoubleRingFor91093Executor::DoubleRingReduceS
     std::unique_ptr<AlgTemplateBase> tempAlg;
     tempAlg.reset(new (std::nothrow) AlignedReduceScatterDoubleRing(
         dispatcher_, reduceAttr, opInfo, topoAttr_.userRank, algResResp_->slaveStreams,
-        algResResp_->notifiesM2S, algResResp_->notifiesS2M, rankOrders, userMemInputSlicesOfDoubleRing));
+        algResResp_->notifiesMain, algResResp_->notifiesAux, rankOrders, userMemInputSlicesOfDoubleRing));
     CHK_SMART_PTR_NULL(tempAlg);
     ret = tempAlg->Prepare(inputMem, inputMem, outputMem, count, dataType, stream, multRingsSliceZero,
-        reductionOp, OUTER_BRIDGE_RANK_ID, baseOffset, retryEnable);
+        reductionOp, LEVEL0_BRIDGE_RANK_ID, baseOffset, disableDMAReduce);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAlignedReduceScatterDoubleRingFor91093Executor][DoubleRingReduceScatter] Double ring reduce scatter failed"
         "failed,return[%d]", ret), ret);
     u32 ringIndexOp = COMM_INDEX_0;
-    u32 rankSize = outerRingCommInfo.localRankSize;
+    u32 rankSize = level0RingCommInfo.localRankSize;
     ret = tempAlg->RegisterProfiler(
         ((ringIndexOp + 1) << PROF_RINGINDEX_OFFSET_OF_PLANEID) +
-        (rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + outerRingCommInfo.localRank,
+        (rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level0RingCommInfo.localRank,
         profStage, HCCL_EXEC_STEP_NOT_SET, stream);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAlignedReduceScatterDoubleRingFor91093Executor][DoubleRingReduceScatter] Double ring reduce scatter failed "
         "failed,return[%d]", ret), ret);
 
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
-    ret = RunTemplate(tempAlg, outerRingCommInfo);
+    ret = RunTemplate(tempAlg, level0RingCommInfo);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAlignedReduceScatterDoubleRingFor91093Executor][DoubleRingReduceScatter] Double ring reduce scatter failed "
         "failed,return[%d]", ret), ret);
@@ -86,10 +86,10 @@ HcclResult CollAlignedReduceScatterDoubleRingFor91093Executor::RunIntraSeverRedu
     const u64 count, const HcclDataType &dataType, const HcclReduceOp &reductionOp,
     const std::vector<std::vector<Slice>> &multRingsSliceZero, const Stream &stream, s32 profStage,
     const u64 baseOffset, const HcomCollOpInfo *opInfo,
-    const std::vector<std::vector<Slice>> &multRingsUserMemSlice, const bool retryEnable)
+    const std::vector<std::vector<Slice>> &multRingsUserMemSlice, const bool disableDMAReduce)
 {
     CHK_RET(DoubleRingReduceScatter(tag, inputMem, outputMem, count, dataType, reductionOp,
-        multRingsSliceZero, stream, profStage, baseOffset, opInfo, multRingsUserMemSlice, retryEnable));
+        multRingsSliceZero, stream, profStage, baseOffset, opInfo, multRingsUserMemSlice, disableDMAReduce));
     return HCCL_SUCCESS;
 }
 REGISTER_EXEC("AlignedReduceScatterDoubleRingFor91093Executor", AlignedReduceScatterDoubleRingFor91093,

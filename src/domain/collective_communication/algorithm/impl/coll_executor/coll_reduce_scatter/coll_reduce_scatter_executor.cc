@@ -42,7 +42,7 @@ HcclResult CollReduceScatterExecutor::Orchestrate(OpParam& param, AlgResourceRes
         execMem.outputMem = algRes.paramOutputMem;
         execMem.scratchMem = algRes.scratchMem;
         ret = KernelRun(param, execMem);
-        if (param.isPostSync == true) {
+        if (algOpContext_.opRetryHandler.isPostSync == true) {
             // post Sync
             CHK_RET(InplaceOpSync(param, execMem));
         }
@@ -56,7 +56,7 @@ HcclResult CollReduceScatterExecutor::Orchestrate(OpParam& param, AlgResourceRes
         execMem.scratchMem = algRes.scratchMem;
         ret = KernelRun(param, execMem);
     } else {
-        if (param.isInplacePreSync == true) {
+        if (algOpContext_.opRetryHandler.isInplacePreSync == true) {
             /*当重执行场景，UserInMem > CCLBuffer时，需要在reduce scatter算子前增加一个PreSync函数，提升重执行成功概率*/
             ExecMem execMem;
             execMem.count = param.DataDes.count;
@@ -169,7 +169,7 @@ HcclResult CollReduceScatterExecutor::RunLoop(OpParam &param, AlgResourceRespons
         inputOffset = curSize;
         outputOffset = curSize;
     }
-    if (param.isPostSync == true) {
+    if (algOpContext_.opRetryHandler.isPostSync == true) {
         ExecMem execMem;
         execMem.count = param.DataDes.count;
         execMem.inputPtr = param.inputPtr;
@@ -260,7 +260,7 @@ std::vector<std::vector<Slice>> CollReduceScatterExecutor::ReduceScatterRingSlic
     }
 
     // 再将每个 slice 划分为 ringNum 份
-    if (ringNum == OUTER_PLANE_NUM_IN_8PRING) {
+    if (ringNum == LEVEL0_PLANE_NUM_IN_8PRING) {
         if (useInlineReduce) {
             multiStreamSlice = PrepareMultiRingSlice(dataSegsSlice, tag);
         } else if (outputMem.size() % CCE_REDUCE_ALIGN_SIZE == 0) {
@@ -268,7 +268,7 @@ std::vector<std::vector<Slice>> CollReduceScatterExecutor::ReduceScatterRingSlic
         } else {
             multiStreamSlice = PrepareMultiRingSlice(dataSegsSlice, tag, true);
         }
-    } else if (ringNum == OUTER_PLANE_NUM_IN_NPRING_DOUBLE) {
+    } else if (ringNum == LEVEL0_PLANE_NUM_IN_NPRING_DOUBLE) {
         // 双环场景，需要传入正确的 niclist (不涉及网口裁剪)
         if (useInlineReduce) {
             multiStreamSlice = PrepareMultiRingSlice(dataSegsSlice, tag, false, topoAttr_.nicList);
@@ -298,7 +298,7 @@ std::vector<std::vector<Slice>> CollReduceScatterExecutor::AnyPathReduceScatterR
     }
 
     // 再将每个 slice 划分为 ringNum 份
-    if (ringNum == OUTER_PLANE_NUM_IN_8PRING) {
+    if (ringNum == LEVEL0_PLANE_NUM_IN_8PRING) {
         if (useInlineReduce) {
             multiStreamSlice = AnyPathPrepareMultiRingSlice(dataSegsSlice, tag);
         } else if (outputMem.size() % CCE_REDUCE_ALIGN_SIZE == 0) {
@@ -306,7 +306,7 @@ std::vector<std::vector<Slice>> CollReduceScatterExecutor::AnyPathReduceScatterR
         } else {
             multiStreamSlice = AnyPathPrepareMultiRingSlice(dataSegsSlice, tag, true);
         }
-    } else if (ringNum == OUTER_PLANE_NUM_IN_NPRING_DOUBLE) {
+    } else if (ringNum == LEVEL0_PLANE_NUM_IN_NPRING_DOUBLE) {
         // 双环场景，需要传入正确的 niclist (不涉及网口裁剪)
         if (useInlineReduce) {
             multiStreamSlice = AnyPathPrepareMultiRingSlice(dataSegsSlice, tag, false, topoAttr_.nicList);

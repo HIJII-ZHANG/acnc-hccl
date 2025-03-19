@@ -79,13 +79,13 @@ HcclResult CollReduceMeshExecutor::KernelRun(const OpParam &param, ExecMem &exec
 
     std::vector<Slice> dataSegsSlice;   // 数据分成ranksize份，每份的起始偏移和大小
     std::vector<std::vector<Slice> > multiStreamSlice; // 每个stream使用的数据基于用户buffer的偏移
-    std::unique_ptr<AlgTemplateBase> innerTempAlg;
-    std::unique_ptr<AlgTemplateBase> outer2TempAlg;
+    //std::unique_ptr<AlgTemplateBase> level1TempAlg;
+    //std::unique_ptr<AlgTemplateBase> level0TempAlg;
 
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
 
-    u32 sliceNum = outerCommInfo.localRankSize;
+    u32 sliceNum = level0CommInfo.localRankSize;
     // 根据数据量算每个环上数据的偏移和大小
     CHK_RET(AlgTemplateBase::PrepareSliceData(execMem.count, perDataSize, sliceNum, 0, dataSegsSlice));
     // mesh算法stream数量为server内rank数减1
@@ -108,22 +108,22 @@ HcclResult CollReduceMeshExecutor::KernelRun(const OpParam &param, ExecMem &exec
     HCCL_INFO("[CollReduceMeshExecutor]reduce mesh stage0 run success");
 
     // step2: 节点间的reduce
-    u32 commIndex = outerCommInfo.localRank;
+    u32 commIndex = level0CommInfo.localRank;
     CHK_PRT_RET(commIndex >= dataSegsSlice.size(), HCCL_ERROR("[CollReduceMeshExecutor][Run]commIndex[%u] >= "
        "dataSegsSlice size[%zu]", commIndex, dataSegsSlice.size()), HCCL_E_INTERNAL);
 
     CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
-    SubCommInfo innerCommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
+    SubCommInfo level1CommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
 
-    HCCL_DEBUG("commIdx:%u TagCommInfo[%s].commInner.size():%zu", commIndex, tag_.c_str(),
-        innerCommInfo.links.size());
+    HCCL_DEBUG("commIdx:%u TagCommInfo[%s].commLevel1.size():%zu", commIndex, tag_.c_str(),
+        level1CommInfo.links.size());
 
     DeviceMem reduceInput = execMem.inputMem.range(dataSegsSlice[commIndex].offset, dataSegsSlice[commIndex].size);
     CHK_SMART_PTR_NULL(reduceInput);
     DeviceMem reduceOutput = execMem.outputMem.range(dataSegsSlice[commIndex].offset, dataSegsSlice[commIndex].size);
     CHK_SMART_PTR_NULL(reduceOutput);
 
-    u32 rankSize = innerCommInfo.localRankSize;
+    u32 rankSize = level1CommInfo.localRankSize;
     if (rankSize > 1) {
         u64 reduceAttr = GetReduceAttr(reduceInput, reduceOutput, param.DataDes.dataType, param.reduceType);
 
@@ -136,49 +136,49 @@ HcclResult CollReduceMeshExecutor::KernelRun(const OpParam &param, ExecMem &exec
         u32 planeRoot = 0;
         CHK_RET(GetRankByUserRank(COMM_LEVEL1, commIndex, subUserrankRoot, planeRoot));
 
-        std::unique_ptr<AlgTemplateBase> innerTempAlg;
+        std::unique_ptr<AlgTemplateBase> level1TempAlg;
         if (UseInterServerRingAlgo(algType_)) {
-            innerTempAlg.reset(new (std::nothrow) ReduceRing(dispatcher_, reduceAttr));
+            level1TempAlg.reset(new (std::nothrow) ReduceRing(dispatcher_, reduceAttr));
         } else {
-            innerTempAlg.reset(new (std::nothrow) ReduceRecursiveHalvingDoubling(dispatcher_, reduceAttr));
+            level1TempAlg.reset(new (std::nothrow) ReduceRecursiveHalvingDoubling(dispatcher_, reduceAttr));
         }
-        CHK_SMART_PTR_NULL(innerTempAlg);
+        CHK_SMART_PTR_NULL(level1TempAlg);
         // 节点间的hd 使用环0来记录
         u64 hdCount = dataSegsSlice[commIndex].size / perDataSize;
 
-        CHK_RET(innerTempAlg->Prepare(reduceInput, reduceOutput, reduceOutput, hdCount, param.DataDes.dataType,
+        CHK_RET(level1TempAlg->Prepare(reduceInput, reduceOutput, reduceOutput, hdCount, param.DataDes.dataType,
             param.stream, param.reduceType, planeRoot, std::vector<Slice>(0), dataSegsSlice[commIndex].offset));
 
-        CHK_RET(innerTempAlg->RegisterProfiler((
-            innerCommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + innerCommInfo.localRank,
+        CHK_RET(level1TempAlg->RegisterProfiler((
+            level1CommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1CommInfo.localRank,
             PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-        CHK_RET(RunTemplate(innerTempAlg, innerCommInfo));
+        CHK_RET(RunTemplate(level1TempAlg, level1CommInfo));
     } else {
         CHK_RET(HcclD2DMemcpyAsync(dispatcher_, reduceOutput, reduceInput, const_cast<Stream&>(param.stream)));
     }
 
     HCCL_INFO("[CollReduceMeshExecutor]reduce mesh stage1 run success");
 
-    SingleSubCommTransport &outerTransportInfo =
+    SingleSubCommTransport &level0TransportInfo =
         const_cast<SingleSubCommTransport&>(algResResp_->opTransportResponse[COMM_LEVEL0][COMM_INDEX_0]);
 
-    if (outerTransportInfo.userRank2subCommRank.find(param.root) !=
-        outerTransportInfo.userRank2subCommRank.end()) {
-        const u32 rootRank = outerTransportInfo.userRank2subCommRank[param.root];
+    if (level0TransportInfo.userRank2subCommRank.find(param.root) !=
+        level0TransportInfo.userRank2subCommRank.end()) {
+        const u32 rootRank = level0TransportInfo.userRank2subCommRank[param.root];
 
-        std::unique_ptr<AlgTemplateBase> outerTempAlg;
-        outerTempAlg.reset(new (std::nothrow) GatherMesh(dispatcher_, algResResp_->slaveStreams,
-                algResResp_->notifiesM2S, algResResp_->notifiesS2M, topoAttr_.userRank));
-        CHK_SMART_PTR_NULL(outerTempAlg);
-        CHK_RET(outerTempAlg->Prepare(execMem.outputMem, execMem.outputMem, execMem.inputMem, execMem.count,
+        std::unique_ptr<AlgTemplateBase> level0TempAlg;
+        level0TempAlg.reset(new (std::nothrow) GatherMesh(dispatcher_, algResResp_->slaveStreams,
+                algResResp_->notifiesMain, algResResp_->notifiesAux, topoAttr_.userRank));
+        CHK_SMART_PTR_NULL(level0TempAlg);
+        CHK_RET(level0TempAlg->Prepare(execMem.outputMem, execMem.outputMem, execMem.inputMem, execMem.count,
             param.DataDes.dataType, const_cast<Stream &>(param.stream), param.reduceType, rootRank, dataSegsSlice));
 
-        u32 rankSize = outerCommInfo.localRankSize;
-        CHK_RET(outerTempAlg->RegisterProfiler((0 << PROF_RINGINDEX_OFFSET_OF_PLANEID) +
-            (rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + outerCommInfo.localRank,
+        u32 rankSize = level0CommInfo.localRankSize;
+        CHK_RET(level0TempAlg->RegisterProfiler((0 << PROF_RINGINDEX_OFFSET_OF_PLANEID) +
+            (rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level0CommInfo.localRank,
             PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, param.stream));
-        CHK_RET(RunTemplate(outerTempAlg, outerCommInfo));
+        CHK_RET(RunTemplate(level0TempAlg, level0CommInfo));
     }
     HCCL_INFO("[CollReduceMeshExecutor]reduce mesh stage2 run success");
 

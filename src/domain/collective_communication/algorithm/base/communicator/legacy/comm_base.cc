@@ -16,6 +16,7 @@
 #include "hccl_common.h"
 #include "device_capacity.h"
 #include "p2p_mgmt_pub.h"
+#include "rank_consistentcy_checker.h"
 namespace hccl {
 constexpr s32 HCCL_DEFAULT_INITIAL_VALUE = -1;
 CommBase::CommBase(const std::string &collectiveId, const u32 userRank, const u32 userRankSize,
@@ -23,10 +24,10 @@ CommBase::CommBase(const std::string &collectiveId, const u32 userRank, const u3
     const HcclDispatcher dispatcher, const std::unique_ptr<NotifyPool> &notifyPool,
     std::map<HcclIpAddress, HcclNetDevCtx> &netDevCtxMap,
     const IntraExchanger &exchanger, const DeviceMem &inputMem, const DeviceMem &outputMem,
-    const bool isUsedRdmaOuter, const void* transportResourceInfoAddr, size_t transportResourceInfoSize,
+    const bool isUsedRdmaLevel0, const void* transportResourceInfoAddr, size_t transportResourceInfoSize,
     const std::string &tag, const NICDeployment nicDeployInner,
     bool isAlltoAllCommMesh, const bool useOneDoorbell, const bool isAicpuModeEn, const u32 rankRoot,
-    bool isHaveCpuRank, bool useSuperPodMode)
+    bool isHaveCpuRank, bool useSuperPodMode, DeviceMem expMem)
     : linkDummy_(nullptr), collectiveId_(collectiveId), userRank_(userRank),
       userRankSize_(userRankSize), rank_(rank), rankSize_(rankSize), paraVector_(paraVector),
       transportType_(rankSize, TransportType::TRANS_TYPE_RESERVED),
@@ -34,14 +35,14 @@ CommBase::CommBase(const std::string &collectiveId, const u32 userRank, const u3
       topoFlag_(topoFlag), tag_(tag), transportInfo_(rankSize), rankMap_(userRankSize, INVALID_VALUE_RANKID),
       userRankMap_(rankSize, INVALID_VALUE_RANKID), dispatcher_(dispatcher), notifyPool_(notifyPool),
       netDevCtxMap_(netDevCtxMap), exchanger_(exchanger), inputMem_(inputMem), outputMem_(outputMem),
-      isUsedRdmaOuter_(isUsedRdmaOuter),
+      isUsedRdmaLevel0_(isUsedRdmaLevel0),
       transportResourceInfoAddr_(transportResourceInfoAddr), transportResourceInfoSize_(transportResourceInfoSize),
       dstInterServerMap_(), dstInterClientMap_(), dstIntraServerVec_(), dstIntraClientVec_(),
       linkThreads_(), threadsRapplyNum_(0),
       shmDev_(0), isAlltoAllCommMesh_(isAlltoAllCommMesh),
       nicDeployInner_(nicDeployInner), isNeedHeterogP2P_(false),
       useOneDoorbell_(useOneDoorbell), isAicpuModeEn_(isAicpuModeEn), subUserRankRoot_(rankRoot),
-      isHaveCpuRank_(isHaveCpuRank), useSuperPodMode_(useSuperPodMode)
+      isHaveCpuRank_(isHaveCpuRank), useSuperPodMode_(useSuperPodMode), expMem_(expMem)
 {
 }
 
@@ -227,7 +228,7 @@ bool CommBase::NeedDataReceivedAck()
 HcclResult CommBase::SetTransportType(const u32 dstRank)
 {
     LinkTypeInServer linkType = LinkTypeInServer::RESERVED_LINK_TYPE;
-    if (GetExternalInputEnableRdmaSdmaConcurrent() && isUsedRdmaOuter_
+    if (GetExternalInputEnableRdmaSdmaConcurrent() && isUsedRdmaLevel0_
         && paraVector_[rank_].deviceType == DevType::DEV_TYPE_910_93) {
         auto localDeviceId = paraVector_[rank_].devicePhyId;
         auto remoteDeviceId = paraVector_[dstRank].devicePhyId;
@@ -243,7 +244,7 @@ HcclResult CommBase::SetTransportType(const u32 dstRank)
             transportType_[dstRank] = TransportType::TRANS_TYPE_HETEROG_P2P;
         } else {
             // Server内判断是否使用rdma
-            if (isUsedRdmaOuter_ || isAlltoAllCommMesh_) {
+            if (isUsedRdmaLevel0_ || isAlltoAllCommMesh_) {
                 transportType_[dstRank] = TransportType::TRANS_TYPE_IBV_EXP;
             } else {
                 transportType_[dstRank] = TransportType::TRANS_TYPE_P2P;
@@ -383,6 +384,8 @@ HcclResult CommBase::CreateIntraThread(const u32 role, u32 dstRank,
     // 线程命名，TraL_ 代表Intra Link
     std::string threadStr = "HcclTraL_" + std::to_string(threadsRapplyNum_);
 
+    // 创建新线程前更新一下最新的workflowMode
+    workflowMode_ = GetWorkflowMode();
     if (role == SERVER_ROLE_SOCKET) {
         linkThreads_[threadsRapplyNum_].reset(
             new (std::nothrow) std::thread(&CommBase::CreateDestLink, this, hrtErrMGetErrorContextPub(),
@@ -495,6 +498,8 @@ HcclResult CommBase::CreateInterThread(const u32 role, u32 dstRank,
     // 线程命名，TerL代表Inter Link
     std::string threadStr = "HcclTerL_" + std::to_string(threadsRapplyNum_);
 
+    // 创建新线程前更新一下最新的workflowMode
+    workflowMode_ = GetWorkflowMode();
     if (role == SERVER_ROLE_SOCKET) {
         linkThreads_[threadsRapplyNum_].reset(
             new (std::nothrow) std::thread(&CommBase::CreateDestLink, this, hrtErrMGetErrorContextPub(),
@@ -543,10 +548,10 @@ HcclResult CommBase::CalcLinksNum(const MachineType machineType, const u32 dstRa
         paraVector_.size(), dstRank, rank_), HCCL_E_INTERNAL);
     // 节点间或者是节点内采用RDMA通信的, 放至dst_inter_client_map_,采用rdma建链
     bool isInterRdma = paraVector_[rank_].serverId != paraVector_[dstRank].serverId ||
-                       isUsedRdmaOuter_ || isAlltoAllCommMesh_;
+                       isUsedRdmaLevel0_ || isAlltoAllCommMesh_;
 
     bool isInterHccs = IsSupportInterHccs(dstRank);
-    if (GetExternalInputEnableRdmaSdmaConcurrent() && isUsedRdmaOuter_ &&
+    if (GetExternalInputEnableRdmaSdmaConcurrent() && isUsedRdmaLevel0_ &&
         paraVector_[rank_].deviceType == DevType::DEV_TYPE_910_93) {
         auto localDeviceId = paraVector_[rank_].devicePhyId;
         auto remoteDeviceId = paraVector_[dstRank].devicePhyId;
@@ -643,15 +648,14 @@ HcclResult CommBase::CreateDestLink(const ErrContextPub &error_context, const Ma
     SetThreadName(threadStr);
     if (!IsGeneralServer()) {
         CHK_RET(hrtSetDevice(deviceLogicId_));
+        SetWorkflowMode(workflowMode_); // 新的线程，更新workflowMode
     }
 
     bool check = (paraVector_.size() <= dstRank) || (paraVector_.size() <= rank_) ||
         (transportInfo_.size() <= dstRank) || (transportType_.size() <= dstRank);
-    CHK_PRT_RET(check,
-        HCCL_ERROR("[Create][DestLink]paraCheck failed, paraVector size[%llu], linkInfo size[%llu], linkType "
-                   "size[%llu], dstRank[%u], rank[%u] ",
-        paraVector_.size(), transportInfo_.size(), transportType_.size(), dstRank, rank_),
-        HCCL_E_INTERNAL);
+    CHK_PRT_RET(check, HCCL_ERROR("[Create][DestLink]paraCheck failed, paraVector size[%llu], linkInfo size[%llu], "
+                "linkType size[%llu], dstRank[%u], rank[%u] ", paraVector_.size(), transportInfo_.size(),
+                transportType_.size(), dstRank, rank_), HCCL_E_INTERNAL);
 
     MachinePara machinePara;
     CHK_RET(SetMachinePara(machineType, serverId, dstRank, sockets, machinePara));
@@ -665,14 +669,20 @@ HcclResult CommBase::CreateDestLink(const ErrContextPub &error_context, const Ma
     HcclResult ret = TransportInit(dstRank, machinePara);
     if (ret != HCCL_SUCCESS) {
         transportInfo_[dstRank] = nullptr;
+        if (ret == HCCL_E_MEMORY) {
+            RPT_INPUT_ERR(true, "EI0009", std::vector<std::string>({"reason"}),
+                std::vector<std::string>({"[Create][DestLink]Transport init error! IPC memory allocation failed due to "
+                "possible memory limit exceeded. Suggested solution: Use 3TB / (ranksize * 2) as the upper limit of "
+                "HCCL_BUFFSIZE."}));
+            HCCL_ERROR("[Create][DestLink]Transport init error! IPC memory allocation failed.");
+        }
         const std::string  CREATE_LINK_ERR = "[Create][DestLink]Create Dest error! creakLink para:rank[" + \
             std::to_string(rank_) + "]-localUserrank[" + std::to_string(paraVector_[rank_].worldRank) + \
             "]-localIpAddr[" + paraVector_[rank_].serverId.c_str() + "], dst_rank[" + \
             std::to_string(dstRank) + "]-remoteUserrank[" + std::to_string(paraVector_[dstRank].worldRank) + \
             "]-remote_ip_addr[" + paraVector_[dstRank].serverId.c_str() + "]";
 
-        RPT_INPUT_ERR(true, "EI0009", std::vector<std::string>({"reason"}), \
-            std::vector<std::string>({CREATE_LINK_ERR}));
+        RPT_INPUT_ERR(true, "EI0009", std::vector<std::string>({"reason"}), std::vector<std::string>({CREATE_LINK_ERR}));
         HCCL_ERROR("[Create][DestLink]Transport init error! creakLink para:rank[%u]-localUserrank[%u]-localIpAddr[%s], "
                    "dst_rank[%u]-remoteUserrank[%u]-remote_ip_addr[%s], machineType[%d], serverId[%s], linkMode[%d], "
                    "shmDev_[%u], tag[%s]",
@@ -684,9 +694,8 @@ HcclResult CommBase::CreateDestLink(const ErrContextPub &error_context, const Ma
     }
     HCCL_INFO("[creakLink success]:rank[%u]-localUserrank[%u]-localIpAddr[%s], " \
         "dst_rank[%u]-remoteUserrank[%u]-remote_ip_addr[%s], transportType_[%d], tag[%s]", rank_,
-        paraVector_[rank_].worldRank, paraVector_[rank_].serverId.c_str(), dstRank,
-        paraVector_[dstRank].worldRank, paraVector_[dstRank].serverId.c_str(), transportType_[dstRank],
-        machinePara.tag.c_str());
+        paraVector_[rank_].worldRank, paraVector_[rank_].serverId.c_str(), dstRank, paraVector_[dstRank].worldRank,
+        paraVector_[dstRank].serverId.c_str(), transportType_[dstRank], machinePara.tag.c_str());
 
     return HCCL_SUCCESS;
 }
@@ -746,6 +755,8 @@ HcclResult CommBase::TransportInit(const u32 dstRank, MachinePara &machinePara)
 
     CHK_RET(transportInfo_[dstRank]->Init());
 
+    CHK_RET(CheckExchangeInfo(transportInfo_[dstRank], machinePara.localDeviceId));
+
     return HCCL_SUCCESS;
 }
 
@@ -769,12 +780,22 @@ HcclResult CommBase::SetMachinePara(MachineType machineType, const std::string &
     machinePara.deviceType = static_cast<DevType>(paraVector_[dstRank].deviceType);
     machinePara.inputMem = inputMem_;
     machinePara.outputMem = outputMem_;
+    if(expMem_.ptr() != nullptr){
+        machinePara.mem.push_back(expMem_);
+    } else {
+        machinePara.mem.clear();
+    }
     machinePara.linkAttribute = 0x03; /* 0x03同时支持目的端和源端发起 */
     machinePara.tag = tag_;
     // 把原来的两层vector变成一层, 方便后继调用
     for (u32 i = 0; i < socketList.size(); i++) {
         machinePara.sockets.push_back(socketList[i]);
     }
+    u64 rankConsistentDataLength =
+        RankConsistentcyChecker::GetInstance(machinePara.localDeviceId).GetRankConsistentDataLength();
+    machinePara.exchangeInfo.resize(rankConsistentDataLength);
+    CHK_RET(RankConsistentcyChecker::GetInstance(machinePara.localDeviceId).GetCheckFrame(&machinePara.exchangeInfo[0],
+        rankConsistentDataLength, tag_));
     machinePara.supportDataReceivedAck = NeedDataReceivedAck();
     machinePara.nicDeploy = nicDeployInner_;
     machinePara.localSocketPort = paraVector_[rank_].hostPort;
@@ -825,6 +846,7 @@ std::shared_ptr<Transport> &CommBase::GetTrasportInfoByVTransportInfoIndex(u32 i
 HcclResult CommBase::BuildAsync(u32& status)
 {
     transportStatus_.resize(rankSize_, 1);
+    checkStatus_.resize(rankSize_, false);
 
     // 获取rank->userrank以及userrank->rank的映射关系
     CHK_RET(SetRankMap());
@@ -932,6 +954,10 @@ HcclResult CommBase::TransportBuildAsync(const MachineType machineType, const st
         HCCL_E_PTR);
 
     CHK_RET(transportInfo_[dstRank]->ConnectAsync(status));
+    if (status == HETEROG_P2P_SUCCESS && checkStatus_[dstRank] == false) {
+        checkStatus_[dstRank] = true;
+        CHK_RET(CheckExchangeInfo(transportInfo_[dstRank], machinePara.localDeviceId));
+    }
     HCCL_DEBUG("TransportBuildAsync[%u] %u", dstRank, status);
     return HCCL_SUCCESS;
 }
@@ -942,6 +968,10 @@ HcclResult CommBase::TransportBuildQuerry(u32 dstRank, u32& status)
         HCCL_ERROR("[TransportQuerry] Transport[%u] is invaild, should init before querry it.", dstRank), HCCL_E_PARA);
     if (transportInfo_[dstRank]) {
         CHK_RET(transportInfo_[dstRank]->ConnectQuerry(status));
+        if (status == HETEROG_P2P_SUCCESS && checkStatus_[dstRank] == false) {
+            checkStatus_[dstRank] = true;
+            CHK_RET(CheckExchangeInfo(transportInfo_[dstRank], paraVector_[rank_].devicePhyId));
+        }
     } else {
         status = HETEROG_P2P_WAIT;
     }
@@ -1199,6 +1229,22 @@ HcclResult CommBase::SetHDCModeInfo(
     ranksPort_ = ranksPort;
     isSetHDCModeInfo_ = isSetHDCModeInfo;
     isUseRankPort_ = isUseRankPort;
+    return HCCL_SUCCESS;
+}
+
+HcclResult CommBase::CheckExchangeInfo(const std::shared_ptr<Transport> &link, const s32 deviceId)
+{
+    // 算子一致性校验
+    u64 exchangeInfoLength = RankConsistentcyChecker::GetInstance(deviceId).GetRankConsistentDataLength();
+    std::vector<u8> recvData = link->GetExchangeInfo();
+    if (recvData.size() != 0) {
+        CHK_PRT_RET(recvData.size() != exchangeInfoLength,
+            HCCL_ERROR("[Check][ExchangeInfo]remote exchangInfo size[%zu], local exchangeInfo size[%llu]",
+            recvData.size(), exchangeInfoLength), HCCL_E_INTERNAL);
+        CHK_RET(RankConsistentcyChecker::GetInstance(deviceId).CheckFrameRecv(&recvData[0],
+            recvData.size(), tag_.c_str()));
+    }
+
     return HCCL_SUCCESS;
 }
 } // namespace hccl

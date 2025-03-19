@@ -58,7 +58,7 @@ HcclResult CollRunAlltoAllVFullMesh::CalAlltoAllFullMeshCommInfo(TransportMemTyp
      // A+X单机双module启用下，未使能RDMA不能进行一层pairWise。
     bool isDifModule = topoAttr_.serverNum == 1 && topoAttr_.isDiffDeviceModule &&
         topoAttr_.userRankSize > HCCL_ALLTOALLV_P2P_SIZE;
-    CHK_PRT_RET(isDifModule && !algoAttr_.isUsedRdmaOuter,
+    CHK_PRT_RET(isDifModule && !algoAttr_.isUsedRdmaLevel0,
         HCCL_ERROR("[CalAlltoAllFullMeshCommInfo] not support dual modules in a single server" \
                    " when RDMA disabled "), HCCL_E_NOT_SUPPORT);
 
@@ -106,7 +106,7 @@ HcclResult CollRunAlltoAllVFullMesh::KernelRun(const OpParam &param, ExecMem &ex
     recvInfo.dataType = param.All2AllDataDes.recvType;
 
     CHK_RET(CheckCommSize(COMM_COMBINE_ORDER, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_COMBINE_ORDER, COMM_INDEX_0);
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_COMBINE_ORDER, COMM_INDEX_0);
     bool usePairwiseAlgorithm =
         GetExternalInputHcclAlgoConfig(HcclCMDType::HCCL_CMD_ALLTOALL)[0] == HcclAlgoType::HCCL_ALGO_TYPE_NA &&
         GetExternalInputHcclAlgoConfig(HcclCMDType::HCCL_CMD_ALLTOALL)[1] == HcclAlgoType::HCCL_ALGO_TYPE_PAIRWISE;
@@ -121,8 +121,8 @@ HcclResult CollRunAlltoAllVFullMesh::KernelRun(const OpParam &param, ExecMem &ex
 
         std::unique_ptr<AlltoAllVMeshReadOnly> alltoallReadOnly = nullptr;
         alltoallReadOnly.reset(new (std::nothrow) AlltoAllVMeshReadOnly(dispatcher_, const_cast<Stream&>(param.stream),
-            algResResp_->slaveStreams, algResResp_->notifiesM2S, algResResp_->notifiesS2M, topoAttr_.userRank,
-            topoAttr_.userRankSize, outerCommInfo.links, allMeshAggregationSendRecvInfo_));
+            algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux, topoAttr_.userRank,
+            topoAttr_.userRankSize, level0CommInfo.links, allMeshAggregationSendRecvInfo_));
         CHK_SMART_PTR_NULL(alltoallReadOnly);
 
         AlltoAllUserRankInfo userRankInfo;
@@ -161,7 +161,7 @@ HcclResult CollRunAlltoAllVFullMesh::KernelRun(const OpParam &param, ExecMem &ex
         CHK_SMART_PTR_NULL(pairWisePtr);
         CHK_RET(pairWisePtr->Prepare(sendInfo, recvInfo, execMem.inputMem, execMem.outputMem, isAlltoAllZCopyMode_,
             const_cast<Stream&>(param.stream)));
-        CHK_RET(RunAlltoAllTemplate(pairWisePtr, outerCommInfo));
+        CHK_RET(RunAlltoAllTemplate(pairWisePtr, level0CommInfo));
     } else if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE &&
         isAlltoAllZCopyMode_) {
         pairWisePtr.reset(new (std::nothrow)AlltoAllVPairWise(dispatcher_, rankSendDisplsMap, rankRecvDisplsMap,
@@ -172,7 +172,7 @@ HcclResult CollRunAlltoAllVFullMesh::KernelRun(const OpParam &param, ExecMem &ex
 
         CHK_RET(pairWisePtr->Prepare(sendInfo, recvInfo, execMem.inputMem, execMem.outputMem,
             isAlltoAllZCopyMode_, const_cast<Stream&>(param.stream)));
-        CHK_RET(RunAlltoAllTemplate(pairWisePtr, outerCommInfo)); // inputMem_ -> outputMem_
+        CHK_RET(RunAlltoAllTemplate(pairWisePtr, level0CommInfo)); // inputMem_ -> outputMem_
 
         DeviceMem srcMem = execMem.outputMem.range(0, algResResp_->paramOutputMem.size());
         CHK_RET(HcclD2DMemcpyAsync(dispatcher_, algResResp_->paramOutputMem, srcMem, const_cast<Stream&>(param.stream)));
@@ -182,7 +182,7 @@ HcclResult CollRunAlltoAllVFullMesh::KernelRun(const OpParam &param, ExecMem &ex
         CHK_SMART_PTR_NULL(pairWisePtr);
         CHK_RET(pairWisePtr->Prepare(sendInfo, recvInfo, isAlltoAllZCopyMode_, const_cast<Stream&>(param.stream)));
         // 保证最新的commMesh是为该次alltoallv创建（不支持多线程）
-        CHK_RET(RunAlltoAllTemplate(pairWisePtr, outerCommInfo));
+        CHK_RET(RunAlltoAllTemplate(pairWisePtr, level0CommInfo));
     } else {
         HCCL_ERROR("[hcclImpl][RunAlltoAllVFullMesh]work flow mode is invalid");
         return HCCL_E_PARA;

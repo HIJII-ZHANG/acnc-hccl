@@ -59,6 +59,7 @@ void ThreadManage::NotifyStart()
     std::unique_lock<std::mutex> lock(startMtx_);
     startReady = true; // 设置标志位为 true.
     startCv_.notify_one();
+    workflowMode_ = GetWorkflowMode();
 }
 
 void ThreadManage::WaitStart()
@@ -68,6 +69,8 @@ void ThreadManage::WaitStart()
         startCv_.wait(lock); // 当前线程被堵塞, 当标志位变为 true 之后,
     }
     startReady = false;
+
+    SetWorkflowMode(workflowMode_);
 }
 
 void ThreadManage::NotifyDone()
@@ -119,7 +122,7 @@ HcclResult ThreadManage::ExecuteService()
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[Execute][Service]stream[%u] wait failed", ringIndex_), ret);
 
     ret = tempAlg->Prepare(inputMem_, outputMem_, scratchMem_, count_, dataType_, stream_, reductionOp_,
-        OUTER_BRIDGE_RANK_ID, slices_, baseOffset_, nicRankList_);
+        LEVEL0_BRIDGE_RANK_ID, slices_, baseOffset_, nicRankList_);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[Execute][Service]stream[%u],prepare failed,return[%d]", ringIndex_, ret), ret);
 

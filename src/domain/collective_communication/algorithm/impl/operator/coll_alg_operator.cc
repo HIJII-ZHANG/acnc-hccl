@@ -79,7 +79,7 @@ HcclResult CollAlgOperator::Orchestrate(const std::string& algName, OpParam& par
             HCCL_E_PARA);
         CHK_RET(SetExecutorAttr(param));
     }
-
+    executor_->SetAlgOpContext(algOpContext_);
     return executor_->Orchestrate(param, algResource);
 }
 
@@ -106,11 +106,15 @@ void CollAlgOperator::SetTopoAttr(AlgConfigurator* algConfigurator)
     multiModuleDiffDeviceNumMode_ = topoAttr.multiModuleDiffDeviceNumMode;
     multiSuperPodDiffServerNumMode_ = topoAttr.multiSuperPodDiffServerNumMode;
 
+    isDiffDeviceType_ = topoAttr.isDiffDeviceType;
+    gcdDeviceNumPerAggregation_ = topoAttr.gcdDeviceNumPerAggregation;
+
     meshAggregationRankSize_ = topoAttr.meshAggregationRankSize;
     isDiffDeviceModule_ = topoAttr.isDiffDeviceModule;
     isSingleMeshAggregation_ = topoAttr.isSingleMeshAggregation;
     isAllRankSamePlane_ = topoAttr.isAllRankSamePlane;
     is310PDuoCard_ = topoAttr.is310PDuoCard;
+    isCommon310P3DUO_ = topoAttr.isCommon310P3DUO;
     hccsPortNum_ = topoAttr.hccsPortNum;
 
     userRank_ = topoAttr.userRank;
@@ -551,7 +555,7 @@ bool CollAlgOperator::IsMultiMeshInlineReduce(void *inputPtr, void *outputPtr, H
                       topoType_ == TopoType::TOPO_TYPE_2P_MESH || topoType_ == TopoType::TOPO_TYPE_1P_MESH;
 
     bool isInlineReduce = IsSupportSDMAReduce(inputPtr, outputPtr, dataType, op);
-    bool isRdmaReduce = IsSupportRDMAReduce(dataType, op);
+    bool isRdmaReduce = IsOverFlowInfNanMode() && IsSupportRDMAReduce(dataType, op);
     bool multiMeshInlineReduce = (deviceType_ == DevType::DEV_TYPE_910B) &&
                                  isMeshTopo && isInlineReduce && isRdmaReduce && (!isSingleMeshAggregation_);
     return multiMeshInlineReduce;
@@ -563,127 +567,29 @@ void CollAlgOperator::SetLegacyHcclImpl(std::unique_ptr<hcclImpl> &impl)
     return;
 }
 
-bool CollAlgOperator::CheckUserInMemNotLargerThanCCLInMem(const HcclCMDType &opType, OpParam &param)
+HcclResult CollAlgOperator::SetRetryEnable(bool retryEnable)
 {
-    u32 unitSize = SIZE_TABLE[param.DataDes.dataType];
-    u64 dataSize = 0;
-    if (opType == HcclCMDType::HCCL_CMD_REDUCE_SCATTER) {
-        dataSize = param.DataDes.count * unitSize * userRankSize_;
-    } else if (opType == HcclCMDType::HCCL_CMD_ALLREDUCE) {
-        dataSize = param.DataDes.count * unitSize;
-    }
-
-    void *commInputPtr = nullptr;
-    u64 commInputSize = 0;
-    CHK_RET(cclBufferManager_.GetInCCLbuffer(commInputPtr, commInputSize));
-    if (dataSize <= commInputSize) {
-        HCCL_INFO("[CollAlgOperator][OpRetry][AICPU] UserInMem[%llu] <= CCLInMem[%llu]", dataSize, commInputSize);
-    } else {
-        HCCL_INFO("[CollAlgOperator][OpRetry][AICPU] UserInMem[%llu] > CCLInMem[%llu]", dataSize, commInputSize);
-    }
-    return dataSize <= commInputSize;
+    retryEnable_ = retryEnable;
+    return HCCL_SUCCESS;
 }
 
-bool CollAlgOperator::ExecutorOnlySupportDMAReduce(const std::string& algName)
+HcclResult CollAlgOperator::SetAlgOpContext(AlgOpContext algOpContext)
 {
-    return (algName == "AllReduceMeshSmallCountExecutor") || (algName == "ReduceScatterDeterExecutor");
-}
-
-bool CollAlgOperator::ExecutorCanSupportDMAReduce(const std::string& algName)
-{
-    const std::set<std::string> executorCanSupportDMAReduceSet = {
-        "AllReduceRingFor91093Executor", "AllReduceDoubleRingConcurrentExecutor",
-        "AllReduceFastDoubleRingFor91093Executor", "AlignedAllReduceDoubleRingFor91093Executor",
-        "ReduceScatterRingFor91093Executor", "ReduceScatterDoubleRingConcurrentExecutor",
-        "ReduceScatterFastDoubleRingFor91093Executor", "AlignedReduceScatterDoubleRingFor91093Executor"
-        };
-    if (executorCanSupportDMAReduceSet.find(algName) != executorCanSupportDMAReduceSet.end()) {
-        return true;
-    }
-    return false;
-}
-
-bool CollAlgOperator::ExecutorNoSupportDMAReduce(const std::string& algName)
-{
-    return (algName == "AllReduceComm") || (algName == "ReduceScatterComm");
-}
-
-bool CollAlgOperator::ExecutorSupportInPlace(OpParam &param, std::string& algName, u8 &inPlaceSupportRetryStatus)
-{
-    // case 2.2
-    if (ExecutorOnlySupportDMAReduce(algName)) {
-        if (param.retryEnable) {
-            HCCL_INFO("[CollAlgOperator][OpRetry][AICPU]ExecutorOnlySupportDMAReduce[%s] is not allowed"
-                " for inplace case, the executor without DMAReduce will be applied.", algName.c_str());
-            inPlaceSupportRetryStatus = INPLACE_SUPPORT_RETRY_STATUS_ONE;
-            return true;
-        }
-        HCCL_INFO("[CollAlgOperator][OpRetry][AICPU]ExecutorOnlySupportDMAReduce[%s] is not allowed"
-            " for inplace case.", algName.c_str());
-        inPlaceSupportRetryStatus = INPLACE_SUPPORT_RETRY_STATUS_TWO;
-        return false;
-    } else if (ExecutorNoSupportDMAReduce(algName)) {
-        HCCL_INFO("[CollAlgOperator][OpRetry][AICPU]ExecutorNoSupportDMAReduce[%s] is allowed"
-            " for inplace case.", algName.c_str());
-        inPlaceSupportRetryStatus = INPLACE_SUPPORT_RETRY_STATUS_THREE;
-        return true;
-    } else if (ExecutorCanSupportDMAReduce(algName)) {
-        if (param.retryEnable) {
-            // 对应的executor会感应RetryEnable环境变量，走非DMA削减逻辑
-            HCCL_INFO("[CollAlgOperator][OpRetry][AICPU]ExecutorCanSupportDMAReduce[%s] is not allowed"
-                " for inplace case, the executor without DMAReduce will be applied.", algName.c_str());
-            inPlaceSupportRetryStatus = INPLACE_SUPPORT_RETRY_STATUS_FOUR;
-            return true;
-        }
-        HCCL_INFO("[CollAlgOperator][OpRetry][AICPU]ExecutorCanSupportDMAReduce[%s] is not allowed"
-            " for inplace case.", algName.c_str());
-        inPlaceSupportRetryStatus = INPLACE_SUPPORT_RETRY_STATUS_FIVE;
-        return false;
-    } else {
-        HCCL_INFO("[CollAlgOperator][OpRetry][AICPU]The unknown executor[%s] does not support "
-            "for an inplace case yet.", algName.c_str());
-        inPlaceSupportRetryStatus = INPLACE_SUPPORT_RETRY_STATUS_SIX;
-        return false;
-    }
-}
-
-bool CollAlgOperator::FitRetryConditionforInPlaceOp(
-    const HcclCMDType &opType, OpParam &param, std::string& algName, u8 &inPlaceSupportRetryStatus)
-{
-    // case 1 allgather or broadcast
-    if (opType == HcclCMDType::HCCL_CMD_ALLGATHER ||
-        opType == HcclCMDType::HCCL_CMD_BROADCAST) {
-        inPlaceSupportRetryStatus = INPLACE_SUPPORT_RETRY_STATUS_ZERO;
-        return true;
-    }
-    // case 2 reducescatter or allreduce
-    if (opType == HcclCMDType::HCCL_CMD_REDUCE_SCATTER ||
-        opType == HcclCMDType::HCCL_CMD_ALLREDUCE) {
-        // case 2.1
-        if (CheckUserInMemNotLargerThanCCLInMem(opType, param)) {
-            // case 2.4: 在hccl_communicator.cc的ExecOp之前已经该让图模式走单算子模式了，理论上不会进入此条件
-            HCCL_INFO("[CollAlgOperator][OpRetry][AICPU]The retry with inplace case is expected to be supported, "
-                "therefore HcclWorkflowMode is set to [%u]",
-                static_cast<u8>(GetWorkflowMode()));
-            return ExecutorSupportInPlace(param, algName, inPlaceSupportRetryStatus);
-        } else {
-            // case 2.3 UsrIn > CCLIn
-            inPlaceSupportRetryStatus = INPLACE_SUPPORT_RETRY_STATUS_SEVEN;
-            return false;
-        }
-    }
-    // 其他算子类型不支持
-    inPlaceSupportRetryStatus = INPLACE_SUPPORT_RETRY_STATUS_EIGHT;
-    return false;
+    algOpContext_ = algOpContext;
+    return HCCL_SUCCESS;
 }
 
 bool CollAlgOperator::SupportRetryWithInplaceCheck(
     const HcclCMDType &opType, OpParam &param, std::string& algName, u8 &isInplaceStatus,
-    u8 &inPlaceSupportRetryStatus)
+    InplaceSupportRetryStatus &inPlaceSupportRetryStatus)
 {
     // 不支持inplace的通信算子重执行
     if (IsHcclOpInplace(opType, param, userRank_, userRankSize_, isInplaceStatus)) {
-        if(!FitRetryConditionforInPlaceOp(opType, param, algName, inPlaceSupportRetryStatus)) {
+        void *commInputPtr = nullptr;
+        u64 commInputSize = 0;
+        CHK_RET(cclBufferManager_.GetInCCLbuffer(commInputPtr, commInputSize));
+        if(!FitRetryConditionforInPlaceOp(opType, param, algName, commInputSize, userRankSize_,
+            retryEnable_, inPlaceSupportRetryStatus)) {
             HCCL_DEBUG("[CollAlgOperator][OpRetry][AICPU]hccl aicpu can not retry, opType[%s], inputPtr[%p], "
                 "outputPtr[%p].",
                 GetCMDTypeEnumStr(opType).c_str(), param.inputPtr, param.outputPtr);

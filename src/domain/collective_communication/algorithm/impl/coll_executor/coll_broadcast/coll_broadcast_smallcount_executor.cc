@@ -74,20 +74,20 @@ HcclResult CollBroadcastSmallCountExecutor::KernelRun(const OpParam &param, Exec
     std::vector<Slice> dataSegsSlice;
 
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
     CHK_RET(ActiveSlaveStreams(param.stream));
     HcomCollOpInfo opInfoPtr = {"", execMem.inputPtr, nullptr, param.DataDes.count, param.DataDes.dataType, param.root};
 
-    std::unique_ptr<AlgTemplateBase> outer2TempAlg;
-    outer2TempAlg.reset(new (std::nothrow) BroadcastHD(dispatcher_,
+    std::unique_ptr<AlgTemplateBase> level0TempAlg;
+    level0TempAlg.reset(new (std::nothrow) BroadcastHD(dispatcher_,
         algResResp_->slaveStreams,
-        algResResp_->notifiesM2S,
-        algResResp_->notifiesS2M,
-        outerCommInfo.localRank,
+        algResResp_->notifiesMain,
+        algResResp_->notifiesAux,
+        level0CommInfo.localRank,
         &opInfoPtr));
 
-    CHK_SMART_PTR_NULL(outer2TempAlg);
-    CHK_RET(outer2TempAlg->Prepare(execMem.inputMem,
+    CHK_SMART_PTR_NULL(level0TempAlg);
+    CHK_RET(level0TempAlg->Prepare(execMem.inputMem,
         execMem.outputMem,
         execMem.outputMem,
         execMem.count,
@@ -96,12 +96,12 @@ HcclResult CollBroadcastSmallCountExecutor::KernelRun(const OpParam &param, Exec
         HCCL_REDUCE_RESERVED,
         param.root));
 
-    CHK_RET(outer2TempAlg->RegisterProfiler(
-        (outerCommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + outerCommInfo.localRank,
+    CHK_RET(level0TempAlg->RegisterProfiler(
+        (level0CommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level0CommInfo.localRank,
         PROF_STAGE_1,
         HCCL_EXEC_STEP_NOT_SET,
         param.stream));
-    CHK_RET(RunTemplate(outer2TempAlg, outerCommInfo));
+    CHK_RET(RunTemplate(level0TempAlg, level0CommInfo));
     HCCL_INFO("broadcast small count executor run success.");
     return HCCL_SUCCESS;
 }

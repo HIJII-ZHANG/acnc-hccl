@@ -16,13 +16,13 @@ CommRing::CommRing(const std::string &collectiveId, const u32 userRank,
                    const HcclDispatcher dispatcher, const std::unique_ptr<NotifyPool> &notifyPool,
                    std::map<HcclIpAddress, HcclNetDevCtx> &netDevCtxMap,
                    const IntraExchanger &exchanger, const std::vector<RankInfo> paraVector,
-                   const DeviceMem& inputMem, const DeviceMem& outputMem, const bool isUsedRdmaOuter,
+                   const DeviceMem& inputMem, const DeviceMem& outputMem, const bool isUsedRdmaLevel0,
                    const void* transportResourceInfoAddr, size_t transportResourceInfoSize,
                    const std::string &tag,
                    const NICDeployment nicDeployInner, const bool useOneDoorbell,
                    const bool isAicpuModeEn, const bool isHaveCpuRank, const bool useSuperPodMode)
     : CommBase(collectiveId, userRank, userRankSize, rank, rankSize, paraVector, topoFlag, dispatcher, notifyPool,
-               netDevCtxMap, exchanger, inputMem, outputMem, isUsedRdmaOuter, transportResourceInfoAddr,
+               netDevCtxMap, exchanger, inputMem, outputMem, isUsedRdmaLevel0, transportResourceInfoAddr,
                transportResourceInfoSize, tag, nicDeployInner, 0, useOneDoorbell, isAicpuModeEn, INVALID_UINT,
                isHaveCpuRank, useSuperPodMode)
 {

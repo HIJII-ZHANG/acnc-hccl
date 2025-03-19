@@ -50,16 +50,11 @@ public:
         AlgResourceRequest& resourceRequest);
     AlgType GetAlgType();
     void SetLegacyHcclImpl(std::unique_ptr<hcclImpl> &hcclImpl);
-    bool CheckUserInMemNotLargerThanCCLInMem(const HcclCMDType &opType, OpParam &param);
-    bool ExecutorOnlySupportDMAReduce(const std::string& algName);
-    bool ExecutorCanSupportDMAReduce(const std::string& algName);
-    bool ExecutorNoSupportDMAReduce(const std::string& algName);
-    bool ExecutorSupportInPlace(OpParam &param, std::string& algName, u8 &inPlaceSupportRetryStatus);
-    bool FitRetryConditionforInPlaceOp(const HcclCMDType &opType, OpParam &param, std::string& algName,
-        u8 &inPlaceSupportRetryStatus);
+    HcclResult SetAlgOpContext(AlgOpContext algOpContext);
+    HcclResult SetRetryEnable(bool retryEnable);
     bool SupportRetryWithInplaceCheck(
         const HcclCMDType &opType, OpParam &param, std::string& algName, u8 &isInplaceStatus,
-        u8 &inPlaceSupportRetryStatus);
+        InplaceSupportRetryStatus &inPlaceSupportRetryStatus);
 protected:
     std::string GenerateNewTagByAlgTypeLevel1(std::string tag, std::string algTypeLevel1Tag) const;
     u32 CalcContextNumForPipeline(HcclCMDType hcclCMDType);
@@ -93,10 +88,13 @@ protected:
     bool multiSuperPodDiffServerNumMode_;
     u32 meshAggregationRankSize_;
     bool isDiffDeviceModule_;
+    bool isDiffDeviceType_;
+    u32 gcdDeviceNumPerAggregation_;
     bool isSingleMeshAggregation_ = false;
     bool meshSinglePlane_ = false;
     bool isAllRankSamePlane_ = false;
     bool is310PDuoCard_;
+    bool isCommon310P3DUO_;
     s32 hccsPortNum_;
     bool isSupportRdmaLite_ = false;    // 是否支持rdma lite
     bool useSuperPodMode_ = false;
@@ -113,6 +111,8 @@ protected:
     HcclDispatcher dispatcher_;
     std::unique_ptr<TopoMatcher> &topoMatcher_;
     HcclWorkflowMode workflowMode_;
+    bool retryEnable_ = false;
+    AlgOpContext algOpContext_;
 private:
     virtual HcclResult SelectAlgoTypeForReduceScatter(float delay, u64 recvCurSize, float bandWidth,
         AlgTypeLevel1 &algType);

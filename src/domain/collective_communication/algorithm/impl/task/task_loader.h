@@ -16,6 +16,7 @@
 #include <hccl/base.h>
 #include "stream_pub.h"
 #include "dispatcher.h"
+#include "workflow_pub.h"
 #include "coll_alg_param.h"
 
 namespace hccl {
@@ -24,7 +25,7 @@ public:
     explicit TaskLoader(const s32 deviceLogicId, const HcclDispatcher dispatcher);
     ~TaskLoader();
 
-    void Prepare(Stream *stream, SubCommInfo outerCommInfo);
+    void Prepare(Stream *stream, SubCommInfo level0CommInfo);
 
     HcclResult Init();
     HcclResult Finalize();
@@ -58,6 +59,7 @@ private:
     bool startReady = false;
     bool doneReady = false;
     bool threadExit = false;
+    HcclWorkflowMode workflowMode_{HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE};
     HcclResult executeResult_ = HCCL_SUCCESS;
 };
 }  // namespace hccl

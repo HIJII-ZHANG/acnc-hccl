@@ -32,7 +32,7 @@ HcclResult ExecutorBase::Prepare(DeviceMem &inputMem, DeviceMem &outputMem, Devi
                                  const HcclReduceOp reductionOp,
                                  const u32 root, const std::vector<Slice> &slices, const u64 baseOffset,
                                  std::vector<u32> nicRankList,
-                                 const bool retryEnable)
+                                 const bool disableDMAReduce)
 {
     // 部分集合通信操作允许input_mem/output_mem为空
 
@@ -48,7 +48,7 @@ HcclResult ExecutorBase::Prepare(DeviceMem &inputMem, DeviceMem &outputMem, Devi
     dataBytes_ = count * DataUnitSize(dataType);
     reductionOp_ = reductionOp;
     root_ = root;
-    retryEnable_ = retryEnable;
+    disableDMAReduce_ = disableDMAReduce;
 
     /* 相对用户基地址偏移 */
     baseOffset_ = baseOffset;
@@ -69,7 +69,7 @@ HcclResult ExecutorBase::Prepare(DeviceMem &inputMem, DeviceMem &scratchMem, con
                                  const HcclReduceOp reductionOp,
                                  const u32 root, const std::vector<Slice> &slices, const u64 baseOffset,
                                  std::vector<u32> nicRankList,
-                                 const bool retryEnable)
+                                 const bool disableDMAReduce)
 {
     // 部分集合通信操作允许input_mem/output_mem为空
     CHK_PTR_NULL(stream.ptr());
@@ -86,7 +86,7 @@ HcclResult ExecutorBase::Prepare(DeviceMem &inputMem, DeviceMem &scratchMem, con
     dataBytes_ = count * DataUnitSize(dataType);
     reductionOp_ = reductionOp;
     root_ = root;
-    retryEnable_ = retryEnable;
+    disableDMAReduce_ = disableDMAReduce;
 
     /* 相对用户基地址偏移 */
     baseOffset_ = baseOffset;
@@ -109,7 +109,7 @@ HcclResult ExecutorBase::Prepare(DeviceMem &inputMem, DeviceMem &outputMem, Devi
                                  const HcclReduceOp reductionOp,
                                  const u32 root,
                                  const u64 baseOffset,
-                                 const bool retryEnable)
+                                 const bool disableDMAReduce)
 {
     // 部分集合通信操作允许input_mem/output_mem为空
 
@@ -125,7 +125,7 @@ HcclResult ExecutorBase::Prepare(DeviceMem &inputMem, DeviceMem &outputMem, Devi
     dataBytes_ = count * DataUnitSize(dataType);
     reductionOp_ = reductionOp;
     root_ = root;
-    retryEnable_ = retryEnable;
+    disableDMAReduce_ = disableDMAReduce;
 
     /* 相对用户基地址偏移 */
     baseOffset_ = baseOffset;

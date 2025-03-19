@@ -27,9 +27,9 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::CalcStreamNum(u32& streamN
     u32 totalStreamNum = 0U;
     // DoubleRing只支持910_93场景
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-        totalStreamNum = OUTER_PLANE_NUM_IN_NPRING_DOUBLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
+        totalStreamNum = LEVEL0_PLANE_NUM_IN_NPRING_DOUBLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
     } else { //图模式增加两条流用于机内并发
-        totalStreamNum = OUTER_PLANE_NUM_IN_NPRING_DOUBLE;
+        totalStreamNum = LEVEL0_PLANE_NUM_IN_NPRING_DOUBLE;
         totalStreamNum += RDMA_PLANE_NUM_IN_NPRING_DOUBLE;
     }
 
@@ -121,11 +121,11 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
         HCCL_E_PARA);
     std::vector<Slice> dataSegsSlice; // 数据分成ranksize份，每份的起始偏移和大小
     std::vector<std::vector<Slice> > multi2RingsSlice; // 数据基于该rank上环0的偏移
-    std::vector<std::pair<bool, std::vector<Slice>>> multi4RingsSlice; // 基于2环数据切分2环SDMA+2环ROH bool = true表示SDMA
-    u32 ringNum = OUTER_PLANE_NUM_IN_NPRING_DOUBLE;
+    std::vector<std::pair<bool, std::vector<Slice>>> multi4RingsSlice;
+    u32 ringNum = LEVEL0_PLANE_NUM_IN_NPRING_DOUBLE;
     CHK_RET(CheckCommSize(COMM_LEVEL0_ANYPATH_SDMA, ringNum));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0_ANYPATH_SDMA, COMM_INDEX_0);
-    u32 sliceNum = outerCommInfo.localRankSize;
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0_ANYPATH_SDMA, COMM_INDEX_0);
+    u32 sliceNum = level0CommInfo.localRankSize;
     // 根据数据量计算每个环上数据的偏移和大小
     CHK_RET(AlgTemplateBase::PrepareSliceData(execMem.count, perDataSize, sliceNum, 0, dataSegsSlice));
 
@@ -189,8 +189,8 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
     u64 hdSize;
     u32 segmentIdx;
     u32 commIndex;
-    CHK_RET(PrepareInnerCommInfo(segmentIdx, commIndex, hdSize,
-        outerCommInfo, multi2RingsSlice, param.tag));
+    CHK_RET(PrepareLevel1CommInfo(segmentIdx, commIndex, hdSize,
+        level0CommInfo, multi2RingsSlice, param.tag));
     auto nicList = topoAttr_.nicList;
     auto devicePhyId = topoAttr_.devicePhyId;
     commIndex = RefreshCommIdx(commIndex, nicList, devicePhyId);
@@ -203,10 +203,10 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
         DeviceMem allreduceInput;
         DeviceMem allreduceOutput;
         CHK_RET(CheckCommSize(COMM_LEVEL1_ANYPATH_SDMA, commIndex + 1));
-        SubCommInfo innerCommInfo = GetSubCommInfo(COMM_LEVEL1_ANYPATH_SDMA, commIndex);
-        u32 level1RankSize = innerCommInfo.localRankSize;
-        std::vector<std::pair<bool, Slice>> innerMultSlice;
-        innerMultSlice.resize(RDMA_PLANE_NUM_IN_NPRING_DOUBLE);
+        SubCommInfo level1CommInfo = GetSubCommInfo(COMM_LEVEL1_ANYPATH_SDMA, commIndex);
+        u32 level1RankSize = level1CommInfo.localRankSize;
+        std::vector<std::pair<bool, Slice>> level1MultSlice;
+        level1MultSlice.resize(RDMA_PLANE_NUM_IN_NPRING_DOUBLE);
         Slice sdmaSlice;
         Slice rdmaSlice;
         auto sdmaSliceSize = ((hdSize <= HCCL_MIN_SLICE_ALIGN_910_93) || (syncTrans1 == MAX_SPLIT_VALUE)) ? hdSize:
@@ -217,70 +217,70 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
         rdmaSlice.offset = dataSegsSlice[segmentIdx].offset + sdmaSlice.size;
         HCCL_DEBUG("Level1 Total[offset:%llu, size:%llu], sdma[offset %llu, size %llu], rdma[offset %llu, size %llu]",
             hdSize, sdmaSlice.offset, sdmaSlice.offset, sdmaSlice.size, rdmaSlice.offset, rdmaSlice.size);
-        innerMultSlice[0] = std::make_pair(true, sdmaSlice);
-        innerMultSlice[1] = std::make_pair(false, rdmaSlice);
+        level1MultSlice[0] = std::make_pair(true, sdmaSlice);
+        level1MultSlice[1] = std::make_pair(false, rdmaSlice);
         if (syncTrans1 == MAX_SPLIT_VALUE) {
-            innerMultSlice.erase(innerMultSlice.end() - 1, innerMultSlice.end());
+            level1MultSlice.erase(level1MultSlice.end() - 1, level1MultSlice.end());
         }
         // SDMA和RDMA通信域
-        u32 commPlaneNum = innerMultSlice.size();
+        u32 commPlaneNum = level1MultSlice.size();
         for (u32 planeIndex = 0; planeIndex < commPlaneNum; planeIndex++) {
             HcclResult ret = HCCL_SUCCESS;
-            Slice dmaSlice = innerMultSlice[planeIndex].second;
-            SubCommInfo innerRdmaCommInfo = GetSubCommInfo(COMM_LEVEL1_ANYPATH_RDMA, commIndex);
-            SubCommInfo level1CommInfo = innerMultSlice[planeIndex].first ? innerCommInfo : innerRdmaCommInfo;
+            Slice dmaSlice = level1MultSlice[planeIndex].second;
+            SubCommInfo level1RdmaCommInfo = GetSubCommInfo(COMM_LEVEL1_ANYPATH_RDMA, commIndex);
+            SubCommInfo level1TempCommInfo = level1MultSlice[planeIndex].first ? level1CommInfo : level1RdmaCommInfo;
             allreduceInput = execMem.inputMem.range(dmaSlice.offset, dmaSlice.size);
             CHK_SMART_PTR_NULL(allreduceInput);
             allreduceOutput = execMem.outputMem.range(dmaSlice.offset, dmaSlice.size);
             CHK_SMART_PTR_NULL(allreduceOutput);
             u64 SliceCount = dmaSlice.size / perDataSize;
             u64 reduceAttr = GetReduceAttr(allreduceInput, allreduceOutput, param.DataDes.dataType, param.reduceType);
-            std::unique_ptr<AlgTemplateBase> innerTempAlg;
+            std::unique_ptr<AlgTemplateBase> level1TempAlg;
             if (UseInterServerNBAlgo(algType_)) {
-                innerTempAlg.reset(new (std::nothrow) AllReduceNB(dispatcher_, reduceAttr));
+                level1TempAlg.reset(new (std::nothrow) AllReduceNB(dispatcher_, reduceAttr));
                 HCCL_INFO("allreduce ring: using nonuniform-bruck algo inter-server.");
             } else {
-                innerTempAlg.reset(new (std::nothrow) AllReduceRing(dispatcher_, reduceAttr));
+                level1TempAlg.reset(new (std::nothrow) AllReduceRing(dispatcher_, reduceAttr));
                 HCCL_INFO("allreduce ring: using ring algo inter-server.");
             }
-            CHK_SMART_PTR_NULL(innerTempAlg);
+            CHK_SMART_PTR_NULL(level1TempAlg);
             if (planeIndex != (commPlaneNum - 1)) {
-                HCCL_INFO("level1CommInfo planeIndex step 0");
+                HCCL_INFO("level1TempCommInfo planeIndex step 0");
                 ret = LocalNotify::Wait(algResResp_->slaveStreams[planeIndex], dispatcher_,
-                                        algResResp_->notifiesS2M[planeIndex], PROF_STAGE_1);
+                                        algResResp_->notifiesAux[planeIndex], PROF_STAGE_1);
                 CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("stream[%u] wait failed", planeIndex), ret);
 
-                CHK_RET(innerTempAlg->Prepare(allreduceInput, allreduceOutput, allreduceOutput, SliceCount, 
+                CHK_RET(level1TempAlg->Prepare(allreduceInput, allreduceOutput, allreduceOutput, SliceCount, 
                     param.DataDes.dataType, algResResp_->slaveStreams[planeIndex], param.reduceType, 
-                    OUTER_BRIDGE_RANK_ID, std::vector<Slice>(0), dmaSlice.offset));
+                    LEVEL0_BRIDGE_RANK_ID, std::vector<Slice>(0), dmaSlice.offset));
 
-                CHK_RET(innerTempAlg->RegisterProfiler(
-                    (level1RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1CommInfo.localRank,
+                CHK_RET(level1TempAlg->RegisterProfiler(
+                    (level1RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1TempCommInfo.localRank,
                     PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, algResResp_->slaveStreams[planeIndex]));
 
-                CHK_RET(RunTemplate(innerTempAlg, level1CommInfo));
+                CHK_RET(RunTemplate(level1TempAlg, level1TempCommInfo));
                 ret = LocalNotify::Post(algResResp_->slaveStreams[planeIndex], dispatcher_,
-                    algResResp_->notifiesM2S[planeIndex], PROF_STAGE_1);
+                    algResResp_->notifiesMain[planeIndex], PROF_STAGE_1);
                 CHK_PRT_RET(ret != HCCL_SUCCESS,
                     HCCL_ERROR("[collAllReduce]level1 stream[%u] record failed", planeIndex), ret);
                 //主环record启动从环
                 ret = LocalNotify::Post(const_cast<Stream&>(param.stream), dispatcher_,
-                    algResResp_->notifiesS2M[planeIndex], PROF_STAGE_1);
+                    algResResp_->notifiesAux[planeIndex], PROF_STAGE_1);
                 CHK_PRT_RET(ret != HCCL_SUCCESS,
                     HCCL_ERROR("[collAllReduce]level1 stream[%u] record failed", planeIndex), ret);
             } else {
-                HCCL_INFO("level1CommInfo planeIndex step 1");
-                CHK_RET(innerTempAlg->Prepare(allreduceInput, allreduceOutput, allreduceOutput, SliceCount, 
-                    param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID,
+                HCCL_INFO("level1TempCommInfo planeIndex step 1");
+                CHK_RET(level1TempAlg->Prepare(allreduceInput, allreduceOutput, allreduceOutput, SliceCount, 
+                    param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID,
                     std::vector<Slice>(0), dmaSlice.offset));
-                CHK_RET(innerTempAlg->RegisterProfiler(
-                    (level1RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1CommInfo.localRank,
+                CHK_RET(level1TempAlg->RegisterProfiler(
+                    (level1RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1TempCommInfo.localRank,
                     PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-                CHK_RET(RunTemplate(innerTempAlg, level1CommInfo));
+                CHK_RET(RunTemplate(level1TempAlg, level1TempCommInfo));
                 for (u32 ring = 0; ring < (commPlaneNum - 1); ring++) {
                     ret = LocalNotify::Wait(const_cast<Stream&>(param.stream), dispatcher_,
-                        algResResp_->notifiesM2S[ring], PROF_STAGE_1);
+                        algResResp_->notifiesMain[ring], PROF_STAGE_1);
                     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("param.stream[%u] wait failed",ring), ret);
                 }
             }
@@ -293,9 +293,9 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
     } else {
         // 超节点内做reducescatter
         CHK_RET(CheckCommSize(COMM_LEVEL1_ANYPATH_SDMA, commIndex + 1));
-        SubCommInfo innerCommInfo = GetSubCommInfo(COMM_LEVEL1_ANYPATH_SDMA, commIndex);
-        SubCommInfo innerZeroCommInfo = GetSubCommInfo(COMM_LEVEL1_ANYPATH_SDMA, COMM_INDEX_0);
-        u32 sliceNum = innerZeroCommInfo.localRankSize;
+        SubCommInfo level1CommInfo = GetSubCommInfo(COMM_LEVEL1_ANYPATH_SDMA, commIndex);
+        SubCommInfo level1ZeroCommInfo = GetSubCommInfo(COMM_LEVEL1_ANYPATH_SDMA, COMM_INDEX_0);
+        u32 sliceNum = level1ZeroCommInfo.localRankSize;
         // 根据数据量计算每个环上数据的偏移和大小
         CHK_RET(AlgTemplateBase::PrepareSliceData(hdCount, perDataSize, sliceNum, 0, dataSegsSlice));
         DeviceMem reducescatterInput = execMem.inputMem.range(dataSegsSlice[segmentIdx].offset, hdSize);
@@ -310,7 +310,7 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
             CHK_RET(level1RSTempAlg->Prepare(
                 reducescatterInput, reducescatterInput, reducescatterOutput, hdCount,
                 param.DataDes.dataType, param.stream, param.reduceType,
-                OUTER_BRIDGE_RANK_ID, dataSegsSlice, dataSegsSlice[segmentIdx].offset));
+                LEVEL0_BRIDGE_RANK_ID, dataSegsSlice, dataSegsSlice[segmentIdx].offset));
             HCCL_INFO("reducescatter ring: using ring algo inter-server.");
         } else {
             level1RSTempAlg.reset(new (std::nothrow) ReduceScatterRecursiveHalvingDoubling(dispatcher_, reduceAttr));
@@ -318,20 +318,20 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
             CHK_RET(level1RSTempAlg->Prepare(
                 reducescatterInput, reducescatterOutput, reducescatterOutput, hdCount,
                 param.DataDes.dataType, param.stream, param.reduceType,
-                OUTER_BRIDGE_RANK_ID, dataSegsSlice, dataSegsSlice[segmentIdx].offset));
+                LEVEL0_BRIDGE_RANK_ID, dataSegsSlice, dataSegsSlice[segmentIdx].offset));
             HCCL_INFO("reducescatter ring: using halving-doubling algo inter-server.");
         }
         CHK_RET(level1RSTempAlg->RegisterProfiler(
-            (sliceNum << PROF_RANKSIZE_OFFSET_OF_PLANEID) + innerCommInfo.localRank,
+            (sliceNum << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1CommInfo.localRank,
             PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
-        CHK_RET(RunTemplate(level1RSTempAlg, innerCommInfo));
+        CHK_RET(RunTemplate(level1RSTempAlg, level1CommInfo));
         HCCL_INFO("allreduce double ring [superpod] level1 reducescatter run success");
 
         // 超节点间做allreduce
         u64 arSize;
         std::vector<std::vector<Slice> > rdSlice;
         rdSlice.push_back(dataSegsSlice);
-        CHK_RET(PrepareInnerCommInfo(segmentIdx, commIndex, arSize, innerZeroCommInfo, rdSlice, param.tag));
+        CHK_RET(PrepareLevel1CommInfo(segmentIdx, commIndex, arSize, level1ZeroCommInfo, rdSlice, param.tag));
         auto nicList = topoAttr_.nicList;
         auto devicePhyId = topoAttr_.devicePhyId;
         commIndex = RefreshCommIdx(commIndex, nicList, devicePhyId);
@@ -356,7 +356,7 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
         CHK_SMART_PTR_NULL(level2ARTempAlg);
         CHK_RET(level2ARTempAlg->Prepare(
             allreduceInput, allreduceOutput, allreduceOutput, arCount,
-            param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID,
+            param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID,
             std::vector<Slice>(0), dataSegsSlice[segmentIdx].offset));
         CHK_RET(level2ARTempAlg->RegisterProfiler(
             (rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level2CommInfo.localRank,
@@ -375,12 +375,12 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
         CHK_SMART_PTR_NULL(level1AGTempAlg);
         CHK_RET(level1AGTempAlg->Prepare(allgatherOutput, allgatherOutput, allgatherOutput, arCount,
             param.DataDes.dataType, param.stream,
-            HcclReduceOp::HCCL_REDUCE_RESERVED, OUTER_BRIDGE_RANK_ID, dataSegsSlice,
+            HcclReduceOp::HCCL_REDUCE_RESERVED, LEVEL0_BRIDGE_RANK_ID, dataSegsSlice,
             dataSegsSlice[segmentIdx].offset));
         CHK_RET(level1AGTempAlg->RegisterProfiler(
-            (sliceNum << PROF_RANKSIZE_OFFSET_OF_PLANEID) + innerCommInfo.localRank,
+            (sliceNum << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1CommInfo.localRank,
             PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
-        CHK_RET(RunTemplate(level1AGTempAlg, innerCommInfo));
+        CHK_RET(RunTemplate(level1AGTempAlg, level1CommInfo));
         HCCL_INFO("allreduce double ring [superpod] level1 allgather run success");
     }
 

@@ -95,10 +95,10 @@ HcclResult CollAllReduceMeshOpbasePipelineExecutor::KernelRun(const OpParam &par
     HCCL_INFO("[CollAllReduceMeshOpbasePipelineExecutor][Run]CollAllReduceMeshOpbasePipelineExecutor begins.");
 
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
-    u32 commIndex = outerCommInfo.localRank;
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    u32 commIndex = level0CommInfo.localRank;
     CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
-    SubCommInfo innerCommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
+    SubCommInfo level1CommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
 
     u64 reduceAttr = GetReduceAttr(execMem.inputMem, execMem.outputMem, param.DataDes.dataType, param.reduceType);
 
@@ -110,8 +110,8 @@ HcclResult CollAllReduceMeshOpbasePipelineExecutor::KernelRun(const OpParam &par
     tempAlg.reset(new (std::nothrow) AllReduceOpbasePipeline(dispatcher_, reduceAttr));
     CHK_SMART_PTR_NULL(tempAlg);
     CHK_RET(tempAlg->Prepare(&opInfo, execMem.inputMem, execMem.outputMem, execMem.count,
-        innerCommInfo, outerCommInfo, const_cast<Stream&>(param.stream),
-        algResResp_->slaveStreams, algResResp_->notifiesM2S, algResResp_->notifiesS2M));
+        level1CommInfo, level0CommInfo, const_cast<Stream&>(param.stream),
+        algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux));
     CHK_RET(tempAlg->RunAsync());
     return HCCL_SUCCESS;
 }

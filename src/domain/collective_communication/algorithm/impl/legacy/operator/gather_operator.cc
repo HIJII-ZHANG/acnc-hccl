@@ -69,10 +69,10 @@ HcclResult GatherOperator::GatherStarExecutor(const std::string &tag, DeviceMem 
 
     CommInfo *currComm;
     hcclImpl_->GetCommInfo(currComm, tag);
-    CHK_PRT_RET(currComm->commOuter.size() == 0, HCCL_ERROR("commOuter size is zero"), HCCL_E_PARA);
-    std::unique_ptr<CommBase> &commOuter = currComm->commOuter[COMM_INDEX_0];
-    CHK_SMART_PTR_NULL(commOuter);
-    CHK_RET(commOuter->RunTemplateAlg(gstarTemplate));
+    CHK_PRT_RET(currComm->commLevel0.size() == 0, HCCL_ERROR("commLevel0 size is zero"), HCCL_E_PARA);
+    std::unique_ptr<CommBase> &commLevel0 = currComm->commLevel0[COMM_INDEX_0];
+    CHK_SMART_PTR_NULL(commLevel0);
+    CHK_RET(commLevel0->RunTemplateAlg(gstarTemplate));
     return HCCL_SUCCESS;
 }
 }

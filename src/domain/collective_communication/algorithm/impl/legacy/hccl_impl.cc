@@ -75,8 +75,8 @@ hcclImpl::~hcclImpl()
 
     /* 销毁通信域关联资源 */
     for (auto &iter : tagCommInfo_) {
-        DestroyOuterComm(iter.first);
-        DestroyInnerComm(iter.first);
+        DestroyLevel0Comm(iter.first);
+        DestroyLevel1Comm(iter.first);
         DestroyIntraServerComm(iter.first);
         // Workspace资源需要根据tag销毁（临时方案）
         workSpaceRes_->DestroyWorkspaceResource(iter.first);
@@ -84,11 +84,11 @@ hcclImpl::~hcclImpl()
 
     cclBufferManager_.ReleaseAlltoAllvParaBuffer();
 
-    for (auto &inner_stream_info : tagStreamInfo_) {
-        if (ReleaseSignal(inner_stream_info.second) != HCCL_SUCCESS) {
-            HCCL_WARNING("tag[%s],signal is not released successfully", inner_stream_info.first.c_str());
+    for (auto &level1_stream_info : tagStreamInfo_) {
+        if (ReleaseSignal(level1_stream_info.second) != HCCL_SUCCESS) {
+            HCCL_WARNING("tag[%s],signal is not released successfully", level1_stream_info.first.c_str());
         }
-        (void)StreamActiveManager::GetInstance(deviceLogicId_).StreamsUnactive(inner_stream_info.second.ringStreams);
+        (void)StreamActiveManager::GetInstance(deviceLogicId_).StreamsUnactive(level1_stream_info.second.ringStreams);
     }
 
     tagCommInfo_.clear();
@@ -114,7 +114,7 @@ void hcclImpl::SetAlgoAttr(HcclAlgoAttr &algoAttr)
 {
     isHaveCpuRank_ = algoAttr.isHaveCpuRank;
     inlineReduceSwitchOn_ = algoAttr.inlineReduceSwitchOn;
-    isUsedRdmaOuter_ = algoAttr.isUsedRdmaOuter;
+    isUsedRdmaLevel0_ = algoAttr.isUsedRdmaLevel0;
     isUsedInterHccsMode_ = algoAttr.isUsedInterHccsMode;
 
     identifier_ = algoAttr.identifier;
@@ -165,7 +165,7 @@ HcclResult hcclImpl::Init(bool isHeterogComm)
     algConfigurator_->GetTopoType(topoType_);
 
     commFactory_.reset(new (std::nothrow) CommFactory(identifier_, userRank_, userRankSize_, dispatcher_, notifyPool_,
-        netDevCtxMap_, topoInfoEx_, isUsedRdmaOuter_, topoType_, deviceType_, rankInfoList_, nicDeployment_, isHeterogComm,
+        netDevCtxMap_, topoInfoEx_, isUsedRdmaLevel0_, topoType_, deviceType_, rankInfoList_, nicDeployment_, isHeterogComm,
         transportResourceInfoAddr_, transportResourceInfoSize_,
         meshAggregationRankSize_, isHaveCpuRank_, isUsedInterHccsMode_, useSuperPodMode_));
     CHK_SMART_PTR_NULL(commFactory_);
@@ -179,7 +179,7 @@ HcclResult hcclImpl::ReleaseCommInfos()
 {
     auto iter = tagCommInfo_.begin();
     while (iter != tagCommInfo_.end()) {
-        for (auto& comm : iter->second.commInner) {
+        for (auto& comm : iter->second.commLevel1) {
             if (comm != nullptr) {
                 CHK_RET(comm->DeInit());
             }
@@ -200,7 +200,7 @@ HcclResult hcclImpl::ActiveRingStreams(const std::string& tag, Stream &stream)
             HCCL_ERROR("[HcclImpl][ActiveRingStreams]errNo[0x%016llx] tag[%s] can't find in stream info",
                 HCCL_ERROR_CODE(HCCL_E_NOT_FOUND), tag.c_str()), HCCL_E_NOT_FOUND);
         mutiStreamLock.unlock();
-        innerStreamInfo_t streamInfo = (iterRank->second);
+        level1StreamInfo_t streamInfo = (iterRank->second);
         for (u32 streamIndex = 0; streamIndex < streamInfo.ringStreams.size(); streamIndex++) {
             ret = StreamActiveManager::GetInstance(deviceLogicId_).StreamActive(
                 streamInfo.ringStreams[streamIndex].ptr(), stream.ptr());
@@ -240,22 +240,22 @@ HcclResult hcclImpl::CreateCommForNoScratchAlltoall(
     auto it = tagCommInfo_.find(tag);
     if (it == tagCommInfo_.end()) {
         CommInfo commInfo;
-        std::unique_ptr<CommBase> curCommOuter;
-        std::unique_ptr<CommBase> curCommInner;
+        std::unique_ptr<CommBase> curCommLevel0;
+        std::unique_ptr<CommBase> curCommLevel1;
         auto inCCLbuffer = cclBufferManager_.GetInCCLbuffer();
         auto outCCLbuffer = cclBufferManager_.GetOutCCLbuffer();
         if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
             CommParaInfo commParaMesh0(COMM_MESH_L0, CommType::COMM_TAG_MESH);
-            CHK_RET(commFactory_->CreateCommPlane(tag, outCCLbuffer, outCCLbuffer, commParaMesh0, commInfo.commOuter));
+            CHK_RET(commFactory_->CreateCommPlane(tag, outCCLbuffer, outCCLbuffer, commParaMesh0, commInfo.commLevel0));
 
             CommParaInfo commParaMesh1(COMM_MESH_L1, CommType::COMM_TAG_MESH);
-            CHK_RET(commFactory_->CreateCommPlane(tag, inCCLbuffer, outCCLbuffer, commParaMesh1, commInfo.commInner));
+            CHK_RET(commFactory_->CreateCommPlane(tag, inCCLbuffer, outCCLbuffer, commParaMesh1, commInfo.commLevel1));
         } else {
             CommParaInfo commParaMesh0(COMM_MESH_L0, CommType::COMM_TAG_MESH);
-            CHK_RET(commFactory_->CreateCommPlane(tag, scratchMem, outputMem, commParaMesh0, commInfo.commOuter));
+            CHK_RET(commFactory_->CreateCommPlane(tag, scratchMem, outputMem, commParaMesh0, commInfo.commLevel0));
 
             CommParaInfo commParaMesh1(COMM_MESH_L1, CommType::COMM_TAG_MESH);
-            CHK_RET(commFactory_->CreateCommPlane(tag, inputMem, scratchMem, commParaMesh1, commInfo.commInner));
+            CHK_RET(commFactory_->CreateCommPlane(tag, inputMem, scratchMem, commParaMesh1, commInfo.commLevel1));
         }
         tagCommInfo_.insert(std::pair<string, CommInfo>(tag, std::move(commInfo)));
     }
@@ -274,17 +274,17 @@ HcclResult hcclImpl::CreateCommForAlltoallVStaged(
         tagCommInfo_.erase(tag);
         tagStreamInfo_.erase(tag);
         CommInfo commInfo;
-        std::unique_ptr<CommBase> curCommOuter;
-        std::unique_ptr<CommBase> curCommInner;
+        std::unique_ptr<CommBase> curCommLevel0;
+        std::unique_ptr<CommBase> curCommLevel1;
         auto inCCLbuffer = cclBufferManager_.GetInCCLbuffer();
         auto outCCLbuffer = cclBufferManager_.GetOutCCLbuffer();
         if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE &&
             !isAlltoAllZCopyMode_) { // 单算子 && BCopy模式
             CommParaInfo commParaMesh0(COMM_MESH_L0, CommType::COMM_TAG_MESH);
-            CHK_RET(commFactory_->CreateCommPlane(tag, inCCLbuffer, outCCLbuffer, commParaMesh0, commInfo.commOuter));
+            CHK_RET(commFactory_->CreateCommPlane(tag, inCCLbuffer, outCCLbuffer, commParaMesh0, commInfo.commLevel0));
 
             CommParaInfo commParaMesh1(COMM_MESH_L1, CommType::COMM_TAG_MESH);
-            CHK_RET(commFactory_->CreateCommPlane(tag, inCCLbuffer, outCCLbuffer, commParaMesh1, commInfo.commInner));
+            CHK_RET(commFactory_->CreateCommPlane(tag, inCCLbuffer, outCCLbuffer, commParaMesh1, commInfo.commLevel1));
 
             CommParaInfo commParaLevel2(COMM_LEVEL2, CommType::COMM_TAG_MESH);
             CHK_RET(commFactory_->CreateCommPlane(tag, inCCLbuffer, outCCLbuffer, commParaLevel2, commInfo.commLevel2));
@@ -293,24 +293,24 @@ HcclResult hcclImpl::CreateCommForAlltoallVStaged(
             if (isSingleMeshAggregation_) {
                 CommParaInfo commParaMesh0(COMM_MESH_L0, CommType::COMM_TAG_MESH);
                 CHK_RET(commFactory_->CreateCommPlane(tag, inCCLbuffer, outCCLbuffer, commParaMesh0,
-                    commInfo.commOuter));
+                    commInfo.commLevel0));
             } else {
                 CommParaInfo commParaMesh0(COMM_MESH_L0, CommType::COMM_TAG_MESH);
                 CHK_RET(commFactory_->CreateCommPlane(tag, inCCLbuffer, (alltoallReadOnly ? outCCLbuffer : scratchMem),
-                    commParaMesh0, commInfo.commOuter));
+                    commParaMesh0, commInfo.commLevel0));
 
                 CommParaInfo commParaMesh1(COMM_MESH_L1, CommType::COMM_TAG_MESH);
                 CHK_RET(commFactory_->CreateCommPlane(tag, scratchMem, outCCLbuffer, commParaMesh1,
-                    commInfo.commInner));
+                    commInfo.commLevel1));
             }
             CommParaInfo commParaInfo(COMM_LEVEL2, CommType::COMM_TAG_MESH);
             CHK_RET(commFactory_->CreateCommPlane(tag, inCCLbuffer, outCCLbuffer, commParaInfo, commInfo.commLevel2));
         } else {
             CommParaInfo commParaMesh0(COMM_MESH_L0, CommType::COMM_TAG_MESH);
-            CHK_RET(commFactory_->CreateCommPlane(tag, inputMem, scratchMem, commParaMesh0, commInfo.commOuter));
+            CHK_RET(commFactory_->CreateCommPlane(tag, inputMem, scratchMem, commParaMesh0, commInfo.commLevel0));
 
             CommParaInfo commParaMesh1(COMM_MESH_L1, CommType::COMM_TAG_MESH);
-            CHK_RET(commFactory_->CreateCommPlane(tag, scratchMem, outputMem, commParaMesh1, commInfo.commInner));
+            CHK_RET(commFactory_->CreateCommPlane(tag, scratchMem, outputMem, commParaMesh1, commInfo.commLevel1));
 
             CommParaInfo commParaInfo(COMM_LEVEL2, CommType::COMM_TAG_MESH);
             CHK_RET(commFactory_->CreateCommPlane(tag, inputMem, outputMem, commParaInfo, commInfo.commLevel2));
@@ -380,7 +380,7 @@ HcclResult hcclImpl::WaitCommThread(std::unique_ptr<std::thread> &ThreadPtr) con
     return HCCL_SUCCESS;
 }
 
-HcclResult hcclImpl::InitMultiStreamResource(const std::string &tag, innerStreamInfo_t &streamInfo, AlgType algType,
+HcclResult hcclImpl::InitMultiStreamResource(const std::string &tag, level1StreamInfo_t &streamInfo, AlgType algType,
     bool isAicpuModeEn, bool isBatchSendRecv, u32 ringNum)
 {
     if (!isBatchSendRecv) {
@@ -391,10 +391,10 @@ HcclResult hcclImpl::InitMultiStreamResource(const std::string &tag, innerStream
                 if (deviceType_ == DevType::DEV_TYPE_910_93) {
                     if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
                         streamInfo.ringNum
-                            = OUTER_PLANE_NUM_IN_NPRING_SINGLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
+                            = LEVEL0_PLANE_NUM_IN_NPRING_SINGLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
                     } else {
                         streamInfo.ringNum
-                            = OUTER_PLANE_NUM_IN_NPRING_SINGLE;
+                            = LEVEL0_PLANE_NUM_IN_NPRING_SINGLE;
                     }
                 }
                 break;
@@ -405,10 +405,10 @@ HcclResult hcclImpl::InitMultiStreamResource(const std::string &tag, innerStream
             case AlgType::ALG_DOUBLE_RING_PLUS_AHC_BROKE:
                 // 当前这两种AlgType只支持910_93场景
                 if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-                    streamInfo.ringNum = OUTER_PLANE_NUM_IN_NPRING_DOUBLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
+                    streamInfo.ringNum = LEVEL0_PLANE_NUM_IN_NPRING_DOUBLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
                 } else {
                     streamInfo.ringNum
-                        = OUTER_PLANE_NUM_IN_NPRING_DOUBLE;
+                        = LEVEL0_PLANE_NUM_IN_NPRING_DOUBLE;
                 }
                 break;
             case AlgType::ALG_8P_RING_PLUS_HD:
@@ -419,7 +419,7 @@ HcclResult hcclImpl::InitMultiStreamResource(const std::string &tag, innerStream
             case AlgType::ALG_8P_RING_PLUS_AHC_BROKE:
             case AlgType::ALG_8P_RING_PLUS_NB:
             case AlgType::ALG_8P_RING_PLUS_PIPELINE:
-                streamInfo.ringNum = OUTER_PLANE_NUM_IN_8PRING;
+                streamInfo.ringNum = LEVEL0_PLANE_NUM_IN_8PRING;
                 break;
             case AlgType::ALG_NP_MESH_PLUS_RING:
             case AlgType::ALG_NP_MESH_PLUS_HD:
@@ -463,7 +463,7 @@ HcclResult hcclImpl::InitMultiStreamResource(const std::string &tag, innerStream
             case AlgType::ALG_4P_MESH_PLUS_AHC:
             case AlgType::ALG_4P_MESH_PLUS_AHC_BROKE:
             case AlgType::ALG_4P_MESH_PLUS_NB:
-                streamInfo.ringNum = OUTER_PLANE_NUM_IN_4PMESH;
+                streamInfo.ringNum = LEVEL0_PLANE_NUM_IN_4PMESH;
                 break;
             default:
                 break;
@@ -636,6 +636,7 @@ HcclResult hcclImpl::CreateComm(const std::string &tag, DeviceMem &inputMem, Dev
 
     DeviceMem inputMemComm = cclBufferManager_.GetCommRegMem(inputMem, MemAttr::IN_CCL_BUFFER, aivMode);
     DeviceMem outputMemComm = cclBufferManager_.GetCommRegMem(outputMem, MemAttr::OUT_CCL_BUFFER, aivMode);
+    DeviceMem expMemComm = cclBufferManager_.GetCommExpBuffer();
 
     if (isP2p) {
         CHK_RET(CreateP2pComm(tag, *commInfo, inputMemComm, root));
@@ -644,9 +645,9 @@ HcclResult hcclImpl::CreateComm(const std::string &tag, DeviceMem &inputMem, Dev
         std::vector<std::unique_ptr<CommBase> > commMeshL0;
         CommParaInfo commCombinePara(COMM_MESH_L0, CommType::COMM_TAG_MESH);
         commCombinePara.isAicpuModeEn = isAicpuModeEn;
-        CHK_RET(commFactory_->CreateCommPlane(tag, inputMemComm, outputMemComm, commCombinePara, commInfo->commOuter));
+        CHK_RET(commFactory_->CreateCommPlane(tag, inputMemComm, outputMemComm, commCombinePara, commInfo->commLevel0));
     } else {
-        CHK_RET(CreateCommByAlg(tag, algType, *commInfo, inputMemComm, outputMemComm, root, isAicpuModeEn,
+        CHK_RET(CreateCommByAlg(tag, algType, *commInfo, inputMemComm, outputMemComm, expMemComm, root, isAicpuModeEn,
             meshSinglePlane));
     }
 
@@ -913,7 +914,7 @@ CommPlane hcclImpl::GetCommPlaneInLevel1(CommType &commType)
 }
 
 HcclResult hcclImpl::CreateCommByAlg(const std::string &tag, const AlgType algType, CommInfo &commInfo,
-    DeviceMem &inputMem, DeviceMem &outputMem, u32 root, bool isAicpuModeEn, bool meshSinglePlane)
+    DeviceMem &inputMem, DeviceMem &outputMem, DeviceMem &expMem, u32 root, bool isAicpuModeEn, bool meshSinglePlane)
 {
     CHK_RET(algConfigurator_->CheckAlgType(algType));
     CHK_RET(commFactory_->SetHDCModeInfo(rankDevicePhyIdNicInfoMap_, ranksPort_, isSetHDCModeInfo_, isUseRankPort_));
@@ -924,6 +925,7 @@ HcclResult hcclImpl::CreateCommByAlg(const std::string &tag, const AlgType algTy
     HcclResult commThreadWaitResultLevel1Rdma   = HCCL_SUCCESS;
     HcclResult commThreadWaitResultLevel2       = HCCL_SUCCESS;
 
+    workflowMode_ = GetWorkflowMode(); // 后续会起新线程，因此更新workflowMode
     /* Level0通信域 */
     CommType commTypeInLevel0;
     HcclResult commThreadResultLevel0 = HCCL_SUCCESS;
@@ -931,7 +933,7 @@ HcclResult hcclImpl::CreateCommByAlg(const std::string &tag, const AlgType algTy
     CHK_RET(GetCommTypeInLevel0(algType, topoType_, commTypeInLevel0));
     bool isUsedRdma = false;
     if (GetExternalInputEnableRdmaSdmaConcurrent() && deviceType_ == DevType::DEV_TYPE_910_93) {
-        HCCL_INFO("commInfo create commOuterRdma/commInnerRdma for EnableRdmaSdma start");
+        HCCL_INFO("commInfo create commLevel0Rdma/commLevel1Rdma for EnableRdmaSdma start");
         isUsedRdma = true;
     }
 
@@ -957,19 +959,19 @@ HcclResult hcclImpl::CreateCommByAlg(const std::string &tag, const AlgType algTy
     if (algType != AlgType::ALG_DEFAULT && algType != AlgType::ALG_WHOLE_NHR && algType != AlgType::ALG_WHOLE_NHR_V1 &&
         algType != AlgType::ALG_WHOLE_NB) {
         commThreadPtrLevel0_.reset(new (std::nothrow) std::thread(&hcclImpl::CreateCommThread, this,
-            hrtErrMGetErrorContextPub(), std::ref(tag), std::ref(inputMem), std::ref(outputMem),
-            std::ref(commInfoLevel0), std::ref(commInfo.commOuter), std::ref(commThreadResultLevel0)));
+            hrtErrMGetErrorContextPub(), std::ref(tag), std::ref(inputMem), std::ref(outputMem), std::ref(expMem),
+            std::ref(commInfoLevel0), std::ref(commInfo.commLevel0), std::ref(commThreadResultLevel0)));
         CHK_PRT_RET(!commThreadPtrLevel0_, HCCL_ERROR("[Create][CommByAlg]commTypeInLevel0[%d] threads reset failed.",
             commInfoLevel0.commType), HCCL_E_INTERNAL);
         commThreadWaitResultLevel0 = WaitCommThread(commThreadPtrLevel0_);
         if (isUsedRdma) {
             commInfoLevel0.forceRdma = isUsedRdma;
             commThreadPtrLevel0Rdma_.reset(new (std::nothrow) std::thread(&hcclImpl::CreateCommThread, this,
-                hrtErrMGetErrorContextPub(), std::ref(tag), std::ref(inputMem), std::ref(outputMem),
-                std::ref(commInfoLevel0), std::ref(commInfo.commOuterRdma),
+                hrtErrMGetErrorContextPub(), std::ref(tag), std::ref(inputMem), std::ref(outputMem), std::ref(expMem),
+                std::ref(commInfoLevel0), std::ref(commInfo.commLevel0Rdma),
                 std::ref(commThreadResultLevel0Rdma)));
             CHK_PRT_RET(!commThreadPtrLevel0Rdma_, HCCL_ERROR("[Create][CommByAlg]commTypeInLevel0[%d]" \
-                " commOuterRdma threads reset failed.", commInfoLevel0.commType), HCCL_E_INTERNAL);
+                " commLevel0Rdma threads reset failed.", commInfoLevel0.commType), HCCL_E_INTERNAL);
             commThreadWaitResultLevel0Rdma = WaitCommThread(commThreadPtrLevel0Rdma_);
         }
     }
@@ -983,8 +985,8 @@ HcclResult hcclImpl::CreateCommByAlg(const std::string &tag, const AlgType algTy
     CommParaInfo commInfoLevel1(commPlaneInLevel1, commTypeInLevel1, root, INVALID_VALUE_RANKID, isAicpuModeEn);
     if (commTypeInLevel1 != CommType::COMM_TAG_STAR) {
         commThreadPtrLevel1_.reset(new (std::nothrow) std::thread(&hcclImpl::CreateCommThread, this,
-            hrtErrMGetErrorContextPub(), std::ref(tag), std::ref(inputMem), std::ref(outputMem),
-            std::ref(commInfoLevel1), std::ref(commInfo.commInner), std::ref(commThreadResultLevel1)));
+            hrtErrMGetErrorContextPub(), std::ref(tag), std::ref(inputMem), std::ref(outputMem), std::ref(expMem),
+            std::ref(commInfoLevel1), std::ref(commInfo.commLevel1), std::ref(commThreadResultLevel1)));
         CHK_PRT_RET(!commThreadPtrLevel1_, HCCL_ERROR("[Create][CommByAlg]commTypeInLevel1[%d] threads reset failed.",
             commInfoLevel1.commType), HCCL_E_INTERNAL);
         commThreadWaitResultLevel1 = WaitCommThread(commThreadPtrLevel1_);
@@ -992,11 +994,11 @@ HcclResult hcclImpl::CreateCommByAlg(const std::string &tag, const AlgType algTy
         if (isUsedRdma) {
             commInfoLevel1.forceRdma = isUsedRdma;
             commThreadPtrLevel1Rdma_.reset(new (std::nothrow) std::thread(&hcclImpl::CreateCommThread, this,
-                hrtErrMGetErrorContextPub(), std::ref(tag), std::ref(inputMem), std::ref(outputMem),
-                std::ref(commInfoLevel1), std::ref(commInfo.commInnerRdma),
+                hrtErrMGetErrorContextPub(), std::ref(tag), std::ref(inputMem), std::ref(outputMem), std::ref(expMem),
+                std::ref(commInfoLevel1), std::ref(commInfo.commLevel1Rdma),
                 std::ref(commThreadResultLevel1Rdma)));
             CHK_PRT_RET(!commThreadPtrLevel1Rdma_, HCCL_ERROR("[Create][CommByAlg]commTypeInLevel1[%d]" \
-                " commInnerRdma threads reset failed.", commInfoLevel1.commType), HCCL_E_INTERNAL);
+                " commLevel1Rdma threads reset failed.", commInfoLevel1.commType), HCCL_E_INTERNAL);
                 commThreadWaitResultLevel1Rdma = WaitCommThread(commThreadPtrLevel1Rdma_);
         }
     }
@@ -1005,7 +1007,7 @@ HcclResult hcclImpl::CreateCommByAlg(const std::string &tag, const AlgType algTy
     HcclResult commThreadResultLevel2 = HCCL_SUCCESS;
     CommParaInfo commInfoLevel2(COMM_LEVEL2, CommType::COMM_TAG_RING_INNER);
     commThreadPtrLevel2_.reset(new (std::nothrow) std::thread(&hcclImpl::CreateCommThread, this,
-        hrtErrMGetErrorContextPub(), std::ref(tag), std::ref(inputMem), std::ref(outputMem),
+        hrtErrMGetErrorContextPub(), std::ref(tag), std::ref(inputMem), std::ref(outputMem), std::ref(expMem),
         std::ref(commInfoLevel2), std::ref(commInfo.commLevel2), std::ref(commThreadResultLevel2)));
     CHK_PRT_RET(!commThreadPtrLevel2_, HCCL_ERROR("[Create][CommByAlg]commTypeInLevel2[%d] threads reset failed.",
         commInfoLevel2.commType), HCCL_E_INTERNAL);
@@ -1026,7 +1028,7 @@ HcclResult hcclImpl::CreateCommByAlg(const std::string &tag, const AlgType algTy
 }
 
 HcclResult hcclImpl::CreateCommThread(const ErrContextPub &error_context, const std::string &tag,
-    DeviceMem &inputMem, DeviceMem &outputMem, const CommParaInfo &commParaInfo,
+    DeviceMem &inputMem, DeviceMem &outputMem, DeviceMem &expMem, const CommParaInfo &commParaInfo,
     std::vector<std::unique_ptr<CommBase> > &commVec, HcclResult &retOut)
 {
     //给当前线程添加名字
@@ -1036,8 +1038,9 @@ HcclResult hcclImpl::CreateCommThread(const ErrContextPub &error_context, const 
     retOut = hrtSetDevice(deviceLogicId_);
     CHK_PRT_RET(retOut != HCCL_SUCCESS, HCCL_ERROR("[Create][CommThread]set device[%d] failed", deviceLogicId_),
         retOut);
+    SetWorkflowMode(workflowMode_);
 
-    retOut = commFactory_->CreateCommPlane(tag, inputMem, outputMem, commParaInfo, commVec);
+    retOut = commFactory_->CreateCommPlane(tag, inputMem, outputMem, commParaInfo, commVec, expMem);
     CHK_PRT_RET(retOut != HCCL_SUCCESS,
         HCCL_ERROR("[Create][CommThread]tag[%s], create comm level[%d] commType[%d] fail",
         tag.c_str(), commParaInfo.commPlane, commParaInfo.commType), retOut);
@@ -1045,7 +1048,7 @@ HcclResult hcclImpl::CreateCommThread(const ErrContextPub &error_context, const 
     return HCCL_SUCCESS;
 }
 
-HcclResult hcclImpl::CreateMutiStreamRes(const std::string &tag, Stream &stream, innerStreamInfo_t &streamInfo,
+HcclResult hcclImpl::CreateMutiStreamRes(const std::string &tag, Stream &stream, level1StreamInfo_t &streamInfo,
     AlgType algType, bool isAicpuModeEn, bool isBatchSendRecv, u32 ringNum)
 {
     /* 多环资源初始化 */
@@ -1109,31 +1112,31 @@ HcclResult hcclImpl::CreateMutiStreamRes(const std::string &tag, Stream &stream,
     CHK_PRT_RET(tagStreamInfo_.find(tag) != tagStreamInfo_.end(),
         HCCL_DEBUG("[Create][MutiStreamRes]tag[%s] is already exit, do nothing", tag.c_str()), HCCL_SUCCESS);
 
-    innerStreamInfo_t streamInfo;
+    level1StreamInfo_t streamInfo;
     CHK_RET(CreateMutiStreamRes(tag, stream, streamInfo, algType, false, isBatchSendRecv, ringNum));
 
     // 构建线程和内部流维护关系
-    tagStreamInfo_.insert(std::pair<std::string, InnerStreamInfo>(tag, std::move(streamInfo)));
+    tagStreamInfo_.insert(std::pair<std::string, Level1StreamInfo>(tag, std::move(streamInfo)));
     mutiStreamLock.unlock();
     HCCL_INFO("[Create][MutiStreamRes]tag[%s], ringNum[%u]", tag.c_str(), streamInfo.ringNum);
     return HCCL_SUCCESS;
 }
 
-void hcclImpl::DestroyInnerComm(const std::string &tag)
+void hcclImpl::DestroyLevel1Comm(const std::string &tag)
 {
     // vector成员是智能指针, 自动destroy
     tagCommInfo_t::iterator itr = tagCommInfo_.find(tag);
     if (itr != tagCommInfo_.end()) {
-        itr->second.commInner.clear();
+        itr->second.commLevel1.clear();
     }
 }
 
-void hcclImpl::DestroyOuterComm(const std::string &tag)
+void hcclImpl::DestroyLevel0Comm(const std::string &tag)
 {
     // vector成员是智能指针, 自动destroy
     tagCommInfo_t::iterator itr = tagCommInfo_.find(tag);
     if (itr != tagCommInfo_.end()) {
-        itr->second.commOuter.clear();
+        itr->second.commLevel0.clear();
     }
 }
 
@@ -1145,27 +1148,27 @@ void hcclImpl::DestroyIntraServerComm(const std::string &tag)
     }
 }
 
-HcclResult hcclImpl::ReleaseSignal(innerStreamInfo_t &innerStream)
+HcclResult hcclImpl::ReleaseSignal(level1StreamInfo_t &level1Stream)
 {
-    for (auto &signal : innerStream.ringSignal) {
+    for (auto &signal : level1Stream.ringSignal) {
         if (signal != nullptr) {
             signal = nullptr;
         }
     }
 
-    for (auto &signal : innerStream.ringSignalAux) {
+    for (auto &signal : level1Stream.ringSignalAux) {
         if (signal != nullptr) {
             signal = nullptr;
         }
     }
 
-    for (auto &signal : innerStream.ringDeviceSignal) {
+    for (auto &signal : level1Stream.ringDeviceSignal) {
         if (signal != nullptr) {
             signal = nullptr;
         }
     }
 
-    for (auto &signal : innerStream.ringDeviceSignalAux) {
+    for (auto &signal : level1Stream.ringDeviceSignalAux) {
         if (signal != nullptr) {
             signal = nullptr;
         }
@@ -1208,7 +1211,7 @@ HcclResult hcclImpl::CreateCommForAlltoAllFullMesh(const std::string &tag, Devic
 {
      // A+X单机双module启用下，未使能RDMA不能进行一层pairWise。
     bool isDifModule = serverNum_ == 1 && isDiffDeviceModule_ && userRankSize_ > HCCL_ALLTOALLV_P2P_SIZE;
-    CHK_PRT_RET(isDifModule && !isUsedRdmaOuter_,
+    CHK_PRT_RET(isDifModule && !isUsedRdmaLevel0_,
         HCCL_ERROR("[CreateComm][AlltoAllFullMesh] not support dual modules in a single server" \
                    " when RDMA disabled "), HCCL_E_NOT_SUPPORT);
 
@@ -1270,7 +1273,7 @@ HcclResult hcclImpl::AddSubStreamToProfiling(const std::string &tag, HcclCMDType
     if (tagStreamInfo_.empty()) {
         return HCCL_SUCCESS;
     }
-    innerStreamInfo_t &streamInfo = tagStreamInfo_[tag];
+    level1StreamInfo_t &streamInfo = tagStreamInfo_[tag];
     for (u32 streamIndex = 0; streamIndex < streamInfo.ringStreams.size(); streamIndex++) {
         // profiling加入从环的stream
         AlgType algType = AlgType::ALG_DEFAULT;
@@ -1283,13 +1286,13 @@ HcclResult hcclImpl::AddSubStreamToProfiling(const std::string &tag, HcclCMDType
 HcclResult hcclImpl::RegisterToHeartBeat()
 {
     return HeartbeatPub::RegisterToHeartBeat(deviceLogicId_, userRank_, deviceType_,
-        hbRankInfoList_, identifier_, isUsedRdmaOuter_);
+        hbRankInfoList_, identifier_, isUsedRdmaLevel0_);
 }
 
 HcclResult hcclImpl::RegisterToHeartBeat(u32 peerRankId, const std::string& tag)
 {
     return HeartbeatPub::RegisterToHeartBeat(deviceLogicId_, userRank_, deviceType_,
-        hbRankInfoList_, peerRankId, identifier_, tag, isUsedRdmaOuter_);
+        hbRankInfoList_, peerRankId, identifier_, tag, isUsedRdmaLevel0_);
 }
 
 void hcclImpl::UnRegisterToHeartBeat()
@@ -1364,7 +1367,7 @@ HcclResult hcclImpl::SetNicSendSize(const std::string &tag, std::vector<u64> &si
     return HCCL_SUCCESS;
 }
 
-innerStreamInfo_t* hcclImpl::GetStreamInfo(const std::string &tag)
+level1StreamInfo_t* hcclImpl::GetStreamInfo(const std::string &tag)
 {
     std::unique_lock<std::mutex> mutiStreamLock(tagStreamInfoLock_);
     auto iterRank = tagStreamInfo_.find(tag);
@@ -1383,7 +1386,7 @@ HcclResult hcclImpl::GetStreamThreadManage(const std::string &tag, u32 streamNum
     std::unique_lock<std::mutex> mutiStreamLock(tagStreamInfoLock_);
     auto iterRank = tagStreamInfo_.find(tag);
     if (iterRank == tagStreamInfo_.end()) {
-        innerStreamInfo_t streamInfo;
+        level1StreamInfo_t streamInfo;
         streamInfo.ringThreadsManage.resize(streamNum - 1);
         streamInfo.tidInfo.resize(streamNum - 1);
         for (u32 ringIndex = 0; ringIndex < streamNum - 1; ringIndex++) {
@@ -1400,7 +1403,7 @@ HcclResult hcclImpl::GetStreamThreadManage(const std::string &tag, u32 streamNum
                 HCCL_INFO("ringThreadsManage Init success[%u]", ringIndex);
             }
         }
-        tagStreamInfo_.insert(std::pair<std::string, InnerStreamInfo>(tag, std::move(streamInfo)));
+        tagStreamInfo_.insert(std::pair<std::string, Level1StreamInfo>(tag, std::move(streamInfo)));
         HCCL_INFO("[GetStreamThreadManage]tag[%s]create ThreadManage success. streamNum[%u]", tag.c_str(), streamNum);
     } else {
         threadManager = iterRank->second.ringThreadsManage;
@@ -1412,7 +1415,7 @@ HcclResult hcclImpl::GetStreamThreadManage(const std::string &tag, u32 streamNum
     return HCCL_SUCCESS;
 }
 
-innerStreamInfo_t* hcclImpl::GetStreamInfoWithoutCheck(const std::string &tag)
+level1StreamInfo_t* hcclImpl::GetStreamInfoWithoutCheck(const std::string &tag)
 {
     std::unique_lock<std::mutex> mutiStreamLock(tagStreamInfoLock_);
     return &tagStreamInfo_[tag];
@@ -1424,9 +1427,9 @@ HcclResult hcclImpl::CreateOpBasedResources(const HcclCMDType &opType, const std
     return workSpaceRes_->CreateOpBasedResources(opType, tag, opInfo);
 }
 
-u32 hcclImpl::GetInnerCommRank(const u32 ringIdx)
+u32 hcclImpl::GetLevel1CommRank(const u32 ringIdx)
 {
-    return commFactory_->GetInnerCommRank(ringIdx);
+    return commFactory_->GetLevel1CommRank(ringIdx);
 }
 
 HcclResult hcclImpl::UpdateAlltoAllStatus(bool &isAlltoAllZCopyMode, bool &needRecreateAlltoallComm,
@@ -1495,23 +1498,23 @@ void hcclImpl::CheckStagedAlltoAllNeedRecreateComm(
     }
 }
 
-HcclResult hcclImpl::PrepareInnerCommInfo(u32 &segmentIdx, u32 &commIndex, u64 &hdSize,
+HcclResult hcclImpl::PrepareLevel1CommInfo(u32 &segmentIdx, u32 &commIndex, u64 &hdSize,
                                           const SubCommInfo &commInfo,
                                           const std::vector<std::vector<Slice> > &multRingsSliceZero,
                                           const std::string &tag)
 {
     segmentIdx = devicePhyId_;
     commIndex = devicePhyId_;
-    CHK_PRT_RET(multRingsSliceZero.empty(), HCCL_ERROR("[Prepare][InnerCommInfo]sicle map is empty"), HCCL_E_PARA);
+    CHK_PRT_RET(multRingsSliceZero.empty(), HCCL_ERROR("[Prepare][Level1CommInfo]sicle map is empty"), HCCL_E_PARA);
     if (multRingsSliceZero.size() > 1) {
         std::vector<u32>::iterator iterNic = std::find(nicList_.begin(), nicList_.end(), devicePhyId_);
         if (iterNic != nicList_.end()) {                          // 如果当前rank为通信网口
             u32 nicIdx = distance(nicList_.begin(), iterNic);
             std::unique_lock<std::mutex> lock(nicSendSizeListLock_);
             auto iter = nicSendSizeList_.find(tag);
-            CHK_PRT_RET(iter == nicSendSizeList_.end(), HCCL_ERROR("[Prepare][InnerCommInfo]find tag[%s] in "\
+            CHK_PRT_RET(iter == nicSendSizeList_.end(), HCCL_ERROR("[Prepare][Level1CommInfo]find tag[%s] in "\
                 "nicSendSizeList_ failed", tag.c_str()), HCCL_E_INTERNAL);
-            CHK_PRT_RET(nicIdx >= iter->second.size(), HCCL_ERROR("[Prepare][InnerCommInfo]tag[%s] nicIdx[%u] "\
+            CHK_PRT_RET(nicIdx >= iter->second.size(), HCCL_ERROR("[Prepare][Level1CommInfo]tag[%s] nicIdx[%u] "\
                 "invaild, expect less than %zu", tag.c_str(), nicIdx, iter->second.size()), HCCL_E_INTERNAL);
             hdSize = iter->second[nicIdx];                    // 通过nicSendSizeList_得到该网口传输数据量
             u32 ringRanks = multRingsSliceZero[0].size(); // 获取单个 ring 上设备的数量
@@ -1526,7 +1529,7 @@ HcclResult hcclImpl::PrepareInnerCommInfo(u32 &segmentIdx, u32 &commIndex, u64 &
         }
     } else if (multRingsSliceZero.size() == 1) {
         segmentIdx = commInfo.localRank; // 针对0、4device下
-        CHK_PRT_RET(segmentIdx >= multRingsSliceZero[0].size(), HCCL_ERROR("[Prepare][InnerCommInfo]index is out of "\
+        CHK_PRT_RET(segmentIdx >= multRingsSliceZero[0].size(), HCCL_ERROR("[Prepare][Level1CommInfo]index is out of "\
             "range. Idx[%u] Slice size[%llu]", segmentIdx, multRingsSliceZero[0].size()), HCCL_E_PARA);
         hdSize = multRingsSliceZero[0][segmentIdx].size;
         commIndex = segmentIdx;
@@ -1536,23 +1539,23 @@ HcclResult hcclImpl::PrepareInnerCommInfo(u32 &segmentIdx, u32 &commIndex, u64 &
     return HCCL_SUCCESS;
 }
 
-HcclResult hcclImpl::PrepareInnerCommInfo(u32 &segmentIdx, u32 &commIndex, u64 &hdSize,
-                                          std::vector<std::unique_ptr<CommBase> > &commOuter,
+HcclResult hcclImpl::PrepareLevel1CommInfo(u32 &segmentIdx, u32 &commIndex, u64 &hdSize,
+                                          std::vector<std::unique_ptr<CommBase> > &commLevel0,
                                           const std::vector<std::vector<Slice> > &multRingsSliceZero,
                                           const std::string &tag)
 {
     segmentIdx = devicePhyId_;
     commIndex = devicePhyId_;
-    CHK_PRT_RET(multRingsSliceZero.empty(), HCCL_ERROR("[Prepare][InnerCommInfo]sicle map is empty"), HCCL_E_PARA);
+    CHK_PRT_RET(multRingsSliceZero.empty(), HCCL_ERROR("[Prepare][Level1CommInfo]sicle map is empty"), HCCL_E_PARA);
     if (multRingsSliceZero.size() > 1) {
         std::vector<u32>::iterator iterNic = std::find(nicList_.begin(), nicList_.end(), devicePhyId_);
         if (iterNic != nicList_.end()) {                          // 如果当前rank为通信网口
             u32 nicIdx = distance(nicList_.begin(), iterNic);
             std::unique_lock<std::mutex> lock(nicSendSizeListLock_);
             auto iter = nicSendSizeList_.find(tag);
-            CHK_PRT_RET(iter == nicSendSizeList_.end(), HCCL_ERROR("[Prepare][InnerCommInfo]find tag[%s] in "\
+            CHK_PRT_RET(iter == nicSendSizeList_.end(), HCCL_ERROR("[Prepare][Level1CommInfo]find tag[%s] in "\
                 "nicSendSizeList_ failed", tag.c_str()), HCCL_E_INTERNAL);
-            CHK_PRT_RET(nicIdx >= iter->second.size(), HCCL_ERROR("[Prepare][InnerCommInfo]tag[%s] nicIdx[%u] "\
+            CHK_PRT_RET(nicIdx >= iter->second.size(), HCCL_ERROR("[Prepare][Level1CommInfo]tag[%s] nicIdx[%u] "\
                 "invaild, expect less than %zu", tag.c_str(), nicIdx, iter->second.size()), HCCL_E_INTERNAL);
             hdSize = iter->second[nicIdx];                    // 通过nicSendSizeList_得到该网口传输数据量
             u32 ringRanks = multRingsSliceZero[0].size(); // 获取单个 ring 上设备的数量
@@ -1566,9 +1569,9 @@ HcclResult hcclImpl::PrepareInnerCommInfo(u32 &segmentIdx, u32 &commIndex, u64 &
             hdSize = 0;
         }
     } else if (multRingsSliceZero.size() == 1) {
-        CHK_PRT_RET(commOuter.empty(), HCCL_ERROR("[Prepare][InnerCommInfo]comm outer is empty"), HCCL_E_PARA);
-        segmentIdx = commOuter[0]->Rank(); // 针对0、4device下
-        CHK_PRT_RET(segmentIdx >= multRingsSliceZero[0].size(), HCCL_ERROR("[Prepare][InnerCommInfo]index is out of "\
+        CHK_PRT_RET(commLevel0.empty(), HCCL_ERROR("[Prepare][Level1CommInfo]comm level0 is empty"), HCCL_E_PARA);
+        segmentIdx = commLevel0[0]->Rank(); // 针对0、4device下
+        CHK_PRT_RET(segmentIdx >= multRingsSliceZero[0].size(), HCCL_ERROR("[Prepare][Level1CommInfo]index is out of "\
             "range. Idx[%u] Slice size[%llu]", segmentIdx, multRingsSliceZero[0].size()), HCCL_E_PARA);
         hdSize = multRingsSliceZero[0][segmentIdx].size;
         commIndex = segmentIdx;

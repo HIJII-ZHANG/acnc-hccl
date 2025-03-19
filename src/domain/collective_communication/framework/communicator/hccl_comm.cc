@@ -278,6 +278,21 @@ HcclResult hcclComm::AllGatherOutPlace(const std::string &tag, void *inputPtr, v
     return HCCL_SUCCESS;
 }
 
+HcclResult hcclComm::AllGatherVOutPlace(const std::string &tag, void *inputPtr, void *outputPtr, 
+    u64 inputCount, const void *outputCounts, const void *outputDispls, HcclDataType dataType, HcclRtStream stream)
+{
+    /* 增加输出日志关键字 */
+    HCCL_DEBUG("HCCL_KEY_INFO: tag[%s], input_ptr[%p], output_ptr[%p], counts[%llu], data_type[%d]",
+        tag.c_str(), inputPtr, outputPtr, outputCounts, dataType);
+
+    /* * 入参检查 */
+    CHK_RET(communicator_->CheckDataType(dataType, false));
+    CHK_RET(communicator_->AllGatherVOutPlace(tag, inputPtr, outputPtr, inputCount, outputCounts, outputDispls,
+        dataType, stream));
+
+    return HCCL_SUCCESS;
+}
+
 HcclResult hcclComm::AllReduce(const std::string &tag, void *inputPtr, void *outputPtr, u64 count,
     HcclDataType dataType, HcclReduceOp op, HcclRtStream stream, SyncMode syncMode)
 {
@@ -552,6 +567,29 @@ HcclResult hcclComm::ReduceScatterOutPlace(const std::string &tag, void *inputPt
     CHK_RET(communicator_->CheckDataType(dataType, true));
     CHK_RET(communicator_->CheckReduceDataType(dataType, op));
     HcclResult ret = communicator_->ReduceScatterOutPlace(tag, inputPtr, outputPtr, count, dataType, op, stream);
+    if (ret != HCCL_SUCCESS) {
+        PrintSubmittedOpCnt(tag, ret);
+        return ret;
+    }
+
+    return HCCL_SUCCESS;
+}
+
+HcclResult hcclComm::ReduceScatterVOutPlace(const std::string &tag, void *inputPtr, void *outputPtr, 
+    const void *inputCounts, const void *inputDispls, u64 outputCount, 
+    HcclDataType dataType, HcclReduceOp op, HcclRtStream stream)
+{
+    /* 增加输出日志关键字 */
+    HCCL_DEBUG("HCCL_KEY_INFO: tag[%s], input_ptr[%p], output_ptr[%p], " \
+        "input_counts[%llu], input_displs[%llu], output_count[%llu], data_type[%s], op[%s]",
+        tag.c_str(), inputPtr, outputPtr, inputCounts, inputDispls, outputCount, 
+        GetDataTypeEnumStr(dataType).c_str(), GetReduceOpEnumStr(op).c_str());
+
+    /* * 入参检查 */
+    CHK_RET(communicator_->CheckDataType(dataType, true));
+    CHK_RET(communicator_->CheckReduceDataType(dataType, op));
+    HcclResult ret = communicator_->ReduceScatterVOutPlace(tag, inputPtr, outputPtr, 
+                        inputCounts, inputDispls, outputCount, dataType, op, stream);
     if (ret != HCCL_SUCCESS) {
         PrintSubmittedOpCnt(tag, ret);
         return ret;
@@ -841,9 +879,9 @@ HcclResult hcclComm::GetOneSidedService(IHcclOneSidedService** service)
     return HCCL_SUCCESS;
 }
 
-HcclResult hcclComm::InitOneSidedServiceNetDevCtx()
+HcclResult hcclComm::InitOneSidedServiceNetDevCtx(u32 remoteRankId)
 {
-    CHK_RET(communicator_->InitOneSidedServiceNetDevCtx());
+    CHK_RET(communicator_->InitOneSidedServiceNetDevCtx(remoteRankId));
     return HCCL_SUCCESS;
 }
 
@@ -1092,6 +1130,10 @@ HcclCommState hcclComm::GetState()
 HcclResult hcclComm::AllocComResourceByTiling(const std::string &algConfig,
     const std::string &tag, uint32_t opType, uint32_t reduceType, rtStream_t stream)
 {
+    /* 增加输出日志关键字 */
+    HCCL_INFO("HCCL_KEY_INFO: AllocComResourceByTiling algConfig[%s], tag[%s], opType[%u], reduceType[%u]",
+        algConfig.c_str(), tag.c_str(), opType, reduceType);
+
     return communicator_->AllocComResourceByTiling(algConfig, tag, opType, reduceType, stream);
 }
 
@@ -1106,12 +1148,12 @@ HcclResult hcclComm::CreateCommResource(const std::string &tag, rtStream_t aiCpu
     return HCCL_SUCCESS;
 }
 
-HcclResult hcclComm::GetAicpuOpStreamNotify(HcclRtStream *opStream, void** aicpuNotify)
+HcclResult hcclComm::GetAicpuOpStreamNotify(HcclRtStream *opStream, u8 aicpuNotifyNum, void** aicpuNotify)
 {
     /* 增加输出日志关键字 */
     HCCL_INFO("HCCL_KEY_INFO: GetAicpuOpStreamNotify commContext[%p]", opStream);
 
-    CHK_RET(communicator_->GetAicpuOpStreamNotify(opStream, aicpuNotify));
+    CHK_RET(communicator_->GetAicpuOpStreamNotify(opStream, aicpuNotifyNum, aicpuNotify));
 
     return HCCL_SUCCESS;
 }
@@ -1202,6 +1244,48 @@ HcclResult hcclComm::Suspend()
 HcclResult hcclComm::Resume()
 {
     communicator_->Resume();
+    return HCCL_SUCCESS;
+}
+
+HcclResult hcclComm::InitZeroCopyMemoryAgent()
+{
+    CHK_SMART_PTR_NULL(communicator_);
+    CHK_RET(communicator_->InitZeroCopyMemoryAgent());
+    return HCCL_SUCCESS;
+}
+
+HcclResult hcclComm::DeinitZeroCopyMemoryAgent()
+{
+    CHK_SMART_PTR_NULL(communicator_);
+    CHK_RET(communicator_->DeinitZeroCopyMemoryAgent());
+    return HCCL_SUCCESS;
+}
+
+HcclResult hcclComm::SetMemoryRange(void *baseVirPtr, size_t size, size_t alignment, uint64_t flags)
+{
+    CHK_SMART_PTR_NULL(communicator_);
+    CHK_RET(communicator_->SetMemoryRange(baseVirPtr, size, alignment, flags));
+    return HCCL_SUCCESS;
+}
+
+HcclResult hcclComm::UnsetMemoryRange(void *baseVirPtr)
+{
+    CHK_SMART_PTR_NULL(communicator_);
+    CHK_RET(communicator_->UnsetMemoryRange(baseVirPtr));
+    return HCCL_SUCCESS;
+}
+
+HcclResult hcclComm::ActivateCommMemory(void *virPtr, size_t size, size_t offset, void* handle, uint64_t flags)
+{
+    CHK_SMART_PTR_NULL(communicator_);
+    CHK_RET(communicator_->ActivateCommMemory(virPtr, size, offset, handle, flags));
+    return HCCL_SUCCESS;
+}
+
+HcclResult hcclComm::DeactivateCommMemory(void *virPtr)
+{
+    CHK_SMART_PTR_NULL(communicator_);
+    CHK_RET(communicator_->DeactivateCommMemory(virPtr));
     return HCCL_SUCCESS;
 }
 

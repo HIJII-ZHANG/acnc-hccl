@@ -171,7 +171,7 @@ HcclResult AlgConfigurator::SelectCurrOpAlgType(
 
         algType[opType] = AlgType((static_cast<u32>(algType1) << HCCL_LEVEL_ALGO_WIDTH) + static_cast<u32>(algType0));
 
-        if (!topoAttr_.isStandardCard && deviceType != DevType::DEV_TYPE_910B) {
+        if (!topoAttr_.isStandardCard && deviceType != DevType::DEV_TYPE_910B && !topoAttr_.isDiffDeviceType) {
             if (topoAttr_.nicList.size() != DEVICE_EIGHT && topoAttr_.deviceNumPerAggregation == DEVICE_EIGHT &&
                 algType0 != AlgTypeLevel0::ALG_LEVEL0_8P_RING) {
                 HCCL_ERROR("[Set][AlgType]nicSize[%zu] error, algType is not 8P ring.", topoAttr_.nicList.size());
@@ -189,13 +189,12 @@ HcclResult AlgConfigurator::SelectCurrOpAlgType(
     auto level2Iter = HCCL_ALGO_LEVEL2_NAME_MAP.find(algType2);
     CHK_PRT_RET(level2Iter == HCCL_ALGO_LEVEL2_NAME_MAP.end(),
         HCCL_ERROR("level2: algType2[%u] is invalid.", algType2), HCCL_E_INTERNAL);
-    HCCL_RUN_INFO("Device Type[%u], average device count[%u], HccsNum[%u], SIONum[%u], HCCS_SW_NUM[%u], " \
-        "optype[%u] algorithm type[%u] is selected:level0: using[%s], level1: using[%s], level2: using[%s]",
+    HCCL_RUN_INFO("Device Type[%u], average device count[%u], HccsNum[%u], SIONum[%u], HCCS_SW_NUM[%u], optype[%u]",
         deviceType, topoAttr_.deviceNumPerAggregation,
         topoAttr_.pairLinkInfo[static_cast<u32>(LinkTypeInServer::HCCS_TYPE)].size(),
         topoAttr_.pairLinkInfo[static_cast<u32>(LinkTypeInServer::SIO_TYPE)].size(),
         topoAttr_.pairLinkInfo[static_cast<u32>(LinkTypeInServer::HCCS_SW_TYPE)].size(),
-        opType, algType[opType], level0Iter->second.c_str(), level1Iter->second.c_str(), level2Iter->second.c_str());
+        opType);
     return HCCL_SUCCESS;
 }
 
@@ -420,6 +419,10 @@ HcclResult AlgConfigurator::GetDefaultAlgoLevel0Module(AlgTypeLevel0 &algType)
     if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
         algType = IsHCCSSWNumEqualToTwiceSIONum() ? AlgTypeLevel0::ALG_LEVEL0_NP_DOUBLE_RING :
                                                     AlgTypeLevel0::ALG_LEVEL0_NP_SINGLE_RING;
+    }
+    if (topoAttr_.isDiffDeviceType) {
+        HCCL_DEBUG("[GetDefaultAlgoLevel0Module]gcdDeviceNumPerAggregation [%u] isDiffDeviceType [%u] algType [%u]",
+            topoAttr_.gcdDeviceNumPerAggregation, topoAttr_.deviceType, algType);
     }
     return HCCL_SUCCESS;
 }

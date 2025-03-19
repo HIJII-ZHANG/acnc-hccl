@@ -130,81 +130,81 @@ HcclResult CollReduceScatterMeshExecutor::KernelRun(const OpParam &param, ExecMe
     u32 perDataSize = SIZE_TABLE[param.DataDes.dataType];
 
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
 
     /* ******************第一步: 节点间reducescatter *******************************/
-    u32 commIndex = outerCommInfo.localRank; // 找到rank所在的节点间平面
+    u32 commIndex = level0CommInfo.localRank; // 找到rank所在的节点间平面
 
     CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
-    SubCommInfo innerCommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
+    SubCommInfo level1CommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
 
-    u32 innerRankSize = innerCommInfo.localRankSize;
-    if (innerRankSize > 1) {
+    u32 level1RankSize = level1CommInfo.localRankSize;
+    if (level1RankSize > 1) {
         u64 reduceAttr = GetReduceAttr(execMem.inputMem, execMem.outputMem, param.DataDes.dataType, param.reduceType);
-        std::unique_ptr<AlgTemplateBase> innerTempAlg;
+        std::unique_ptr<AlgTemplateBase> level1TempAlg;
         if (UseInterServerRingAlgo(algType_)) {
-            innerTempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
-            CHK_SMART_PTR_NULL(innerTempAlg);
+            level1TempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
+            CHK_SMART_PTR_NULL(level1TempAlg);
             HCCL_INFO("reducescatter mesh: using ring algo inter-server.");
-            u64 ringSize = execMem.inputMem.size() / innerRankSize;
+            u64 ringSize = execMem.inputMem.size() / level1RankSize;
             u64 ringCount = ringSize / perDataSize;
-            CHK_RET(innerTempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
-                param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID, std::vector<Slice>(0)));
+            CHK_RET(level1TempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
+                param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID, std::vector<Slice>(0)));
         } else if (UseInterServerNHRAlgo(algType_)) {
-            innerTempAlg.reset(new (std::nothrow) ReduceScatterNHR(dispatcher_, reduceAttr));
+            level1TempAlg.reset(new (std::nothrow) ReduceScatterNHR(dispatcher_, reduceAttr));
             HCCL_INFO("reducescatter mesh: using nhr algo inter-server.");
-            CHK_SMART_PTR_NULL(innerTempAlg);
-            u64 ringSize = execMem.inputMem.size() / innerRankSize;
+            CHK_SMART_PTR_NULL(level1TempAlg);
+            u64 ringSize = execMem.inputMem.size() / level1RankSize;
             u64 ringCount = ringSize / perDataSize;
-            CHK_RET(innerTempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
-                param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID, std::vector<Slice>(0)));
+            CHK_RET(level1TempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
+                param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID, std::vector<Slice>(0)));
         } else if (UseInterServerNHRV1Algo(algType_)) {
-            innerTempAlg.reset(new (std::nothrow) ReduceScatterNHRV1(dispatcher_, reduceAttr));
+            level1TempAlg.reset(new (std::nothrow) ReduceScatterNHRV1(dispatcher_, reduceAttr));
             HCCL_INFO("reducescatter mesh: using nhr_v1 algo inter-server.");
-            CHK_SMART_PTR_NULL(innerTempAlg);
-            u64 ringSize = execMem.inputMem.size() / innerRankSize;
+            CHK_SMART_PTR_NULL(level1TempAlg);
+            u64 ringSize = execMem.inputMem.size() / level1RankSize;
             u64 ringCount = ringSize / perDataSize;
-            CHK_RET(innerTempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
-                param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID, std::vector<Slice>(0)));
+            CHK_RET(level1TempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
+                param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID, std::vector<Slice>(0)));
         } else if (UseInterServerNBAlgo(algType_)) {
-            innerTempAlg.reset(new (std::nothrow) ReduceScatterNB(dispatcher_, reduceAttr));
+            level1TempAlg.reset(new (std::nothrow) ReduceScatterNB(dispatcher_, reduceAttr));
             HCCL_INFO("reducescatter mesh: using nonuniform-bruck algo inter-server.");
-            CHK_SMART_PTR_NULL(innerTempAlg);
-            u64 ringSize = execMem.inputMem.size() / innerRankSize;
+            CHK_SMART_PTR_NULL(level1TempAlg);
+            u64 ringSize = execMem.inputMem.size() / level1RankSize;
             u64 ringCount = ringSize / perDataSize;
-            CHK_RET(innerTempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
-                param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID, std::vector<Slice>(0)));
+            CHK_RET(level1TempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
+                param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID, std::vector<Slice>(0)));
         } else {
-            innerTempAlg.reset(new (std::nothrow) ReduceScatterRecursiveHalvingDoubling(dispatcher_, reduceAttr));
-            CHK_SMART_PTR_NULL(innerTempAlg);
+            level1TempAlg.reset(new (std::nothrow) ReduceScatterRecursiveHalvingDoubling(dispatcher_, reduceAttr));
+            CHK_SMART_PTR_NULL(level1TempAlg);
             HCCL_INFO("reducescatter mesh: using halving-doubling algo inter-server.");
             u64 inputDataCount = execMem.inputMem.size() / perDataSize; // count是output的数据个数
-            CHK_RET(innerTempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, inputDataCount,
-                param.DataDes.dataType, param.stream, param.reduceType, OUTER_BRIDGE_RANK_ID, std::vector<Slice>(0)));
+            CHK_RET(level1TempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, inputDataCount,
+                param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID, std::vector<Slice>(0)));
         }
-        CHK_RET(innerTempAlg->RegisterProfiler(
-            (innerRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + innerCommInfo.localRank,
+        CHK_RET(level1TempAlg->RegisterProfiler(
+            (level1RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1CommInfo.localRank,
             PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-        CHK_RET(RunTemplate(innerTempAlg, innerCommInfo));
+        CHK_RET(RunTemplate(level1TempAlg, level1CommInfo));
     }
 
     /* *******************第二步: 节点内reducescatter ******************************************/
     CHK_RET(ActiveSlaveStreams(param.stream));
 
-    u32 sliceNum = outerCommInfo.localRankSize;
+    u32 sliceNum = level0CommInfo.localRankSize;
     // 根据数据量算每个环上数据的偏移和大小，把做完hd的slice均分成RankSize份
     std::vector<Slice> dataSegsSlice;
     CHK_RET(PrepareReduceScatterSliceData(execMem.count, perDataSize, sliceNum, dataSegsSlice));
 
     // 每个server分配的slice大小
-    u64 serverSliceSize = execMem.inputMem.size() / innerRankSize;
+    u64 serverSliceSize = execMem.inputMem.size() / level1RankSize;
     // 每个服务器对应的偏移
-    u64 serverSliceOffset = serverSliceSize * innerCommInfo.localRank;
+    u64 serverSliceOffset = serverSliceSize * level1CommInfo.localRank;
 
-    HCCL_DEBUG("inputMem.size=%llu, outerCommInfo.localRankSize=%u, serverSliceSize=%llu, serverSliceOffset=%llu "\
-        "commIndex=%u innerCommInfo.localRank=%u", execMem.inputMem.size(), outerCommInfo.localRankSize,
-        serverSliceSize, serverSliceOffset, commIndex, innerCommInfo.localRank);
+    HCCL_DEBUG("inputMem.size=%llu, level0CommInfo.localRankSize=%u, serverSliceSize=%llu, serverSliceOffset=%llu "\
+        "commIndex=%u level1CommInfo.localRank=%u", execMem.inputMem.size(), level0CommInfo.localRankSize,
+        serverSliceSize, serverSliceOffset, commIndex, level1CommInfo.localRank);
 
     DeviceMem reduceScatterMeshInput = execMem.inputMem.range(serverSliceOffset, serverSliceSize);
     CHK_SMART_PTR_NULL(reduceScatterMeshInput);

@@ -261,7 +261,7 @@ HcclResult CollRunAlltoAllDirectFullmesh::KernelRun(const OpParam &param, ExecMe
 
     // 获取通信域
     CHK_RET(CheckCommSize(COMM_COMBINE_ORDER, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_COMBINE_ORDER, COMM_INDEX_0);
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_COMBINE_ORDER, COMM_INDEX_0);
 
     CHK_RET(AddSubStreamToProfiling());
 
@@ -275,19 +275,19 @@ HcclResult CollRunAlltoAllDirectFullmesh::KernelRun(const OpParam &param, ExecMe
     // 执行
     std::unique_ptr<AlltoAllVDirectFullMesh> tempAlg = nullptr;
     tempAlg.reset(new (std::nothrow) AlltoAllVDirectFullMesh(dispatcher_, const_cast<Stream&>(param.stream),
-        topoAttr_.userRank, topoAttr_.userRankSize, outerCommInfo.links, localSendRecvInfo_,
+        topoAttr_.userRank, topoAttr_.userRankSize, level0CommInfo.links, localSendRecvInfo_,
         devNumInlocalPod, rankIdxInPod));
 
     CHK_SMART_PTR_NULL(tempAlg);
 
     CHK_RET(tempAlg->Prepare(algResResp_->paramInputMem, algResResp_->paramOutputMem, execMem.inputMem,
-        execMem.outputMem, workflowMode_,algResResp_->slaveStreams, algResResp_->notifiesM2S,
-        algResResp_->notifiesS2M, isSuPodAsym));
+        execMem.outputMem, workflowMode_,algResResp_->slaveStreams, algResResp_->notifiesMain,
+        algResResp_->notifiesAux, isSuPodAsym));
 
     CHK_RET(tempAlg->RunAsync());
 
     HCCL_INFO("[CollRunAlltoAllDirectFullmesh] excutor run success.");
-    if (param.isPostSync == true) {
+    if (algOpContext_.opRetryHandler.isPostSync == true) {
         OpParam postSyncParam = param;
         CHK_RET(InplaceOpSync(postSyncParam, execMem));
     }

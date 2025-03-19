@@ -8,6 +8,8 @@ set(src_list_pub
     ${CMAKE_CURRENT_SOURCE_DIR}/reduce_scatter_recursive_hd.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/reduce_scatter_ring_concurrent_direct.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/reduce_scatter_ring.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/reduce_scatter_mesh_mix.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/reduce_scatter_mesh_mix_single_stream.cc
 )
 
 target_sources(hccl_alg PRIVATE

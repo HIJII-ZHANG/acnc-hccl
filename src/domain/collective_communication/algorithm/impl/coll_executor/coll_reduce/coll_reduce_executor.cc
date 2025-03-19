@@ -53,7 +53,7 @@ HcclResult CollReduceExecutor::Orchestrate(OpParam& param, AlgResourceResponse& 
         execMem.outputMem = algRes.paramOutputMem;
         execMem.scratchMem = algRes.scratchMem;
         ret = KernelRun(param, execMem);
-        if (param.isPostSync == true) {
+        if (algOpContext_.opRetryHandler.isPostSync == true) {
             // post Sync
             CHK_RET(InplaceOpSync(param, execMem));
         }
@@ -128,7 +128,7 @@ HcclResult CollReduceExecutor::RunLoop(OpParam &param, AlgResourceResponse &algR
         inputOffset = curSize;
         outputOffset = curSize;
     }
-    if (param.isPostSync == true) {
+    if (algOpContext_.opRetryHandler.isPostSync == true) {
         ExecMem execMem;
         execMem.count = param.DataDes.count;
         execMem.inputPtr = param.inputPtr;

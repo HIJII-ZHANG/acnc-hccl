@@ -61,6 +61,7 @@ struct TransportRequest {
     TransportMemType inputMemType = TransportMemType::RESERVED;
     TransportMemType outputMemType = TransportMemType::RESERVED;
     bool isUsedRdma = false;
+    u32 notifyNum = 0;
 };
 
 struct SingleSubCommTransport {
@@ -104,10 +105,10 @@ struct AlgResourceResponse {
     DeviceMem aivOutputMem;
     std::vector<Stream> slaveStreams;
     std::vector<Stream> slaveDevStreams;
-    std::vector<std::shared_ptr<LocalNotify> > notifiesM2S;  // 大小等同于slaveStreams
-    std::vector<std::shared_ptr<LocalNotify> > notifiesS2M;  // 大小等同于slaveStreams
-    std::vector<std::shared_ptr<LocalNotify> > notifiesDevM2S;  // 大小等同于slaveStreams
-    std::vector<std::shared_ptr<LocalNotify> > notifiesDevS2M;  // 大小等同于slaveStreams
+    std::vector<std::shared_ptr<LocalNotify> > notifiesMain; // Main Signals, 与Aux成对使用，大小等同于slaveStreams
+    std::vector<std::shared_ptr<LocalNotify> > notifiesAux; // Auxiliary Signals, 与Main成对使用, 大小等同于slaveStreams
+    std::vector<std::shared_ptr<LocalNotify> > notifiesDevMain; // 大小等同于slaveStreams
+    std::vector<std::shared_ptr<LocalNotify> > notifiesDevAux; // 大小等同于slaveStreams
     OpCommTransport opTransportResponse; // 默认的Transport资源
     OpCommTransport opTransportResponseBackUp;  // Transport备资源 (借轨场景使用)
     std::vector<std::shared_ptr<ThreadManage>> threadManage;
@@ -118,6 +119,20 @@ enum class BatchSendRecvCurMode {
     RECV = 1,
     SEND_RECV = 2,
     SEND_RECV_RESERVED
+};
+
+// InplaceSupportRetry算法枚举
+enum class InplaceSupportRetryStatus {
+    AG_BD_CASE = 0,
+    RETRY_1_ALLOW_NO_DMA_REDUCE_CASE1 = 1, // executor需要成非DMA削减模式
+    RETRY_0_NOT_ALLOW_NO_DMA_REDUCE_CASE1 = 2,
+    ALWAYS_NO_DMA_REDUCE = 3,
+    RETRY_1_ALLOW_NO_DMA_REDUCE_CASE2 = 4, // executor需要成非DMA削减模式
+    RETRY_0_NOT_ALLOW_NO_DMA_REDUCE_CASE2 = 5,
+    UNKONWN_EXECUTOR = 6,
+    USER_LARGER_THAN_CCL = 7,
+    NOT_BASIC_OP_CASE = 8,
+    INPLACE_STATUS_END
 };
 
 struct OpParam {
@@ -138,7 +153,13 @@ struct OpParam {
         struct {
             u64 count;
             HcclDataType dataType;
-        } DataDes;
+            u64 strideCount;
+        } DataDes = {0, HCCL_DATA_TYPE_RESERVED, 0};
+        struct {
+            void* counts;
+            void* displs;
+            HcclDataType dataType;
+        } VDataDes;
         struct {
             HcclDataType sendType;
             HcclDataType recvType;
@@ -157,13 +178,20 @@ struct OpParam {
         } BatchSendRecvDataDes;
     };
     HcclCMDType opType = HcclCMDType::HCCL_CMD_INVALID;
+    bool isZeroCopy = false;
+    u32 index = 0;
+};
+
+struct OpRetryHandler {
     bool inplaceSupportRetry = false;
     bool retryEnable = false;
-    u8 isInplaceStatus = 0;
-    u8 inPlaceSupportRetryStatus = 0;
+    InplaceSupportRetryStatus inPlaceSupportRetryStatus = InplaceSupportRetryStatus::INPLACE_STATUS_END;
     bool isInplacePreSync = false;
     bool isPostSync = false;
-    u32 index = 0;
+};
+
+struct AlgOpContext {
+    OpRetryHandler opRetryHandler;
 };
 }   // namespace hccl
 #endif

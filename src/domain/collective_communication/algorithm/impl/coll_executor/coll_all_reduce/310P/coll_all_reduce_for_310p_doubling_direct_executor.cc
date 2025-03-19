@@ -37,11 +37,43 @@ HcclResult CollAllReduceFor310PDoublingDirectExecutor::CalcTransportMemType(Tran
     return HCCL_SUCCESS;
 }
 
+HcclResult CollAllReduceFor310PDoublingDirectExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
+{
+    bool isInlineReduce = IsSupportSDMAReduce(execMem.inputMem.ptr(), execMem.outputMem.ptr(),
+        param.DataDes.dataType, param.reduceType);
+    u64 reduceAttr = 0;
+    if (isInlineReduce) {
+        SalSetBitOne(reduceAttr, ATTR_POS_INLINE_REDUCE);
+    }
+
+    CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+
+    HcomCollOpInfo opInfo = {
+        "", execMem.inputPtr, execMem.outputPtr, execMem.count, param.DataDes.dataType, param.root, param.reduceType
+    };
+
+    std::unique_ptr<AlgTemplateBase> tempAlg;
+    tempAlg.reset(new (std::nothrow) AllReduceDoublingDirect(dispatcher_, reduceAttr, &opInfo));
+    CHK_SMART_PTR_NULL(tempAlg);
+
+    CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
+        param.DataDes.dataType, param.stream, param.reduceType,
+        LEVEL0_BRIDGE_RANK_ID, std::vector<Slice>(0), 0));
+
+    CHK_RET(tempAlg->RegisterProfiler(
+        (level0CommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level0CommInfo.localRank,
+        PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, param.stream));
+
+    CHK_RET(RunTemplate(tempAlg, level0CommInfo));
+    return HCCL_SUCCESS;
+}
+
 HcclResult CollAllReduceFor310PDoublingDirectExecutor::CalcLevel0CommInfo(TransportMemType inputType,
     TransportMemType outputType,
     std::vector<LevelNSubCommTransport>& opTransport)
 {
-    HCCL_INFO("[CollAllReduceFor310PDoublingDirectExecutor][CalcOuterCommInfo]tag[%s] start", tag_.c_str());
+    HCCL_INFO("[CollAllReduceFor310PDoublingDirectExecutor][CalcLevel0CommInfo]tag[%s] start", tag_.c_str());
 
     if (algType_ == AlgType::ALG_NP_HD) {
         CommParaInfo commParaInfo(COMM_LEVEL0, CommType::COMM_TAG_HALVING_DOUBLING);
@@ -54,40 +86,8 @@ HcclResult CollAllReduceFor310PDoublingDirectExecutor::CalcLevel0CommInfo(Transp
         return HCCL_E_INTERNAL;
     }
 
-    HCCL_INFO("[CollAllReduceFor310PDoublingDirectExecutor][CalcOuterCommInfo]tag[%s] Calc RingComm finish",
+    HCCL_INFO("[CollAllReduceFor310PDoublingDirectExecutor][CalcLevel0CommInfo]tag[%s] Calc RingComm finish",
         tag_.c_str());
-    return HCCL_SUCCESS;
-}
-
-HcclResult CollAllReduceFor310PDoublingDirectExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
-{
-    bool isInlineReduce = IsSupportSDMAReduce(execMem.inputMem.ptr(), execMem.outputMem.ptr(),
-        param.DataDes.dataType, param.reduceType);
-    u64 reduceAttr = 0;
-    if (isInlineReduce) {
-        SalSetBitOne(reduceAttr, ATTR_POS_INLINE_REDUCE);
-    }
-
-    CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
-
-    HcomCollOpInfo opInfo = {
-        "", execMem.inputPtr, execMem.outputPtr, execMem.count, param.DataDes.dataType, param.root, param.reduceType
-    };
-
-    std::unique_ptr<AlgTemplateBase> tempAlg;
-    tempAlg.reset(new (std::nothrow) AllReduceDoublingDirect(dispatcher_, reduceAttr, &opInfo));
-    CHK_SMART_PTR_NULL(tempAlg);
-
-    CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
-        param.DataDes.dataType, param.stream, param.reduceType,
-        OUTER_BRIDGE_RANK_ID, std::vector<Slice>(0), 0));
-
-    CHK_RET(tempAlg->RegisterProfiler(
-        (outerCommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + outerCommInfo.localRank,
-        PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, param.stream));
-
-    CHK_RET(RunTemplate(tempAlg, outerCommInfo));
     return HCCL_SUCCESS;
 }
 

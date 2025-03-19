@@ -61,7 +61,7 @@ HcclResult CollAllGatherExecutor::Orchestrate(OpParam& param, AlgResourceRespons
         ret = RunLoop(param, algRes);
     }
     CHK_PRT_RET(ret != HCCL_SUCCESS,
-        HCCL_ERROR("[CollAllGatherExecutor][Orchestrate]errNo[0x%016llx]all reudce excutor kernel run failed",
+        HCCL_ERROR("[CollAllGatherExecutor][Orchestrate]errNo[0x%016llx]all gather excutor kernel run failed",
             HCCL_ERROR_CODE(ret)), ret);
 
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && !is310P3Common_) {
@@ -251,18 +251,18 @@ HcclResult CollAllGatherExecutor::AllGatherLevel2(const std::string &tag, Device
     u32 perDataSize = 0;
     CHK_RET(SalGetDataTypeSize(dataType, perDataSize));
 
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
-    u32 commIndex = outerCommInfo.localRank;
-    SubCommInfo innerCommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    u32 commIndex = level0CommInfo.localRank;
+    SubCommInfo level1CommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
     CHK_RET(CheckCommSize(COMM_LEVEL2, COMM_INDEX_0));
     SubCommInfo level2CommInfo = GetSubCommInfo(COMM_LEVEL2, COMM_INDEX_0);
 
     u64 inputMemSize = inputMem.size();
-    u32 level0RankSize = outerCommInfo.localRankSize;
-    u32 level1RankSize = innerCommInfo.localRankSize;
+    u32 level0RankSize = level0CommInfo.localRankSize;
+    u32 level1RankSize = level1CommInfo.localRankSize;
     u32 level2RankSize = level2CommInfo.localRankSize;
-    u32 level0ServerIndex = outerCommInfo.localRank;
-    u32 level1ServerIndex = innerCommInfo.localRank;
+    u32 level0ServerIndex = level0CommInfo.localRank;
+    u32 level1ServerIndex = level1CommInfo.localRank;
 
     std::unique_ptr<AlgTemplateBase> level2AGExecutor;
     level2AGExecutor.reset(new (std::nothrow) AllGatherRing(dispatcher_));
@@ -290,7 +290,7 @@ HcclResult CollAllGatherExecutor::AllGatherLevel2(const std::string &tag, Device
     HCCL_INFO("allgather double ring [superpod] level2 allgather run success");
 
     // 第二步，各个AI Server 间 all gather (ring/NHR)
-    HCCL_INFO("commIdx:%u Tag[%s].commInner.size():%u", commIndex, tag.c_str(),
+    HCCL_INFO("commIdx:%u Tag[%s].commLevel1.size():%u", commIndex, tag.c_str(),
         level1RankSize);
 
     if (level1RankSize > 1) {
@@ -328,7 +328,7 @@ HcclResult CollAllGatherExecutor::AllGatherLevel2(const std::string &tag, Device
             level1RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level2CommInfo.localRank,
             PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, stream));
 
-        CHK_RET(RunTemplate(level1AGExecutor, innerCommInfo));
+        CHK_RET(RunTemplate(level1AGExecutor, level1CommInfo));
         HCCL_INFO("allgather double ring [superpod] level1 allgather run success");
     }
 

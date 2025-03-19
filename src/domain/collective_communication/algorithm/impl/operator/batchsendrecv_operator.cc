@@ -23,7 +23,7 @@ BatchSendRecvOperator::~BatchSendRecvOperator() {
 HcclResult BatchSendRecvOperator::SelectAlg(const std::string& tag, const OpParam& param, std::string& algName,
     std::string& newTag)
 {
-    if (param.retryEnable) {
+    if (retryEnable_) {
         algName = "BatchSendRecvRetry";
     } else {
         algName = "BatchSendRecv";

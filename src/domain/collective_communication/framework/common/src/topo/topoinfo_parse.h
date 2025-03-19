@@ -68,6 +68,7 @@ private:
     // 网卡挂载位置 0:host 1:device
     NICDeployment nicDeploy_;
     bool multiServerDiffDeviceNumMode_ = false;
+    bool isDiffDeviceType_ = false;
 };
 }
 

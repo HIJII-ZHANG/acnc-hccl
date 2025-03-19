@@ -26,12 +26,12 @@ TaskLoader::~TaskLoader()
     }
 }
 
-void TaskLoader::Prepare(Stream *stream, SubCommInfo outerCommInfo)
+void TaskLoader::Prepare(Stream *stream, SubCommInfo level0CommInfo)
 {
     // 参数保存
     stream_ = stream;
     HCCL_INFO("[TaskLoader] Prepare stream[%p]", stream_->ptr());
-    commInfo_ = outerCommInfo;
+    commInfo_ = level0CommInfo;
     executeResult_ = HCCL_SUCCESS;
 }
 
@@ -68,6 +68,7 @@ void TaskLoader::NotifyStart()
     std::unique_lock<std::mutex> lock(startMtx_);
     startReady = true; // 设置标志位为 true.
     startCv_.notify_one();
+    workflowMode_ = GetWorkflowMode();  // 每次唤醒前更新下
     HCCL_INFO("[TaskLoader] NotifyStart");
 }
 
@@ -78,6 +79,8 @@ void TaskLoader::WaitStart()
         startCv_.wait(lock); // 当前线程被堵塞, 当标志位变为 true 之后,
     }
     startReady = false;
+
+    SetWorkflowMode(workflowMode_); // 更新workflowMode
 }
 
 void TaskLoader::NotifyDone()

@@ -24,12 +24,12 @@ public:
     virtual ~AlltoallPipelineMeshPairwisePingPong();
 
     virtual HcclResult Prepare(u32 userRank, A2aPipelineMemory A2aPipelineMemory,
-        std::unique_ptr<CommBase> &commOuter, std::unique_ptr<CommBase> &commInner,
+        std::unique_ptr<CommBase> &commLevel0, std::unique_ptr<CommBase> &commLevel1,
         Stream &mainStream, std::vector<Stream> &subStream,
         std::vector<std::shared_ptr<LocalNotify>> &notifyMain, std::vector<std::shared_ptr<LocalNotify>> &notifySub);
     // 适配新CollExecutor接口
     virtual HcclResult Prepare(u32 userRank, A2aPipelineMemory A2aPipelineMemory,
-        const SubCommInfo &outerCommInfo, const SubCommInfo &innerCommInfo,
+        const SubCommInfo &level0CommInfo, const SubCommInfo &level1CommInfo,
         Stream &mainStream, std::vector<Stream> &subStream,
         std::vector<std::shared_ptr<LocalNotify>> &notifyMain, std::vector<std::shared_ptr<LocalNotify>> &notifySub);
 

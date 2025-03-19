@@ -11,7 +11,7 @@
 #include "log.h"
 
 #include "base.h"
-#include "rank_consistent.h"
+#include "rank_consistentcy_checker.h"
 #include "topoinfo_ranktableParser_pub.h"
 #include "config.h"
 #include "param_check.h"
@@ -70,7 +70,7 @@ HcclResult HcomLoadRanktableFile(const char *rankTablePath, std::string &rankTab
 
 HcclResult HcomCalcCRC(hccl::HcclCommParams &params, const char *rankTable)
 {
-    CHK_RET(RankConsistent::GetInstance().CalcStringCrc(rankTable, params.ranktableCrc));
+    CHK_RET(RankConsistentcyChecker::GetInstance().CalcStringCrc(rankTable, params.ranktableCrc));
     return HCCL_SUCCESS;
 }
 
@@ -387,7 +387,7 @@ HcclResult HcclParseRanktable(const std::string &rankTableM, const std::string &
 {
     // 记录版本信息
     std::string curVersion = GetExternalInputCannVersion();
-    CHK_RET(RankConsistent::GetInstance().RecordVerInfo(curVersion));
+    CHK_RET(RankConsistentcyChecker::GetInstance().RecordVerInfo(curVersion));
 
     // ranktableCRC计算
     if (rankTableM.c_str() == nullptr) {

@@ -60,11 +60,11 @@ HcclResult CollSendExecutor::CalcTransportMemType(TransportMemType &inputType, T
 HcclResult CollSendExecutor::CalcP2PCommInfo(TransportMemType inputType,
     TransportMemType outputType, std::vector<LevelNSubCommTransport>& opTransport, u32 dstRank)
 {
-    HCCL_INFO("[CollSendExecutor][CalcOuterCommInfo]tag[%s] start", tag_.c_str());
+    HCCL_INFO("[CollSendExecutor][CalcLevel0CommInfo]tag[%s] start", tag_.c_str());
     CommParaInfo commP2P(COMM_COMBINE, CommType::COMM_TAG_P2P);
     commP2P.peerUserRank = dstRank;
     CHK_RET(CalcCommPlaneInfo(tag_, commP2P, opTransport[COMM_COMBINE], inputType, outputType));
-    HCCL_INFO("[CollSendExecutor][CalcOuterCommInfo]tag[%s] Calc P2PComm finish", tag_.c_str());
+    HCCL_INFO("[CollSendExecutor][CalcLevel0CommInfo]tag[%s] Calc P2PComm finish", tag_.c_str());
     return HCCL_SUCCESS;
 }
 
@@ -123,28 +123,16 @@ HcclResult CollSendExecutor::RunLoop(OpParam &param, AlgResourceResponse &algRes
 
         HCCL_DEBUG("SendOutPlace:curInputPtr[%p], curCount[%llu], curSize[%llu]", curInputPtr, curCount, curSize);
 
-        if(topoAttr_.deviceType == DevType::DEV_TYPE_910_93 && 
-            (topoAttr_.superPodNum > 1 || (topoAttr_.moduleNum > 1 && topoMatcher_->GetExternalInputInterHccsDisable()))) {
-            // A3的RDMA场景，send端需要消减
-            DeviceMem inMem(curInputPtr, curSize);
-            ret = RunTemplate(param, inMem);
-            CHK_PRT_RET(ret != HCCL_SUCCESS,
-                HCCL_ERROR("errNo[0x%016llx] SendOutPlace: send error, tag[%s], ptr[%p], count[%llu], dataType[%d]",
-                HCCL_ERROR_CODE(ret), param.tag.c_str(), curInputPtr, curCount, param.DataDes.dataType),
-                ret); 
-            HCCL_DEBUG("[CollSendExecutor][RunLoop]copy from user input to ccl output.");           
-        } else {
-            // 非A3场景，或A3的SDMA消减场景，send端不消减
-            DeviceMem inCommMem(algRes.cclInputMem.ptr(), curSize);
-            DeviceMem inMem(curInputPtr, curSize);
-            CHK_RET(HcclD2DMemcpyAsync(dispatcher_, inCommMem, inMem, const_cast<Stream&>(param.stream)));
-            ret = RunTemplate(param, inCommMem);
-            CHK_PRT_RET(ret != HCCL_SUCCESS,
-                HCCL_ERROR("errNo[0x%016llx] SendOutPlace: send error, tag[%s], ptr[%p], count[%llu], dataType[%d]",
-                HCCL_ERROR_CODE(ret), param.tag.c_str(), curInputPtr, curCount, param.DataDes.dataType),
-                ret);
-            HCCL_DEBUG("[CollSendExecutor][RunLoop]copy from user input to ccl input.");
-        }
+        // 非A3场景，或A3的SDMA消减场景，send端不消减
+        DeviceMem inCommMem(algRes.cclInputMem.ptr(), curSize);
+        DeviceMem inMem(curInputPtr, curSize);
+        CHK_RET(HcclD2DMemcpyAsync(dispatcher_, inCommMem, inMem, const_cast<Stream&>(param.stream)));
+        ret = RunTemplate(param, inCommMem);
+        CHK_PRT_RET(ret != HCCL_SUCCESS,
+            HCCL_ERROR("errNo[0x%016llx] SendOutPlace: send error, tag[%s], ptr[%p], count[%llu], dataType[%d]",
+            HCCL_ERROR_CODE(ret), param.tag.c_str(), curInputPtr, curCount, param.DataDes.dataType),
+            ret);
+        HCCL_DEBUG("[CollSendExecutor][RunLoop]copy from user input to ccl input.");
 
         CHK_PRT_RET((curCount == 0), HCCL_ERROR("In OP_BASE curCount is zero"), HCCL_E_PARA);
         countLeft -= curCount;

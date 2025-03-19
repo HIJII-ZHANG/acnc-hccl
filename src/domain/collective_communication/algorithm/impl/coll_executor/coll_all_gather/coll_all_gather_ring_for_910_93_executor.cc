@@ -19,15 +19,15 @@ CollAllGatherRingFor91093Executor::CollAllGatherRingFor91093Executor(const HcclD
 
 HcclResult CollAllGatherRingFor91093Executor::CalcStreamNum(u32& streamNum)
 {
-    u32 totalStreamNum = (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING ? OUTER_PLANE_NUM_IN_NPRING_DOUBLE :
-        OUTER_PLANE_NUM_IN_NPRING_SINGLE);
+    u32 totalStreamNum = (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING ? LEVEL0_PLANE_NUM_IN_NPRING_DOUBLE :
+        LEVEL0_PLANE_NUM_IN_NPRING_SINGLE);
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
         totalStreamNum *= STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
     }
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB &&
         GetExternalInputEnableRdmaSdmaConcurrent()) {
-        totalStreamNum += (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) ? OUTER_PLANE_NUM_IN_NPRING_DOUBLE :
-        OUTER_PLANE_NUM_IN_NPRING_SINGLE;
+        totalStreamNum += (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) ? LEVEL0_PLANE_NUM_IN_NPRING_DOUBLE :
+        LEVEL0_PLANE_NUM_IN_NPRING_SINGLE;
     }
     streamNum = totalStreamNum - 1;
     HCCL_INFO("[CollAllGatherRingFor91093Executor][CalcStreamNum] tag[%s] streamNum_[%u]",
@@ -114,17 +114,17 @@ HcclResult CollAllGatherRingFor91093Executor::KernelRun(const OpParam &param, Ex
             HCCL_ERROR_CODE(HCCL_E_PARA), GetDataTypeEnumStr(param.DataDes.dataType).c_str()), HCCL_E_PARA);
 
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
-    u32 level0ServerIndex = outerCommInfo.localRank;
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    u32 level0ServerIndex = level0CommInfo.localRank;
     CHK_RET(CheckCommSize(COMM_LEVEL1, level0ServerIndex + 1));
-    SubCommInfo innerCommInfo = GetSubCommInfo(COMM_LEVEL1, level0ServerIndex);
+    SubCommInfo level1CommInfo = GetSubCommInfo(COMM_LEVEL1, level0ServerIndex);
     CHK_RET(CheckCommSize(COMM_LEVEL2, COMM_INDEX_0 + 1));
     SubCommInfo level2CommInfo = GetSubCommInfo(COMM_LEVEL2, COMM_INDEX_0);
 
     //  第一步，将数据从input内存拷贝到output内存的对应位置
-    u32 level1ServerIndex = innerCommInfo.localRank;
-    u32 level0RankSize = outerCommInfo.localRankSize;
-    u32 level1RankSize = innerCommInfo.localRankSize;
+    u32 level1ServerIndex = level1CommInfo.localRank;
+    u32 level0RankSize = level0CommInfo.localRankSize;
+    u32 level1RankSize = level1CommInfo.localRankSize;
     u32 level2RankSize = level2CommInfo.localRankSize;
 
     u64 inputMemSize = execMem.inputMem.size();
@@ -133,11 +133,12 @@ HcclResult CollAllGatherRingFor91093Executor::KernelRun(const OpParam &param, Ex
     CHK_SMART_PTR_NULL(dstMem);
 
     HcomCollOpInfo opInfo = {
-        "", execMem.inputPtr, execMem.outputPtr, param.DataDes.count, param.DataDes.dataType, 0, HCCL_REDUCE_RESERVED
+        "", execMem.inputPtr, execMem.outputPtr, param.DataDes.count, param.DataDes.dataType, 0, HCCL_REDUCE_RESERVED,
+        param.DataDes.strideCount
     };
     HcomCollOpInfo graphModeOpInfo = {
         "", execMem.inputMem.ptr(), execMem.outputMem.ptr(), param.DataDes.count, param.DataDes.dataType, 0,
-        HCCL_REDUCE_RESERVED
+        HCCL_REDUCE_RESERVED, param.DataDes.strideCount
     };
     HcomCollOpInfo *opInfoPtr = nullptr;
     if (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) {
@@ -230,7 +231,7 @@ HcclResult CollAllGatherRingFor91093Executor::KernelRun(const OpParam &param, Ex
                 level1RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level2CommInfo.localRank,
                 PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-            CHK_RET(RunTemplate(level1AGExecutor, innerCommInfo));
+            CHK_RET(RunTemplate(level1AGExecutor, level1CommInfo));
             HCCL_INFO("allgather double ring [superpod] level1 allgather run success");
         }
     }
@@ -240,7 +241,8 @@ HcclResult CollAllGatherRingFor91093Executor::KernelRun(const OpParam &param, Ex
     CHK_RET(PrepareAllgatherSlice(level0RankSize, inputMemSize, dataSegsSlice));
 
     //  多环数据切分
-    if (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) {
+    if (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING &&
+        !IsSupportUnifiedMarch(param, topoType_, topoAttr_.serverNum, topoAttr_.superPodNum)) {
         multRingsSliceZero = PrepareMultiRingSlice(dataSegsSlice, param.tag, false, topoAttr_.nicList);
     } else {
         multRingsSliceZero.push_back(dataSegsSlice);
@@ -253,17 +255,28 @@ HcclResult CollAllGatherRingFor91093Executor::KernelRun(const OpParam &param, Ex
         multRingsSlice.push_back(level2DataSlice);
     }
 
+    CHK_PRT_RET(0 < param.DataDes.strideCount && param.DataDes.strideCount < param.DataDes.count,
+        HCCL_ERROR("[CollAllGatherRingFor91093Executor][KernelRun]strideCount[%llu] is smaller than opCount[%llu]",
+        param.DataDes.strideCount, param.DataDes.count),
+        HCCL_E_PARA);
+    HCCL_DEBUG("[CollAllGatherRingFor91093Executor][KernelRun]strideCount[%llu], opCount[%llu]",
+        param.DataDes.strideCount, param.DataDes.count);
     std::vector<std::vector<Slice>> multRingsUserMemSlice;
     if (!DMAReduceFlag_) {
         multRingsUserMemSlice = multRingsSlice;
+        // 图模式，根据strideCount更新slice的offset
+        if (param.DataDes.strideCount != 0) {
+            CHK_RET(UpdateOffsetBasedOnStrideCount(param, multRingsUserMemSlice));
+        }
     } else {
         for (u32 ringIndex = 0; ringIndex < multRingsSlice.size(); ringIndex++) {
             std::vector<Slice> userMemSlice;
             for (auto &cclSlice : multRingsSlice[ringIndex]) {
                 Slice tmpSlice;
+                u64 count = (param.DataDes.strideCount == 0) ? param.DataDes.count : param.DataDes.strideCount;
                 tmpSlice.size = cclSlice.size;
                 tmpSlice.offset =
-                    (cclSlice.offset / inputMemSize) * opInfo.count* perDataSize +
+                    (cclSlice.offset / inputMemSize) * count * perDataSize +
                     multRingsSliceZero[ringIndex][0].offset;
                 userMemSlice.push_back(tmpSlice);
                 HCCL_DEBUG("rank[%u], ringIndex[%u], tmpSlice.offset=[%llu], size=[%llu]",

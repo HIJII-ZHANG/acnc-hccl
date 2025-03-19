@@ -60,11 +60,11 @@ HcclResult CollReceiveExecutor::CalcTransportMemType(TransportMemType &inputType
 HcclResult CollReceiveExecutor::CalcP2PCommInfo(TransportMemType inputType,
     TransportMemType outputType, std::vector<LevelNSubCommTransport>& opTransport, u32 srcRank)
 {
-    HCCL_INFO("[CollRecvExecutor][CalcOuterCommInfo]tag[%s] start", tag_.c_str());
+    HCCL_INFO("[CollRecvExecutor][CalcLevel0CommInfo]tag[%s] start", tag_.c_str());
     CommParaInfo commP2P(COMM_COMBINE, CommType::COMM_TAG_P2P);
     commP2P.peerUserRank = srcRank;
     CHK_RET(CalcCommPlaneInfo(tag_, commP2P, opTransport[COMM_COMBINE], inputType, outputType));
-    HCCL_INFO("[CollRecvExecutor][CalcOuterCommInfo]tag[%s] Calc RingComm finish", tag_.c_str());
+    HCCL_INFO("[CollRecvExecutor][CalcLevel0CommInfo]tag[%s] Calc RingComm finish", tag_.c_str());
     return HCCL_SUCCESS;
 }
 
@@ -124,7 +124,7 @@ HcclResult CollReceiveExecutor::RunLoop(OpParam &param, AlgResourceResponse &alg
 
         if(topoAttr_.deviceType != DevType::DEV_TYPE_910_93 ||
             (topoAttr_.superPodNum > 1 || (topoAttr_.moduleNum > 1 && topoMatcher_->GetExternalInputInterHccsDisable()))) {
-            // 非A3场景不做DMA消减；A3的RDMA场景，recv端也不做消减
+            // 非A3场景不做DMA消减；A3的RDMA场景，也不做DMA消减
             DeviceMem outCommMem(algRes.cclOutputMem.ptr(), curSize);
             DeviceMem outMem(curOutputPtr, curSize);
             ret = RunTemplate(param, outCommMem);
@@ -135,7 +135,7 @@ HcclResult CollReceiveExecutor::RunLoop(OpParam &param, AlgResourceResponse &alg
             CHK_RET(HcclD2DMemcpyAsync(dispatcher_, outMem, outCommMem, param.stream));
             HCCL_DEBUG("[CollReceiveExecutor][RunLoop]copy from ccl output to user output.");
         } else {
-            // A3的SDMA场景，recv端做消减
+            // A3的SDMA场景，recv端做DMA消减
             DeviceMem outMem(curOutputPtr, curSize);
             ret = RunTemplate(param, outMem);
             CHK_PRT_RET(ret != HCCL_SUCCESS,

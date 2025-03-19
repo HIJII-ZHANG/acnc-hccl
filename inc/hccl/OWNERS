@@ -1,6 +1,11 @@
 approvers:
-- philo_yan
 - yanzhenghang
+- philo_yan
+- yanyefeng
+
+reviewers:
+- yanzhenghang
+- philo_yan
 - yanyefeng
 
 options:

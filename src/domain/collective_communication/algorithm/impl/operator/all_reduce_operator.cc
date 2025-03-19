@@ -10,7 +10,7 @@
 
 #include "all_reduce_operator.h"
 #include "device_capacity.h"
-#include "rank_consistent.h"
+#include "rank_consistentcy_checker.h"
 #include "executor_impl.h"
 #include "coll_alg_utils.h"
 #include "stream_active_manager.h"
@@ -115,7 +115,9 @@ HcclResult AllReduceOperator::SelectAlg(const std::string& tag, const OpParam& p
         return HCCL_SUCCESS;
     }
     HcclResult ret;
-    if (Is310P3Common(isHaveCpuRank_, deviceType_)) {
+    if (isDiffDeviceType_) {
+        ret = SelectAlgforMix(param, algName);
+    } else if (Is310P3Common(isHaveCpuRank_, deviceType_)) {
         if (is310PDuoCard_) {
             ret = SelectAlgfor310P3DUO(param, algName);
         } else {
@@ -152,6 +154,29 @@ HcclResult AllReduceOperator::SelectAlg(const std::string& tag, const OpParam& p
     newTag += (param.aicpuUnfoldMode ? "_device" : "_host");
     HCCL_INFO("[SelectAlg] all_reduce newTag is [%s]", newTag.c_str());
     return ret;
+}
+
+HcclResult AllReduceOperator::SelectAlgforMix(const OpParam& param, std::string& algName)
+{
+    HcclResult ret;
+
+    if (gcdDeviceNumPerAggregation_ > 1) {
+        ret = SetInterServerNHRAlgo(algType_);
+        HCCL_WARNING("[AllReduceOperator][SelectAlgforMix] only support NHR in AlgoLevel1 yet, "\
+            "default is algType=NHR.");
+        algName = "AllReduceMixExecutor";
+    } else {
+        ret = SetInterServerRingAlgo(algType_);
+        HCCL_WARNING("[AllReduceOperator][SelectAlgforMix] only support ring in AlgoComm yet, "\
+            "default is algType=ring.");
+        algName = "AllReduceComm";
+    }
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[AllReduceOperator][SelectAlgforMix]errNo[0x%016llx] tag[%s], AllReduce set inter server "\
+            "failed", HCCL_ERROR_CODE(ret), param.tag.c_str()), ret);
+
+    HCCL_INFO("[SelectAlgforMix] all_reduce SelectAlgforMix is algName [%s]", algName.c_str());
+    return HCCL_SUCCESS;
 }
 
 HcclResult AllReduceOperator::SelectAlgfor310P3DUO(const OpParam& param, std::string& algName)
@@ -232,7 +257,7 @@ HcclResult AllReduceOperator::SelectAlgfor910B(const OpParam& param, std::string
 
     bool isInlineReduce =
         IsSupportSDMAReduce(param.inputPtr, param.outputPtr, param.DataDes.dataType, param.reduceType);
-    bool isRdmaReduce = IsSupportRDMAReduce(param.DataDes.dataType, param.reduceType);
+    bool isRdmaReduce = IsOverFlowInfNanMode() && IsSupportRDMAReduce(param.DataDes.dataType, param.reduceType);
 
     bool isMeshTopo = topoType_ == TopoType::TOPO_TYPE_NP_MESH || topoType_ == TopoType::TOPO_TYPE_4P_MESH ||
         topoType_ == TopoType::TOPO_TYPE_2P_MESH || topoType_ == TopoType::TOPO_TYPE_1P_MESH;
@@ -291,7 +316,7 @@ HcclResult AllReduceOperator::SelectAlgfor910B(const OpParam& param, std::string
     }
 
     if (isAivMode) {
-        bool isOpbaseBigCount = isOpbase && (dataSize > AIV_ALL_REDUCE_BIG_SIZE);
+        bool isOpbaseBigCount = isOpbase && (dataSize >= AIV_ALL_REDUCE_BIG_SIZE);
         HCCL_INFO("[SelectAlgfor910B] Select AivMode Alg: DataSize[%llu], RankCountSize[%llu], DeviceNumPerAgg [%u]",
             dataSize, rankCountSize, deviceNumPerAggregation_);
         if (isSupportAivRdmaSmallCount) {
@@ -419,6 +444,25 @@ HcclResult AllReduceOperator::DeterministicSelector(const OpParam& param, std::s
 
 HcclResult AllReduceOperator::SelectAlgfor91093(const OpParam& param, std::string& algName)
 {
+    u32 unitSize = SIZE_TABLE[param.DataDes.dataType];
+    u64 dataSize = param.DataDes.count * unitSize; // 单位：字节
+    u64 dataSizePerRank = dataSize / deviceNumPerAggregation_;
+    bool isOpbase = workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE;
+    bool isAivMode = GetExternalInputHcclAivMode() && IsSupportAIVReduce(param.DataDes.dataType, param.reduceType) &&
+        serverNum_ == 1 && dataSizePerRank <= AIV_ALL_REDUCE_A3_ENTRY_SIZE;
+    if (isAivMode) {
+        HCCL_INFO("[SelectAlgfor91093] dataSize[%llu], dataSizePerRank[%llu], deviceNumPerAggregation[%u]",
+            dataSize, dataSizePerRank, deviceNumPerAggregation_);
+        bool isOpbaseBigCount = isOpbase && (dataSize >= AIV_ALL_REDUCE_BIG_SIZE);
+        if (isOpbaseBigCount) {
+            algName = "AllReduceMeshOpbaseBigCountAivExecutor"; // 单server，单算子AIV模式大数据单独一个Executor
+        } else {
+            algName = "AllReduceMeshAivExecutor"; // 单server，单算子AIV模式小数据 和 图模式AIV 共用一个Executor
+        }
+        HCCL_INFO("[SelectAlgfor91093] all_reduce SelectAlgfor91093 is algName [%s].", algName.c_str());
+        return HCCL_SUCCESS;
+    }
+
     // AHC 算法选择逻辑
     if ((GetLevel1AlgType(algType_) == AlgTypeLevel1::ALG_LEVEL1_AHC) ||
         (GetLevel1AlgType(algType_) == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE)) {
@@ -431,7 +475,7 @@ HcclResult AllReduceOperator::SelectAlgfor91093(const OpParam& param, std::strin
         (param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] > (commInputSize / HCCL_MEMSIZE_HD_FACTOR));
 
     bool smallCountOptimSingleServer =
-        (!param.retryEnable) &&
+        (!retryEnable_) &&
         (serverNum_ == 1) &&
         ((workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) ||
         (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && !param.aicpuUnfoldMode)) &&

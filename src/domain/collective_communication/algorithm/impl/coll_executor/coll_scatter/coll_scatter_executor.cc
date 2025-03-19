@@ -141,6 +141,11 @@ HcclResult CollScatterExecutor::RunLoopInner(OpParam &param, ExecMem &execMem, A
         }
     }
 
+    if (recvSize % HCCL_MIN_SLICE_ALIGN != 0) {
+        // 不支持内存不对齐的轮次
+        DMAReduceFlag_ = false;
+    }
+
     /* 入参的正确性由HCCL确保 */
     HcclResult ret = KernelRun(param, execMem);
 
@@ -152,9 +157,11 @@ HcclResult CollScatterExecutor::RunLoopInner(OpParam &param, ExecMem &execMem, A
         ret);
 
     // 将 CCLOut 上的数据搬运到 userOut
-    srcMem = algRes.cclOutputMem.range(0, recvSize);
-    dstMem = DeviceMem::create(execMem.outputPtr, recvSize);
-    CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dstMem, srcMem, param.stream));
+    if (!DMAReduceFlag_) {
+        srcMem = algRes.cclOutputMem.range(0, recvSize);
+        dstMem = DeviceMem::create(execMem.outputPtr, recvSize);
+        CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dstMem, srcMem, param.stream));
+    }
     return HCCL_SUCCESS;
 }
 
@@ -188,7 +195,7 @@ HcclResult CollScatterExecutor::ReorderSlice(std::vector<Slice> &dataSlice, std:
     return HCCL_SUCCESS;
 }
 
-HcclResult CollScatterExecutor::KernelRunInner(DeviceMem& inputMem, u64 count, HcclDataType dataType,
+HcclResult CollScatterExecutor::KernelRunLevel1(DeviceMem& inputMem, u64 count, HcclDataType dataType,
     u32 &commIndex, u32 root, u32 &subRoot, CommPlane commLevel, Stream& stream)
 {
     CHK_RET(CheckCommSize(commLevel, commIndex + 1));
@@ -197,38 +204,38 @@ HcclResult CollScatterExecutor::KernelRunInner(DeviceMem& inputMem, u64 count, H
     u32 subCommSize = subCommInfo.localRankSize;
 
     if (subCommSize <= 1 || subRoot != topoAttr_.userRank) {
-        HCCL_INFO("[Scatter][KernelRunInner]: no need to run intra-server, subCommSize[%u], subRoot[%u]," \
+        HCCL_INFO("[Scatter][KernelRunLevel1]: no need to run intra-server, subCommSize[%u], subRoot[%u]," \
             "userRank[%u]", subCommSize, subRoot, topoAttr_.userRank);
         return HCCL_SUCCESS;
     }
 
-    HCCL_INFO("[Scatter][KernelRunInner]: start to run intra-server, subCommSize[%u], subRoot[%u]," \
+    HCCL_INFO("[Scatter][KernelRunLevel1]: start to run intra-server, subCommSize[%u], subRoot[%u]," \
         "userRank[%u]", subCommSize, subRoot, topoAttr_.userRank);
 
-    u32 rootRankInner = 0;
-    CHK_RET(GetRankByUserRank(commLevel, commIndex, root, rootRankInner));
+    u32 rootRankLevel1 = 0;
+    CHK_RET(GetRankByUserRank(commLevel, commIndex, root, rootRankLevel1));
 
-    std::unique_ptr<AlgTemplateBase> innerTempAlg;
+    std::unique_ptr<AlgTemplateBase> level1TempAlg;
     if (UseInterServerNBAlgo(algType_)) {
         // server间NB算法走NB
-        innerTempAlg.reset(new (std::nothrow) ScatterNB(dispatcher_));
-        HCCL_INFO("[Scatter][KernelRunInner]: using NB algo inter-server.");
+        level1TempAlg.reset(new (std::nothrow) ScatterNB(dispatcher_));
+        HCCL_INFO("[Scatter][KernelRunLevel1]: using NB algo inter-server.");
     } else if (UseInterServerNHRAlgo(algType_)) {
-        innerTempAlg.reset(new (std::nothrow) ScatterNHR(dispatcher_));
-        HCCL_INFO("[Scatter][KernelRunInner]: using NHR algo inter-server.");
+        level1TempAlg.reset(new (std::nothrow) ScatterNHR(dispatcher_));
+        HCCL_INFO("[Scatter][KernelRunLevel1]: using NHR algo inter-server.");
     } else {
-        innerTempAlg.reset(new (std::nothrow) ScatterRing(dispatcher_));
-        HCCL_INFO("[Scatter][KernelRunInner]: using ring algo inter-server.");
+        level1TempAlg.reset(new (std::nothrow) ScatterRing(dispatcher_));
+        HCCL_INFO("[Scatter][KernelRunLevel1]: using ring algo inter-server.");
     }
 
-    CHK_SMART_PTR_NULL(innerTempAlg);
-    CHK_RET(innerTempAlg->Prepare(inputMem, inputMem, inputMem, count * topoAttr_.userRankSize,
-        dataType, stream, HCCL_REDUCE_RESERVED, rootRankInner, std::vector<Slice>(0))); // count是output的数据个数
-    CHK_RET(innerTempAlg->RegisterProfiler(
+    CHK_SMART_PTR_NULL(level1TempAlg);
+    CHK_RET(level1TempAlg->Prepare(inputMem, inputMem, inputMem, count * topoAttr_.userRankSize,
+        dataType, stream, HCCL_REDUCE_RESERVED, rootRankLevel1, std::vector<Slice>(0))); // count是output的数据个数
+    CHK_RET(level1TempAlg->RegisterProfiler(
         (subCommSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + subCommInfo.localRank,
         PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, stream));
 
-    CHK_RET(RunTemplate(innerTempAlg, subCommInfo));
+    CHK_RET(RunTemplate(level1TempAlg, subCommInfo));
     return HCCL_SUCCESS;
 }
 

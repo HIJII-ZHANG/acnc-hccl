@@ -93,6 +93,7 @@ HcclResult HcclSocketManager::ServerDeInit(const HcclNetDevCtx netDevCtx, u32 po
     auto &serverSocketRef = serverSocketRefMap_[portInfo];
     serverSocketRef.Unref();
 
+    HCCL_INFO("[DeInit][Server]ip[%s] port[%u] serverSocketRef.Count() = %d", localIp.GetReadableAddress(), port, serverSocketRef.Count());
     if (serverSocketRef.Count() == 0) {
         HCCL_INFO("[DeInit][Server]ip[%s] port[%u]", localIp.GetReadableAddress(), port);
         serverSocketMap_[portInfo]->DeInit();

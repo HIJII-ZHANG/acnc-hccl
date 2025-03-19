@@ -56,7 +56,7 @@ HcclResult CollReduceScatterFor310PRingExecutor::CalcLevel0CommInfo(TransportMem
 HcclResult CollReduceScatterFor310PRingExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
 
     bool isInlineReduce = IsSupportSDMAReduce(execMem.inputMem.ptr(), execMem.outputMem.ptr(), param.DataDes.dataType,
         param.reduceType);
@@ -73,10 +73,10 @@ HcclResult CollReduceScatterFor310PRingExecutor::KernelRun(const OpParam &param,
         param.DataDes.dataType, param.stream, param.reduceType));
 
     CHK_RET(tempAlg->RegisterProfiler(
-        (outerCommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + outerCommInfo.localRank,
+        (level0CommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level0CommInfo.localRank,
         PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
-    CHK_RET(RunTemplate(tempAlg, outerCommInfo));
+    CHK_RET(RunTemplate(tempAlg, level0CommInfo));
     return HCCL_SUCCESS;
 }
 

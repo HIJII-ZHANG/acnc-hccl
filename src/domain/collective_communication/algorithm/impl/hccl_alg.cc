@@ -172,6 +172,7 @@ HcclResult HcclAlg::GetIsBridgeVector(std::vector<bool> &isBridgeVector)
     topoInfoEx_->GetIsBridgeVector(isBridgeVector);
     return HCCL_SUCCESS;
 }
+
 HcclResult HcclAlg::GetCommPlaneRanks(std::vector<std::vector<std::vector<u32>>> &commPlaneRanks)
 {
     CHK_RET(topoInfoEx_->GetCommPlaneRanks(commPlaneRanks));
@@ -216,6 +217,8 @@ HcclResult HcclAlg::InitTopoInfo(HcclTopoInfo& topoInfo, HcclTopoAttr &topoAttr)
     topoInfo.meshAggregationRankSize = topoAttr.meshAggregationRankSize;
     topoInfo.multiModuleDiffDeviceNumMode = topoAttr.multiModuleDiffDeviceNumMode;
     topoInfo.multiSuperPodDiffServerNumMode = topoAttr.multiSuperPodDiffServerNumMode;
+    topoInfo.isDiffDeviceType = topoAttr.isDiffDeviceType;
+    topoInfo.gcdDeviceNumPerAggregation = topoAttr.gcdDeviceNumPerAggregation;
     topoInfo.pairLinkCounter = topoAttr.pairLinkCounter;
     topoInfo.isDiffDeviceModule = topoAttr.isDiffDeviceModule;
     topoInfo.realUserRank = topoAttr.realUserRank;
@@ -237,7 +240,7 @@ HcclResult HcclAlg::InitAlgoInfo(HcclAlgoInfo& algoInfo, HcclAlgoAttr &algoAttr)
 {
     algoInfo.identifier = algoAttr.identifier;
     algoInfo.inlineReduceSwitchOn = algoAttr.inlineReduceSwitchOn;
-    algoInfo.isUsedRdmaOuter = algoAttr.isUsedRdmaOuter;
+    algoInfo.isUsedRdmaLevel0 = algoAttr.isUsedRdmaLevel0;
     return HCCL_SUCCESS;
 }
 
@@ -305,7 +308,7 @@ bool HcclAlg::IsExistCommRes(const std::string &tag)
     return pimpl_->IsExistCommRes(tag);
 }
 
-HcclResult HcclAlg::CreateMutiStreamRes(const std::string &tag, Stream &stream, innerStreamInfo_t &streamInfo,
+HcclResult HcclAlg::CreateMutiStreamRes(const std::string &tag, Stream &stream, level1StreamInfo_t &streamInfo,
     AlgType algType, bool isAicpuModeEn)
 {
     return pimpl_->CreateMutiStreamRes(tag, stream, streamInfo, algType, isAicpuModeEn);

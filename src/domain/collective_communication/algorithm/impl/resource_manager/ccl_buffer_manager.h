@@ -20,8 +20,9 @@ enum class MemAttr {
     OUT_CCL_BUFFER = 1
 };
 
-constexpr s64 AIV_FLAG_SIZE = 1024 * 1024; // aiv算子需要的flag区域大小
-constexpr s64 AIV_DATA_SIZE = 33 * 1024 * 1024; // aiv算子需要的data区域大小
+constexpr s64 AIV_FLAG_SIZE = 3 * 1024 * 1024; // aiv算子需要的flag区域大小
+constexpr s64 AIV_DATA_SIZE = 35 * 1024 * 1024; // aiv算子需要的data区域大小
+constexpr u64 EXP_BUFFER_SIZE = 1 * 1024 *1024; // 拓展内存, 供MC2使用
 
 class CCLBufferManager {
 public:
@@ -29,10 +30,13 @@ public:
     ~CCLBufferManager();
     HcclResult CreateCommCCLbuffer();
     HcclResult CreateCommAIVbuffer();
+    HcclResult CreateCommExpBuffer();
     HcclResult ReleaseCommCCLbuffer();
+    HcclResult ReleaseCommExpBuffer();
     HcclResult ReleaseCommAIVbuffer();
     HcclResult InitCCLbuffer(u64 inCCLbufferSize, u64 outCCLbufferSize);
     DeviceMem& GetInCCLbuffer();
+    DeviceMem& GetCommExpBuffer();
     DeviceMem& GetInAIVbuffer();
     HcclResult GetInCCLbuffer(void* &buffer, u64 &size);
     u64 GetInCCLbufferSize();
@@ -40,6 +44,7 @@ public:
     DeviceMem& GetOutAIVbuffer();
     HcclResult GetOutCCLbuffer(void* &buffer, u64 &size);
     u64 GetOutCCLbufferSize();
+    u64 GetExpBufferSize();
     DeviceMem GetCommRegMem(const DeviceMem& mem, MemAttr memAttr, bool aivMode);
     HcclResult InitAlltoAllvParaBuffer(u64 inBufferSize, u64 outBufferSize);
     DeviceMem& GetInAlltoAllvParaBuffer();
@@ -51,8 +56,10 @@ private:
 
     DeviceMem inCCLbuffer_;
     DeviceMem outCCLbuffer_;
+    DeviceMem winExpBuffer_ = DeviceMem();
     u64 inCCLbufferSize_;
     u64 outCCLbufferSize_;
+    u64 winExpBufferSize_;
     DeviceMem inAlltoAllvParaBuffer_;
     DeviceMem outAlltoAllvParaBuffer_;
     DeviceMem inAIVbuffer_ = DeviceMem();

@@ -46,8 +46,8 @@ private:
     u64 level1SliceOffset_ = 0;
     u64 serverSliceOffset_ = 0;
     u32 subUserRankRootSupperPod_ = 0;
-    SubCommInfo innerCommInfo_;
-    SubCommInfo outerCommInfo_;
+    SubCommInfo level0CommInfo_;  
+    SubCommInfo level1CommInfo_;
     SubCommInfo level2CommInfo_;
 };
 

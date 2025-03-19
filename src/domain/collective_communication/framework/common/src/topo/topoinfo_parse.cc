@@ -59,15 +59,22 @@ HcclResult TopoInfoParse::Init(const RankTable_t &rankTable, const std::string &
     deviceNumPerServer_ = deviceNumPerServer;
     multiServerDiffDeviceNumMode_ = (serverNum_ * deviceNumPerServer_) == deviceNum_ ? false : true;
     CHK_RET(hrtGetDeviceType(deviceType_));
+
+    DevType curDevType = rankTable.rankList.begin()->deviceInfo.deviceType;
     for (auto rankInfo : rankTable.rankList) {
         RankInfo curRankInfo;
         curRankInfo.devicePhyId = rankInfo.deviceInfo.devicePhyId;
+        curRankInfo.deviceType = rankInfo.deviceInfo.deviceType;
         curRankInfo.serverId = rankInfo.serverId;
         curRankInfo.userRank = rankInfo.rankId;
         curRankInfo.nicIp = rankInfo.deviceInfo.deviceIp;
         curRankInfo.superDeviceId = rankInfo.superDeviceId;
         curRankInfo.superPodId = rankInfo.superPodId;
         rankList_.push_back(curRankInfo);
+
+        if (curDevType != rankInfo.deviceInfo.deviceType) {
+            isDiffDeviceType_ = true;
+        }
     }
     return HCCL_SUCCESS;
 }
@@ -195,7 +202,10 @@ HcclResult TopoInfoParse::CheckInterServerDeviceId()
 
 HcclResult TopoInfoParse::CheckAndAssignNicInfo(std::vector<u32> &nicIdx)
 {
-    if (serverNum_ == 1 || superPodNum_ == 1) {
+    if (isDiffDeviceType_) {
+        // 混合组网
+        return HCCL_SUCCESS;
+    } else if (serverNum_ == 1 || superPodNum_ == 1) {
         nicIdx.clear();
         for (u32 index = 0; index < rankList_.size(); index++) {
             if (serverId_ == rankList_[index].serverId && (rankList_[index].devicePhyId != HOST_DEVICE_ID)) {

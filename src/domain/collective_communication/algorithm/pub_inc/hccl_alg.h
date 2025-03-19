@@ -61,11 +61,11 @@ public:
     HcclResult GetAllReduceScratchSize(const u32 count, const HcclDataType dataType, u64 &scratchSize);
     HcclResult ClearOpResource(const std::string &tag);
     bool IsExistCommRes(const std::string &tag);
-    HcclResult CreateMutiStreamRes(const std::string &tag, Stream &stream, innerStreamInfo_t &streamInfo,
+    HcclResult CreateMutiStreamRes(const std::string &tag, Stream &stream, level1StreamInfo_t &streamInfo,
         AlgType algType, bool isAicpuModeEn = false);
-    HcclResult CreateComm(const std::string &tag, DeviceMem &inputMem, DeviceMem &outputMem, AlgType algType,
-        std::unique_ptr<CommInfo> &commInfo, u32 root = INVALID_VALUE_RANKID, bool isP2p = false,
-        bool isAicpuModeEn = false);
+    HcclResult CreateComm(const std::string &tag, DeviceMem &inputMem, DeviceMem &outputMem, 
+        AlgType algType, std::unique_ptr<CommInfo> &commInfo, u32 root = INVALID_VALUE_RANKID, 
+        bool isP2p = false, bool isAicpuModeEn = false);
     HcclResult CreateComm(const std::string &tag, DeviceMem &inputMem, DeviceMem &outputMem, AlgType algType,
         u32 root = INVALID_VALUE_RANKID, bool isP2p = false);
     HcclResult CreateP2PCommQuerry(const std::string &tag, u32& status);

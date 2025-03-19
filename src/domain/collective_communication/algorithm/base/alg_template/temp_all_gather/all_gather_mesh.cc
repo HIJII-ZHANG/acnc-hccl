@@ -192,8 +192,8 @@ HcclResult AllGatherMesh::RunAsync(const u32 rank, const u32 rankSize, const std
 
             inputSlices[i].size = sliceSize;
             inputSlices[i].offset = (inputMem_.size() < outputMem_.size()) ? 0 : (sliceSize * i);
-            HCCL_DEBUG("rank[%u], slices[%u].offset=%llu, slices[%u].size=%llu", rank, i, slices_[i].offset, i,
-                slices_[i].size);
+            HCCL_DEBUG("rank[%u], slices[%u].offset=%llu, slices[%u].size=%llu", 
+                rank, i, slices_[i].offset, i, slices_[i].size);
         }
     }
 

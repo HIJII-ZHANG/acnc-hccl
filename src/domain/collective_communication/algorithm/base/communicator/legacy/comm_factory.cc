@@ -23,7 +23,7 @@ CommFactory::CommFactory(const std::string &identifier, const u32 userRank, cons
     const HcclDispatcher dispatcher, const std::unique_ptr<NotifyPool> &notifyPool,
     std::map<HcclIpAddress, HcclNetDevCtx> &netDevCtxMap,
     std::shared_ptr<TopoInfoExtractor> topoInfoEx,
-    const bool isUsedRdmaOuter, const TopoType topoFlag, const DevType deviceType,
+    const bool isUsedRdmaLevel0, const TopoType topoFlag, const DevType deviceType,
     const std::vector<RankInfo> rankVector, const NICDeployment nicDeploymentInner, bool isHeterogComm,
     const void *transportResourceInfoAddr, size_t transportResourceInfoSize,
     u32 meshAggregationRankSize, bool isHaveCpuRank, bool isUsedInterHccsMode, bool useSuperPodMode)
@@ -36,7 +36,7 @@ CommFactory::CommFactory(const std::string &identifier, const u32 userRank, cons
       notifyPool_(notifyPool),
       netDevCtxMap_(netDevCtxMap),
       topoInfoEx_(topoInfoEx),
-      isUsedRdmaOuter_(isUsedRdmaOuter),
+      isUsedRdmaLevel0_(isUsedRdmaLevel0),
       rankVector_(rankVector),
       nicDeployInner_(nicDeploymentInner),
       isHeterogComm_(isHeterogComm),
@@ -153,7 +153,7 @@ HcclResult CommFactory::CheckCommPara(const std::string &tag, const DeviceMem &i
 }
 
 HcclResult CommFactory::CreateCommPlane(const std::string &tag, const DeviceMem &inputMem, const DeviceMem &outputMem,
-    const CommParaInfo &commParaInfo, std::vector<std::unique_ptr<CommBase> > &commVec)
+    const CommParaInfo &commParaInfo, std::vector<std::unique_ptr<CommBase> > &commVec, DeviceMem expMem)
 {
     HcclUs startut = TIME_NOW();
     HcclResult ret = HCCL_SUCCESS;
@@ -222,10 +222,10 @@ HcclResult CommFactory::CreateCommPlane(const std::string &tag, const DeviceMem 
                 // 910B非确定性计算场景，server内MESH组网只需要创建一个commbase平面
                 std::vector<std::vector<RankInfo> > commPlaneVec;
                 commPlaneVec.push_back(CommPlaneVector_[commParaInfo.commPlane][0]);
-                ret = CreateCommMesh(tag, inputMem, outputMem, commParaInfo, commPlaneVec, isUsedRdma, commVec);
+                ret = CreateCommMesh(tag, inputMem, outputMem, commParaInfo, commPlaneVec, isUsedRdma, commVec, expMem);
             } else {
                 ret = CreateCommMesh(tag, inputMem, outputMem, commParaInfo,  CommPlaneVector_[commParaInfo.commPlane],
-                    isUsedRdma, commVec);
+                    isUsedRdma, commVec, expMem);
             }
             break;
         }
@@ -287,10 +287,10 @@ HcclResult CommFactory::GetIsUsedRdma(const CommParaInfo &commParaInfo, bool &is
     }
     // 使能RDMA的场景: 1.跨超节点  2.跨server且不使能HCCS  3.PCIE连接且使能RDMA开关
     isUsedRdma = (isInterSuperPod) ||
-                 (isInterServer && !isUsedInterHccsMode_) || (isConnectedWithPcie && isUsedRdmaOuter_);
+                 (isInterServer && !isUsedInterHccsMode_) || (isConnectedWithPcie && isUsedRdmaLevel0_);
     HCCL_INFO("[GetIsUsedRdma]isUsedRdma[%d], isInterSuperPod[%d], isInterServer[%d], isUsedInterHccsMode_[%d], "\
-        "isConnectedWithPcie[%d], isUsedRdmaOuter_[%d]", isUsedRdma, isInterSuperPod, isInterServer,
-        isUsedInterHccsMode_, isConnectedWithPcie, isUsedRdmaOuter_);
+        "isConnectedWithPcie[%d], isUsedRdmaLevel0_[%d]", isUsedRdma, isInterSuperPod, isInterServer,
+        isUsedInterHccsMode_, isConnectedWithPcie, isUsedRdmaLevel0_);
     return HCCL_SUCCESS;
 }
 
@@ -416,7 +416,7 @@ HcclResult CommFactory::CreateCommStar(const std::string &tag, const DeviceMem &
         commVec[ringIndex].reset(new (std::nothrow) CommStar(identifier_, userRank_, userRankSize_, userRank_,
             commPlaneVec[ringIndex].size(), topoFlag_, dispatcher_, notifyPool_, netDevCtxMap_, exchangerNetwork,
             commPlaneVec[ringIndex], inputMem, outputMem, isUsedRdma, transportResourceInfoAddr_,
-            transportResourceInfoSize_, tag, nicDeployInner_, commParaInfo.root));
+            transportResourceInfoSize_, tag, nicDeployInner_, commParaInfo.root, isHaveCpuRank_));
 
         CHK_PRT_RET(!commVec[ringIndex], HCCL_ERROR("[create][CommStar]comm array[%u] reset failed",
             ringIndex), HCCL_E_PARA);
@@ -571,7 +571,7 @@ HcclResult CommFactory::CreateCommNB(const std::string &tag, const DeviceMem &in
 
 HcclResult CommFactory::CreateCommMesh(const std::string &tag, const DeviceMem &inputMem, const DeviceMem &outputMem,
     const CommParaInfo &commParaInfo, const std::vector<std::vector<RankInfo> > &commPlaneVec, bool isUsedRdma,
-    std::vector<std::unique_ptr<CommBase> > &commVec)
+    std::vector<std::unique_ptr<CommBase> > &commVec, DeviceMem &expMem)
 {
     u32 ringSize = commPlaneVec.size();
     commVec.resize(ringSize);
@@ -590,7 +590,7 @@ HcclResult CommFactory::CreateCommMesh(const std::string &tag, const DeviceMem &
             rank, commPlaneVec[ringIndex].size(), topoFlag_, dispatcher_, notifyPool_, netDevCtxMap_, exchangerNetwork,
             commPlaneVec[ringIndex], inputMem, outputMem, isUsedRdma, transportResourceInfoAddr_,
             transportResourceInfoSize_, tag, false, nicDeployInner_, false, commParaInfo.isAicpuModeEn,
-            isHaveCpuRank_, useSuperPodMode_));
+            isHaveCpuRank_, useSuperPodMode_, expMem));
 
         CHK_PRT_RET(!commVec[ringIndex], HCCL_ERROR("[Create][CommMesh]comm array[%u] reset failed",
             ringIndex), HCCL_E_PARA);
@@ -707,11 +707,11 @@ std::vector<std::unique_ptr<CommBase> > CommFactory::CreateCommP2PAsync(const st
 
         IntraExchanger exchangerNetwork {};
         HCCL_INFO("[CreateCommP2PAsync] CommP2P is used %s. userRank = %u, rank = %u",
-            isUsedRdmaOuter_ ? "rdma" : "sdma", userRank_, rank);
+            isUsedRdmaLevel0_ ? "rdma" : "sdma", userRank_, rank);
         commP2PArray[ringIndex].reset(new (std::nothrow) CommP2P(identifier_, userRank_, userRankSize_,
             rank, CommPlaneVector_[COMM_COMBINE][ringIndex].size(), TopoType::TOPO_TYPE_COMMON, dispatcher_,
             notifyPool_, netDevCtxMap_, exchangerNetwork, CommPlaneVector_[COMM_COMBINE][ringIndex], inputMem,
-            outputMem, isUsedRdmaOuter_, transportResourceInfoAddr_, transportResourceInfoSize_, tag, dstUserRank,
+            outputMem, isUsedRdmaLevel0_, transportResourceInfoAddr_, transportResourceInfoSize_, tag, dstUserRank,
             nicDeployInner_));
 
         CHK_PRT_RET(!commP2PArray[ringIndex], HCCL_ERROR("[Create][CommP2P]comm p2p array[%u] reset failed.",
@@ -810,7 +810,7 @@ u32 CommFactory::GetSubRootUserRankWithSuperPod(const u32 userRank, const u32 ro
 
 u32 CommFactory::GetSubRootForScatter(const u32 root)
 {
-    // 通过root找到ringIndex, 通过userRank找到Inner中的rank
+    // 通过root找到ringIndex, 通过userRank找到level1中的rank
     u32 subRoot = INVALID_VALUE_RANKID;
     u32 planeIdx = INVALID_VALUE_RANKID;
     u32 ringSize = CommPlaneVector_[COMM_LEVEL1].size();
@@ -821,7 +821,7 @@ u32 CommFactory::GetSubRootForScatter(const u32 root)
     u32 rank = INVALID_VALUE_RANKID;
     for (u32 ringIndex = 0; ringIndex < ringSize; ringIndex++) {
         if (isBridgeVector_[ringIndex]) {
-            rank = GetSubCollectiveRank(CommPlaneVector_[COMM_LEVEL1][ringIndex]);       // 确定userRank在Inner中的rank号
+            rank = GetSubCollectiveRank(CommPlaneVector_[COMM_LEVEL1][ringIndex]);       // 确定userRank在level1中的rank号
         }
         for (u32 idx = 0; idx < CommPlaneVector_[COMM_LEVEL1][ringIndex].size(); idx++) {
             if (root == CommPlaneVector_[COMM_LEVEL1][ringIndex][idx].userRank) {       // 获取root所在的平面
@@ -830,7 +830,7 @@ u32 CommFactory::GetSubRootForScatter(const u32 root)
         }
     }
     CHK_PRT_RET(rank == INVALID_VALUE_RANKID,
-        HCCL_ERROR("[GET][GetSubRootForScatter]get rankId in inner failed."), HCCL_E_PARA);
+        HCCL_ERROR("[GET][GetSubRootForScatter]get rankId in level1 failed."), HCCL_E_PARA);
     CHK_PRT_RET(planeIdx == INVALID_VALUE_RANKID,
         HCCL_ERROR("[GET][GetSubRootForScatter]get root[%u] planeIdx[%u] failed.", root, planeIdx), HCCL_E_PARA);
     subRoot = CommPlaneVector_[COMM_LEVEL1][planeIdx][rank].userRank;
@@ -853,7 +853,7 @@ const u32 CommFactory::GetSubCollectiveRank(const std::vector<RankInfo> &vecPara
     return tmpRank;
 }
 
-u32 CommFactory::GetInnerCommRank(const u32 ringIdx)
+u32 CommFactory::GetLevel1CommRank(const u32 ringIdx)
 {
     return GetSubCollectiveRank(CommPlaneVector_[COMM_LEVEL1][ringIdx]);
 }

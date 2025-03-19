@@ -60,4 +60,10 @@ HcclResult CollExecutorBase::GetPairWiseList(std::vector<std::vector<HcclSendRec
 {
     return HCCL_SUCCESS;
 }
+
+HcclResult CollExecutorBase::SetAlgOpContext(AlgOpContext algOpContext)
+{
+    algOpContext_ = algOpContext;
+    return HCCL_SUCCESS;
+}
 }

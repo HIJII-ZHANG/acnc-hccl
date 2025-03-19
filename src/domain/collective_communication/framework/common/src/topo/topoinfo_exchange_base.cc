@@ -124,6 +124,7 @@ HcclResult TopoInfoExchangeBase::Json2Struct(const nlohmann::json& jClusterJson,
         rankInfo.serverId = rankInfoJson[PROP_SERVER_ID];
         CHK_RET(rankInfo.hostIp.SetReadableAddress(rankInfoJson[PROP_HOST_IP]));
         rankInfo.deviceInfo.devicePhyId = rankInfoJson[PROP_DEV_INFO][PROP_DEV_ID];
+        rankInfo.deviceInfo.deviceType = rankInfoJson[PROP_DEV_INFO][PROP_DEV_TYPE];
         for (auto& devIp : rankInfoJson[PROP_DEV_INFO][PROP_DEV_IP]) {
             std::string ipStr = devIp;
             rankInfo.deviceInfo.deviceIp.emplace_back(ipStr);
@@ -211,6 +212,7 @@ HcclResult TopoInfoExchangeBase::TransformRankListToJson(const RankTable_t &clus
         }
         nlohmann::json devInfoJson;
         devInfoJson[PROP_DEV_ID] = rankInfo.deviceInfo.devicePhyId;
+        devInfoJson[PROP_DEV_TYPE] = rankInfo.deviceInfo.deviceType;
         devInfoJson[PROP_DEV_IP] = deviceIp;
         devInfoJson[PROP_BACKUP_DEV_IP] = backupDeviceIp;
         nlohmann::json rankJson;

@@ -473,6 +473,9 @@ HcclResult TopoinfoRanktableConcise::GetSingleBackupDeviceIp(const nlohmann::jso
         rankinfo.deviceInfo.backupDeviceIp.push_back(invalidAddr);
         HCCL_WARNING("[Get][SingleDeviceIp]'backup_device_ip' in ranktable is not set!");
         return HCCL_SUCCESS;
+    } else if (ret == HCCL_E_PARA) {
+        HCCL_ERROR("[Get][SingleDeviceIp]Get json array member property error");
+        return HCCL_E_PARA;
     }
     HCCL_DEBUG("[%s.json] -> backup_device_ip: [%s]", fileName_.c_str(), backupDeviceIp.c_str());
 
@@ -491,7 +494,7 @@ HcclResult TopoinfoRanktableConcise::GetSingleBackupDeviceIp(const nlohmann::jso
             CHK_RET(ConvertIpAddress(strBackupDeviceIp[index], ipAddr));
             rankinfo.deviceInfo.backupDeviceIp.push_back(ipAddr);
         }
-        HCCL_INFO("[TopoinfoRanktableConcise][GetSingleBackupDeviceIp]devicePhyId[%u], backupDeviceIp[0]:[%s]",
+        HCCL_INFO("[TopoinfoRanktableConcise][GetSingleBackupDeviceIp]devicePhyId[%u], backupDeviceIp[0]:[%s].",
             rankinfo.deviceInfo.devicePhyId, rankinfo.deviceInfo.backupDeviceIp[0].GetReadableIP());
     } else {
         HcclIpAddress invalidAddr;
@@ -516,7 +519,7 @@ HcclResult TopoinfoRanktableConcise::VerifyBackupDeviceIp(RankInfo_t &rankInfo, 
         string backupDevIpStr = backupDevIp.GetReadableIP();
         if (devIp2PhyIdMap_.find(backupDevIpStr) == devIp2PhyIdMap_.end()) {
             HCCL_RUN_WARNING("[Verify][BackupDeviceIp]"
-                "backup devIp[%s] for devicePhyId[%d] is not in this comm. "
+                "Backup devIp[%s] for devicePhyId[%d] is not in this comm. "
                 "The validation of this backup ip could not be verified! "
                 "Please notice it might be an invalid backup ip!",
                 backupDevIpStr.c_str(), devIndex);
