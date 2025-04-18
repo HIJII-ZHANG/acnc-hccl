@@ -122,8 +122,9 @@ HcclResult CollBroadcastRingExecutor::KernelRun(const OpParam &param, ExecMem &e
         CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
         SubCommInfo level1CommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
         u64 curSize = execMem.count * SIZE_TABLE[param.DataDes.dataType];
+        bool isUsedRegister = false;
         std::unique_ptr<AlgTemplateBase> level1TempAlg;
-        if (UseInterServerNHRAlgo(algType_)) {
+        if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
             HCCL_DEBUG("broadcast ring: curSize[%llu] deviceNumPerAggregation[%u] commLevel0Size[%u]",
                 curSize, topoAttr_.deviceNumPerAggregation, level0CommInfo.localRankSize);
             if (curSize / topoAttr_.deviceNumPerAggregation <= NHR_BCAST_SMALL_SIZE) {
@@ -132,10 +133,12 @@ HcclResult CollBroadcastRingExecutor::KernelRun(const OpParam &param, ExecMem &e
                 level1TempAlg.reset(new (std::nothrow) BroadcastNHR(dispatcher_));
             }
             HCCL_INFO("broadcast ring: using nhr algo inter-server.");
-        } else if (UseInterServerNHRV1Algo(algType_)) {
-            level1TempAlg.reset(new (std::nothrow) BroadcastNHRV1(dispatcher_));
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
+            isUsedRegister = true;
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_BROADCAST_NHR_V1,
+                dispatcher_);
             HCCL_INFO("broadcast ring: using nhr_v1 algo inter-server.");
-        } else if (UseInterServerNBAlgo(algType_)) {
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
             const u32 level1RankSize = level1CommInfo.localRankSize;
             if (ShouldUseBinaryBroadcastOfNB(curSize / topoAttr_.deviceNumPerAggregation, level1RankSize,
                                              topoAttr_.userRankSize, topoAttr_.deviceNumPerAggregation)) {
@@ -160,8 +163,22 @@ HcclResult CollBroadcastRingExecutor::KernelRun(const OpParam &param, ExecMem &e
         CHK_RET(GetRankByUserRank(COMM_LEVEL1, commIndex, subUserrankRoot, planeRoot));
 
         // 节点间的hd 使用环0来记录
-        CHK_RET(level1TempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.outputMem, hdCount, param.DataDes.dataType,
+        if (isUsedRegister) {
+            PrepareData prepareData;
+            prepareData.inputMem = execMem.inputMem;
+            prepareData.outputMem = execMem.inputMem;
+            prepareData.scratchMem = execMem.outputMem;
+            prepareData.count = hdCount;
+            prepareData.dataType = param.DataDes.dataType;
+            prepareData.stream = param.stream;
+            prepareData.reductionOp = HCCL_REDUCE_RESERVED;
+            prepareData.root = planeRoot;
+            prepareData.baseOffset = dataSegsSlice[segmentIdx].offset;
+            CHK_RET(level1TempAlg->Prepare(prepareData));
+        } else {
+            CHK_RET(level1TempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.outputMem, hdCount, param.DataDes.dataType,
                 param.stream, HCCL_REDUCE_RESERVED, planeRoot, std::vector<Slice>(0), dataSegsSlice[segmentIdx].offset));
+        }
 
         CHK_RET(level1TempAlg->RegisterProfiler((level1RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1LocalRank, \
             PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));

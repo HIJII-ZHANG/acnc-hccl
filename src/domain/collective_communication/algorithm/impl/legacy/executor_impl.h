@@ -37,6 +37,7 @@
 #include "reduce_scatter_ring_pub.h"
 #include "reduce_scatter_ring_concurrent_direct_pub.h"
 #include "all_gather_ring_concurrent_direct_pub.h"
+#include "all_gather_ring_direct_pub.h"
 #include "scatter_ring_concurrent_direct_pub.h"
 #include "scatter_ring_direct_pub.h"
 #include "scatter_double_ring_direct_pub.h"

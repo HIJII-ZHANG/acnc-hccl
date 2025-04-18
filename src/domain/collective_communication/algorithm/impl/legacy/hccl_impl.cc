@@ -15,7 +15,6 @@
 #include "device_capacity.h"
 #include "stream_active_manager.h"
 #include "profiling_manager_pub.h"
-#include "heartbeat_pub.h"
 #include "hccl_alg.h"
 #include "hccl_impl.h"
 #include "coll_alg_utils.h"
@@ -28,6 +27,9 @@ namespace hccl {
 std::array<DeviceMem, MAX_MODULE_DEVICE_NUM> hcclImpl::inOutPutTempMem_;
 std::array<std::mutex, MAX_MODULE_DEVICE_NUM> hcclImpl::inOutPutTempMemMutex_;
 std::array<Referenced, MAX_MODULE_DEVICE_NUM> hcclImpl::instanceRef_;
+RegisterToHeartBeatCallBack g_RegisterToHeartBeatCallBack = nullptr;
+UnRegisterToHeartBeatCallBack g_UnRegisterToHeartBeatCallBack = nullptr;
+SetRankPortInfoCallBack g_SetRankPortInfoCallBack = nullptr;
 
 hcclImpl::hcclImpl(const HcclDispatcher dispatcher,
     const std::unique_ptr<NotifyPool> &notifyPool, std::map<HcclIpAddress, HcclNetDevCtx> &netDevCtxMap,
@@ -144,7 +146,6 @@ void hcclImpl::SetTopoAttr(HcclTopoAttr &topoAttr)
     realUserRank_ = topoAttr.realUserRank;
     userRankSize_ = topoAttr.userRankSize;
     rankInfoList_ = topoAttr.rankInfoList;
-    hbRankInfoList_ = topoAttr.hbRankInfoList;
 
     devicePhyId_ = topoAttr.devicePhyId;
     deviceLogicId_ = topoAttr.deviceLogicId;
@@ -157,6 +158,8 @@ void hcclImpl::SetTopoAttr(HcclTopoAttr &topoAttr)
     pairLinkCounter_ = topoAttr.pairLinkCounter;
     pairLinkInfo_ = topoAttr.pairLinkInfo;
     isSupportRdmaLite_ = topoAttr.isSupportRdmaLite;
+    localNicPort_ = topoAttr.localNicPort;
+    isNeedInitNic_ = topoAttr.isNeedInitNic;
     return;
 }
 
@@ -384,89 +387,36 @@ HcclResult hcclImpl::InitMultiStreamResource(const std::string &tag, level1Strea
     bool isAicpuModeEn, bool isBatchSendRecv, u32 ringNum)
 {
     if (!isBatchSendRecv) {
-        switch (algType) {
-            case AlgType::ALG_NP_SINGLE_RING_PLUS_RING:
-            case AlgType::ALG_NP_SINGLE_RING_PLUS_HD:
-            case AlgType::ALG_NP_SINGLE_RING_PLUS_NHR:
-                if (deviceType_ == DevType::DEV_TYPE_910_93) {
-                    if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-                        streamInfo.ringNum
-                            = LEVEL0_PLANE_NUM_IN_NPRING_SINGLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
-                    } else {
-                        streamInfo.ringNum
-                            = LEVEL0_PLANE_NUM_IN_NPRING_SINGLE;
-                    }
-                }
-                break;
-            case AlgType::ALG_DOUBLE_RING_PLUS_RING:
-            case AlgType::ALG_DOUBLE_RING_PLUS_HD:
-            case AlgType::ALG_DOUBLE_RING_PLUS_NHR:
-            case AlgType::ALG_DOUBLE_RING_PLUS_AHC:
-            case AlgType::ALG_DOUBLE_RING_PLUS_AHC_BROKE:
-                // 当前这两种AlgType只支持910_93场景
+        if (algType.algoLevel0 == AlgTypeLevel0::ALG_LEVEL0_NP_SINGLE_RING) {
+            if (deviceType_ == DevType::DEV_TYPE_910_93) {
                 if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-                    streamInfo.ringNum = LEVEL0_PLANE_NUM_IN_NPRING_DOUBLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
+                    streamInfo.ringNum = LEVEL0_PLANE_NUM_IN_NPRING_SINGLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
                 } else {
-                    streamInfo.ringNum
-                        = LEVEL0_PLANE_NUM_IN_NPRING_DOUBLE;
+                    streamInfo.ringNum = LEVEL0_PLANE_NUM_IN_NPRING_SINGLE;
                 }
-                break;
-            case AlgType::ALG_8P_RING_PLUS_HD:
-            case AlgType::ALG_8P_RING_PLUS_RING:
-            case AlgType::ALG_8P_RING_PLUS_NHR:
-            case AlgType::ALG_8P_RING_PLUS_NHR_V1:
-            case AlgType::ALG_8P_RING_PLUS_AHC:
-            case AlgType::ALG_8P_RING_PLUS_AHC_BROKE:
-            case AlgType::ALG_8P_RING_PLUS_NB:
-            case AlgType::ALG_8P_RING_PLUS_PIPELINE:
-                streamInfo.ringNum = LEVEL0_PLANE_NUM_IN_8PRING;
-                break;
-            case AlgType::ALG_NP_MESH_PLUS_RING:
-            case AlgType::ALG_NP_MESH_PLUS_HD:
-            case AlgType::ALG_NP_MESH_PLUS_NHR:
-            case AlgType::ALG_NP_MESH_PLUS_NHR_V1:
-            case AlgType::ALG_NP_MESH_PLUS_AHC:
-            case AlgType::ALG_NP_MESH_PLUS_AHC_BROKE:
-            case AlgType::ALG_NP_MESH_PLUS_NB:
-            case AlgType::ALG_2P_MESH_PLUS_RING:
-            case AlgType::ALG_2P_MESH_PLUS_HD:
-            case AlgType::ALG_2P_MESH_PLUS_NHR:
-            case AlgType::ALG_2P_MESH_PLUS_NHR_V1:
-            case AlgType::ALG_2P_MESH_PLUS_AHC:
-            case AlgType::ALG_2P_MESH_PLUS_AHC_BROKE:
-            case AlgType::ALG_2P_MESH_PLUS_NB:
-            case AlgType::ALG_WHOLE_RING_PLUS_PIPELINE:
-            case AlgType::ALG_4P_MESH_PLUS_PIPELINE:
-            case AlgType::ALG_2P_MESH_PLUS_PIPELINE:
-            case AlgType::ALG_1P_MESH_PLUS_PIPELINE:
-            case AlgType::ALG_4P_RING_PLUS_PIPELINE:
-            case AlgType::ALG_NP_SINGLE_RING_PLUS_PIPELINE:
-            case AlgType::ALG_NP_DOUBLE_RING_PLUS_PIPELINE:
-            case AlgType::ALG_NP_MESH_PLUS_PIPELINE:
-            case AlgType::ALG_NP_STAR_PLUS_PIPELINE:
-                if ((GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) &&
-                    (deviceType_ == DevType::DEV_TYPE_910B) && isSingleMeshAggregation_) {
-                    streamInfo.ringNum = deviceNumPerAggregation_;
-                } else if ((deviceType_ == DevType::DEV_TYPE_910_93) && (isAicpuModeEn == true)) {
-                    streamInfo.ringNum = deviceNumPerAggregation_;
-                } else if ((GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) &&
-                    (deviceType_ == DevType::DEV_TYPE_910B) && UseInterServerPipelineAlgo(algType)) {
-                    streamInfo.ringNum = deviceNumPerAggregation_ + 1; /* pipeline ring场景下性能优化 */
-                } else {
-                    streamInfo.ringNum = deviceNumPerAggregation_ - 1;
-                }
-                break;
-            case AlgType::ALG_4P_MESH_PLUS_HD:
-            case AlgType::ALG_4P_MESH_PLUS_RING:
-            case AlgType::ALG_4P_MESH_PLUS_NHR:
-            case AlgType::ALG_4P_MESH_PLUS_NHR_V1:
-            case AlgType::ALG_4P_MESH_PLUS_AHC:
-            case AlgType::ALG_4P_MESH_PLUS_AHC_BROKE:
-            case AlgType::ALG_4P_MESH_PLUS_NB:
-                streamInfo.ringNum = LEVEL0_PLANE_NUM_IN_4PMESH;
-                break;
-            default:
-                break;
+            }
+        } else if (algType.algoLevel0 == AlgTypeLevel0::ALG_LEVEL0_NP_DOUBLE_RING) {
+            if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
+                streamInfo.ringNum = LEVEL0_PLANE_NUM_IN_NPRING_DOUBLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
+            } else {
+                streamInfo.ringNum = LEVEL0_PLANE_NUM_IN_NPRING_DOUBLE;
+            }
+        } else if (algType.algoLevel0 == AlgTypeLevel0::ALG_LEVEL0_8P_RING) {
+            streamInfo.ringNum = LEVEL0_PLANE_NUM_IN_8PRING;
+        } else if (algType.algoLevel0 == AlgTypeLevel0::ALG_LEVEL0_NP_MESH) {
+            if ((GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) &&
+                (deviceType_ == DevType::DEV_TYPE_910B) && isSingleMeshAggregation_) {
+                streamInfo.ringNum = deviceNumPerAggregation_;
+            } else if ((deviceType_ == DevType::DEV_TYPE_910_93) && (isAicpuModeEn == true)) {
+                streamInfo.ringNum = deviceNumPerAggregation_;
+            } else if ((GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) &&
+                (deviceType_ == DevType::DEV_TYPE_910B) && algType.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_PIPELINE) {
+                streamInfo.ringNum = deviceNumPerAggregation_ + 1; /* pipeline ring场景下性能优化 */
+            } else {
+                streamInfo.ringNum = deviceNumPerAggregation_ - 1;
+            }
+        } else if (algType.algoLevel0 == AlgTypeLevel0::ALG_LEVEL0_4P_MESH) {
+            streamInfo.ringNum = LEVEL0_PLANE_NUM_IN_4PMESH;
         }
     } else {
         // 批量send/recv需要2条流
@@ -477,7 +427,7 @@ HcclResult hcclImpl::InitMultiStreamResource(const std::string &tag, level1Strea
         streamInfo.ringNum++; // 流水并行算法, Server间需要额外一条从流
     }
     streamInfo.ringNum = std::max(streamInfo.ringNum, ringNum);
-    HCCL_INFO("algType:[%u] InitMultiStreamResource streamInfo.ringNum %u", algType, streamInfo.ringNum);
+    HCCL_INFO("algType:[%u] InitMultiStreamResource streamInfo.ringNum %u", algType.algoLevel0, streamInfo.ringNum);
     if (streamInfo.ringNum > 1) {
         u32 resNum = streamInfo.ringNum - 1;
         streamInfo.ringStreams.resize(resNum);    // 只有主环以外会用,减去主环1
@@ -578,18 +528,19 @@ HcclResult hcclImpl::PrepareCommRes(const std::string &tag, DeviceMem &inputMem,
 
         if (!isHaveCpuRank) {
             // send recv 算子不申请从流
-            if (algType != AlgType::ALG_RESERVED && !Is310P3Common(isHaveCpuRank_, deviceType_)) {
+
+            if (algType.algoLevel1 != AlgTypeLevel1::ALG_LEVEL1_RESERVED && !Is310P3Common(isHaveCpuRank_, deviceType_)) {
                 ret = CreateMutiStreamRes(tag, stream, algType);
                 CHK_PRT_BREAK(ret != HCCL_SUCCESS,
                     HCCL_ERROR("[HcclImpl][PrepareCommRes]errNo[0x%016llx] tag[%s], init stream resource failed",
                     HCCL_ERROR_CODE(ret), tag.c_str()),);
             }
             if (isUseRankPort_) {
-                HeartbeatPub::SetRankPortInfo(deviceLogicId_, isUseRankPort_, ranksPort_);
+                SetRankPortInfo(deviceLogicId_, isUseRankPort_, ranksPort_);
             }
             if (isBatchSendRecv) {
                 HCCL_INFO("[HcclImpl][PrepareCommRes] BatchSendRecv skip RegisterToHeartBeat.");
-            } else if (algType != AlgType::ALG_RESERVED) {
+            } else if (algType.algoLevel0 != AlgTypeLevel0::ALG_LEVEL0_RESERVED && algType.algoLevel1 != AlgTypeLevel1::ALG_LEVEL1_RESERVED) {
                 ret = RegisterToHeartBeat();
             } else {
                 ret = RegisterToHeartBeat(root, tag);
@@ -647,8 +598,13 @@ HcclResult hcclImpl::CreateComm(const std::string &tag, DeviceMem &inputMem, Dev
         commCombinePara.isAicpuModeEn = isAicpuModeEn;
         CHK_RET(commFactory_->CreateCommPlane(tag, inputMemComm, outputMemComm, commCombinePara, commInfo->commLevel0));
     } else {
+        bool isA2MC2MultiServer = false;
+        const std::string &suffix = HCCL_MC2_MULTISERVER_SUFFIX;
+        if (tag.size() > suffix.size() && tag.compare(tag.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            isA2MC2MultiServer = true;
+        }
         CHK_RET(CreateCommByAlg(tag, algType, *commInfo, inputMemComm, outputMemComm, expMemComm, root, isAicpuModeEn,
-            meshSinglePlane));
+            meshSinglePlane, isA2MC2MultiServer));
     }
 
     return HCCL_SUCCESS;
@@ -720,7 +676,7 @@ HcclResult hcclImpl::CreateP2PCommQuerry(const std::string &tag, u32& status)
 HcclResult hcclImpl::GetCommTypeInLevel0(const AlgType algType, const TopoType topoType, CommType &commType)
 {
     if (Is310P3Common(isHaveCpuRank_, deviceType_)) {
-        if (algType == AlgType::ALG_NP_HD) {
+        if (algType.algoLevel0 == AlgTypeLevel0::ALG_LEVEL0_NP_HD) {
             commType = CommType::COMM_TAG_HALVING_DOUBLING;
         } else {
             commType = CommType::COMM_TAG_RING_INNER;
@@ -734,7 +690,7 @@ HcclResult hcclImpl::GetCommTypeInLevel0(const AlgType algType, const TopoType t
                    (topoType_ == TopoType::TOPO_TYPE_1P_MESH) || (topoType_ == TopoType::TOPO_TYPE_NP_MESH));
 
     // 根据算法类型创建内层拓扑
-    if (algType == AlgType::ALG_NP_STAR) {
+    if (algType.algoLevel0 == AlgTypeLevel0::ALG_LEVEL0_NP_STAR) {
         commType =  CommType::COMM_TAG_STAR;
     } else if (isMesh) {
         commType = CommType::COMM_TAG_MESH;
@@ -749,138 +705,49 @@ HcclResult hcclImpl::GetCommTypeInLevel0(const AlgType algType, const TopoType t
 HcclResult hcclImpl::GetCommTypeInLevel1(const AlgType algType, CommType &commType)
 {
     // 根据算法类型创建内层拓扑
-    switch (algType) {
-        case AlgType::ALG_DEFAULT: {
-            commType = CommType::COMM_TAG_RING_COMBINED;
-            break;
-        }
-
-        case AlgType::ALG_DOUBLE_RING_PLUS_HD:
-        case AlgType::ALG_NP_MESH_PLUS_HD:
-        case AlgType::ALG_8P_RING_PLUS_HD:
-        case AlgType::ALG_4P_MESH_PLUS_HD:
-        case AlgType::ALG_2P_MESH_PLUS_HD:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_HD:
-        case AlgType::ALG_1P_MESH_PLUS_HD:
-        case AlgType::ALG_4P_RING_PLUS_HD:{
-            commType =  CommType::COMM_TAG_HALVING_DOUBLING;
-            break;
-        }
-
-        /* pipeline ring场景下性能优化 */
-        case AlgType::ALG_WHOLE_RING_PLUS_PIPELINE:
-        case AlgType::ALG_8P_RING_PLUS_PIPELINE:
-        case AlgType::ALG_4P_MESH_PLUS_PIPELINE:
-        case AlgType::ALG_2P_MESH_PLUS_PIPELINE:
-        case AlgType::ALG_1P_MESH_PLUS_PIPELINE:
-        case AlgType::ALG_4P_RING_PLUS_PIPELINE:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_PIPELINE:
-        case AlgType::ALG_NP_DOUBLE_RING_PLUS_PIPELINE:
-        case AlgType::ALG_NP_MESH_PLUS_PIPELINE:
-        case AlgType::ALG_NP_STAR_PLUS_PIPELINE:
-        case AlgType::ALG_DOUBLE_RING_PLUS_RING:
-        case AlgType::ALG_NP_MESH_PLUS_RING:
-        case AlgType::ALG_8P_RING_PLUS_RING:
-        case AlgType::ALG_4P_MESH_PLUS_RING:
-        case AlgType::ALG_2P_MESH_PLUS_RING:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_RING:
-        case AlgType::ALG_1P_MESH_PLUS_RING:
-        case AlgType::ALG_4P_RING_PLUS_RING:{
-            commType = CommType::COMM_TAG_RING_INNER;
-            break;
-        }
-
-        case AlgType::ALG_NP_STAR:{
-            commType = CommType::COMM_TAG_STAR;
-            break;
-        }
-
-        case AlgType::ALG_8P_RING_PLUS_NHR:
-        case AlgType::ALG_4P_MESH_PLUS_NHR:
-        case AlgType::ALG_2P_MESH_PLUS_NHR:
-        case AlgType::ALG_1P_MESH_PLUS_NHR:
-        case AlgType::ALG_4P_RING_PLUS_NHR:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_NHR:
-        case AlgType::ALG_DOUBLE_RING_PLUS_NHR:
-        case AlgType::ALG_NP_MESH_PLUS_NHR: {
+    if (algType.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_WHOLE_RING) {
+        commType = CommType::COMM_TAG_RING_COMBINED;
+    } else if (algType.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_HD) {
+        commType =  CommType::COMM_TAG_HALVING_DOUBLING;
+    /* pipeline ring场景下性能优化 */
+    } else if (algType.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_PIPELINE ||
+        algType.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
+        commType = CommType::COMM_TAG_RING_INNER;
+    } else if (algType.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_STAR) {
+        commType = CommType::COMM_TAG_STAR;
+    } else if (algType.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR){
+        if (algType.algoLevel0 != AlgTypeLevel0::ALG_LEVEL0_RESERVED) {
             commType = CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING;
-            break;
+        } else {
+           commType = CommType::COMM_TAG_WHOLE_NHR;
         }
-
-        case AlgType::ALG_WHOLE_NHR: {
-            commType = CommType::COMM_TAG_WHOLE_NHR;
-            break;
-        }
-
-        case AlgType::ALG_8P_RING_PLUS_NHR_V1:
-        case AlgType::ALG_4P_MESH_PLUS_NHR_V1:
-        case AlgType::ALG_2P_MESH_PLUS_NHR_V1:
-        case AlgType::ALG_1P_MESH_PLUS_NHR_V1:
-        case AlgType::ALG_4P_RING_PLUS_NHR_V1:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_NHR_V1:
-        case AlgType::ALG_NP_MESH_PLUS_NHR_V1: {
+    } else if (algType.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1){
+        if (algType.algoLevel0 != AlgTypeLevel0::ALG_LEVEL0_RESERVED) {
             commType = CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING_V1;
-            break;
+        } else {
+           commType = CommType::COMM_TAG_WHOLE_NHR_V1;
         }
-
-        case AlgType::ALG_WHOLE_NHR_V1: {
-            commType = CommType::COMM_TAG_WHOLE_NHR_V1;
-            break;
-        }
-
-        case AlgType::ALG_8P_RING_PLUS_AHC:
-        case AlgType::ALG_4P_MESH_PLUS_AHC:
-        case AlgType::ALG_2P_MESH_PLUS_AHC:
-        case AlgType::ALG_1P_MESH_PLUS_AHC:
-        case AlgType::ALG_4P_RING_PLUS_AHC:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_AHC:
-        case AlgType::ALG_NP_MESH_PLUS_AHC:
-        case AlgType::ALG_DOUBLE_RING_PLUS_AHC: {
+    } else if (algType.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC){
+        if (algType.algoLevel0 != AlgTypeLevel0::ALG_LEVEL0_RESERVED) {
             commType = CommType::COMM_TAG_ASYMMETRIC_HIERARCHICAL_CONCATENATE;
-            break;
+        } else {
+           commType = CommType::COMM_TAG_WHOLE_AHC;
         }
-
-        case AlgType::ALG_WHOLE_AHC: {
-            commType = CommType::COMM_TAG_WHOLE_AHC;
-            break;
-        }
-
-        case AlgType::ALG_8P_RING_PLUS_AHC_BROKE:
-        case AlgType::ALG_4P_MESH_PLUS_AHC_BROKE:
-        case AlgType::ALG_2P_MESH_PLUS_AHC_BROKE:
-        case AlgType::ALG_1P_MESH_PLUS_AHC_BROKE:
-        case AlgType::ALG_4P_RING_PLUS_AHC_BROKE:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_AHC_BROKE:
-        case AlgType::ALG_NP_MESH_PLUS_AHC_BROKE:
-        case AlgType::ALG_DOUBLE_RING_PLUS_AHC_BROKE: {
+    } else if (algType.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE){
+        if (algType.algoLevel0 != AlgTypeLevel0::ALG_LEVEL0_RESERVED) {
             commType = CommType::COMM_TAG_ASYMMETRIC_HIERARCHICAL_CONCATENATE_BROKE;
-            break;
+        } else {
+           commType = CommType::COMM_TAG_WHOLE_AHC_BROKE;
         }
-
-        case AlgType::ALG_WHOLE_AHC_BROKE: {
-            commType = CommType::COMM_TAG_WHOLE_AHC_BROKE;
-            break;
-        }
-
-        case AlgType::ALG_8P_RING_PLUS_NB:
-        case AlgType::ALG_4P_MESH_PLUS_NB:
-        case AlgType::ALG_2P_MESH_PLUS_NB:
-        case AlgType::ALG_1P_MESH_PLUS_NB:
-        case AlgType::ALG_4P_RING_PLUS_NB:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_NB:
-        case AlgType::ALG_NP_MESH_PLUS_NB: {
+    } else if (algType.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB){
+        if (algType.algoLevel0 != AlgTypeLevel0::ALG_LEVEL0_RESERVED) {
             commType = CommType::COMM_TAG_NONUNIFORM_BRUCK;
-            break;
+        } else {
+           commType = CommType::COMM_TAG_WHOLE_NB;
         }
-
-        case AlgType::ALG_WHOLE_NB: {
-            commType = CommType::COMM_TAG_WHOLE_NB;
-            break;
-        }
-
-        default:
-            HCCL_ERROR("[Get][CommTypeInLevel1]algType[%s] is not support", AlgTypeToStr(algType).c_str());
-            return HCCL_E_PARA;
+    } else {
+        HCCL_ERROR("[Get][CommTypeInLevel1]algType[%s] is not support", AlgTypeToStr(algType).c_str());
+        return HCCL_E_PARA;
     }
     HCCL_DEBUG("[Get][CommTypeInLevel1]The algType is %s, while commType is %d",
         AlgTypeToStr(algType).c_str(), commType);
@@ -891,15 +758,15 @@ CommPlane hcclImpl::GetCommPlaneInLevel1(CommType &commType)
 {
     CommPlane commPlane;
     switch (commType) {
-        case CommType::COMM_TAG_RING_COMBINED:
-        case CommType::COMM_TAG_MESH_COMBINED: {
+        case CommType::COMM_TAG_RING_COMBINED: {
             commPlane = COMM_COMBINE;
             break;
         }
 
         case CommType::COMM_TAG_WHOLE_NB:
         case CommType::COMM_TAG_WHOLE_NHR:
-        case CommType::COMM_TAG_WHOLE_NHR_V1: {
+        case CommType::COMM_TAG_WHOLE_NHR_V1:
+        case CommType::COMM_TAG_MESH_COMBINED: {
             commPlane = COMM_COMBINE_ORDER;
             break;
         }
@@ -914,7 +781,7 @@ CommPlane hcclImpl::GetCommPlaneInLevel1(CommType &commType)
 }
 
 HcclResult hcclImpl::CreateCommByAlg(const std::string &tag, const AlgType algType, CommInfo &commInfo,
-    DeviceMem &inputMem, DeviceMem &outputMem, DeviceMem &expMem, u32 root, bool isAicpuModeEn, bool meshSinglePlane)
+    DeviceMem &inputMem, DeviceMem &outputMem, DeviceMem &expMem, u32 root, bool isAicpuModeEn, bool meshSinglePlane, bool isA2MC2MultiServer)
 {
     CHK_RET(algConfigurator_->CheckAlgType(algType));
     CHK_RET(commFactory_->SetHDCModeInfo(rankDevicePhyIdNicInfoMap_, ranksPort_, isSetHDCModeInfo_, isUseRankPort_));
@@ -932,7 +799,8 @@ HcclResult hcclImpl::CreateCommByAlg(const std::string &tag, const AlgType algTy
     HcclResult commThreadResultLevel0Rdma = HCCL_SUCCESS;
     CHK_RET(GetCommTypeInLevel0(algType, topoType_, commTypeInLevel0));
     bool isUsedRdma = false;
-    if (GetExternalInputEnableRdmaSdmaConcurrent() && deviceType_ == DevType::DEV_TYPE_910_93) {
+    if ((GetExternalInputEnableRdmaSdmaConcurrent() && deviceType_ == DevType::DEV_TYPE_910_93) ||
+     (isA2MC2MultiServer)) {
         HCCL_INFO("commInfo create commLevel0Rdma/commLevel1Rdma for EnableRdmaSdma start");
         isUsedRdma = true;
     }
@@ -956,8 +824,8 @@ HcclResult hcclImpl::CreateCommByAlg(const std::string &tag, const AlgType algTy
     CommParaInfo commInfoLevel0(COMM_LEVEL0, commTypeInLevel0, root, INVALID_VALUE_RANKID,
         isAicpuModeEn, meshSinglePlane);
     // defalut、whole_nhr和whole_nb算法不创建外层拓扑
-    if (algType != AlgType::ALG_DEFAULT && algType != AlgType::ALG_WHOLE_NHR && algType != AlgType::ALG_WHOLE_NHR_V1 &&
-        algType != AlgType::ALG_WHOLE_NB) {
+    if (algType.algoLevel0 != AlgTypeLevel0::ALG_LEVEL0_WHOLE_RING &&
+        algType.algoLevel0 != AlgTypeLevel0::ALG_LEVEL0_RESERVED && ! isA2MC2MultiServer) {
         commThreadPtrLevel0_.reset(new (std::nothrow) std::thread(&hcclImpl::CreateCommThread, this,
             hrtErrMGetErrorContextPub(), std::ref(tag), std::ref(inputMem), std::ref(outputMem), std::ref(expMem),
             std::ref(commInfoLevel0), std::ref(commInfo.commLevel0), std::ref(commThreadResultLevel0)));
@@ -981,15 +849,21 @@ HcclResult hcclImpl::CreateCommByAlg(const std::string &tag, const AlgType algTy
     HcclResult commThreadResultLevel1Rdma = HCCL_SUCCESS;
     CommType commTypeInLevel1;
     CHK_RET(GetCommTypeInLevel1(algType, commTypeInLevel1));
+    if (isA2MC2MultiServer) {
+        commTypeInLevel1 = CommType::COMM_TAG_MESH_COMBINED;
+    }
+
     CommPlane commPlaneInLevel1 = GetCommPlaneInLevel1(commTypeInLevel1);
     CommParaInfo commInfoLevel1(commPlaneInLevel1, commTypeInLevel1, root, INVALID_VALUE_RANKID, isAicpuModeEn);
     if (commTypeInLevel1 != CommType::COMM_TAG_STAR) {
-        commThreadPtrLevel1_.reset(new (std::nothrow) std::thread(&hcclImpl::CreateCommThread, this,
-            hrtErrMGetErrorContextPub(), std::ref(tag), std::ref(inputMem), std::ref(outputMem), std::ref(expMem),
-            std::ref(commInfoLevel1), std::ref(commInfo.commLevel1), std::ref(commThreadResultLevel1)));
-        CHK_PRT_RET(!commThreadPtrLevel1_, HCCL_ERROR("[Create][CommByAlg]commTypeInLevel1[%d] threads reset failed.",
-            commInfoLevel1.commType), HCCL_E_INTERNAL);
-        commThreadWaitResultLevel1 = WaitCommThread(commThreadPtrLevel1_);
+        if (!isA2MC2MultiServer) {
+            commThreadPtrLevel1_.reset(new (std::nothrow) std::thread(&hcclImpl::CreateCommThread, this,
+                hrtErrMGetErrorContextPub(), std::ref(tag), std::ref(inputMem), std::ref(outputMem), std::ref(expMem),
+                std::ref(commInfoLevel1), std::ref(commInfo.commLevel1), std::ref(commThreadResultLevel1)));
+            CHK_PRT_RET(!commThreadPtrLevel1_, HCCL_ERROR("[Create][CommByAlg]commTypeInLevel1[%d] threads reset failed.",
+                commInfoLevel1.commType), HCCL_E_INTERNAL);
+            commThreadWaitResultLevel1 = WaitCommThread(commThreadPtrLevel1_);
+        }   
 
         if (isUsedRdma) {
             commInfoLevel1.forceRdma = isUsedRdma;
@@ -1015,7 +889,7 @@ HcclResult hcclImpl::CreateCommByAlg(const std::string &tag, const AlgType algTy
 
     CHK_PRT_RET(commThreadWaitResultLevel0 || commThreadWaitResultLevel1 || commThreadWaitResultLevel2 ||
     commThreadWaitResultLevel0Rdma || commThreadWaitResultLevel1Rdma,
-        HCCL_ERROR("[Create][CommByAlg]wait thread failed.Level0[%d] Level1[%d] Level2[%d] Level0rdma[%d]" \
+        HCCL_ERROR("[Create][CommByAlg]wait thread failed.algoLevel0[%d] Level1[%d] Level2[%d] Level0rdma[%d]" \
             " Level1rdma[%d]", commThreadWaitResultLevel0, commThreadWaitResultLevel1, commThreadWaitResultLevel2,
             commThreadWaitResultLevel0Rdma, commThreadWaitResultLevel1Rdma), HCCL_E_INTERNAL);
 
@@ -1276,7 +1150,9 @@ HcclResult hcclImpl::AddSubStreamToProfiling(const std::string &tag, HcclCMDType
     level1StreamInfo_t &streamInfo = tagStreamInfo_[tag];
     for (u32 streamIndex = 0; streamIndex < streamInfo.ringStreams.size(); streamIndex++) {
         // profiling加入从环的stream
-        AlgType algType = AlgType::ALG_DEFAULT;
+        AlgType algType;
+        algType.algoLevel0 = AlgTypeLevel0::ALG_LEVEL0_WHOLE_RING;
+        algType.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_WHOLE_RING;
         CHK_RET(algConfigurator_->GetAlgType(algType, opType));
         HCCL_PROFILER_ADD_STREAM_BY_STREAMID(streamInfo.ringStreams[streamIndex].id(), tag, streamIndex + 1, algType);
     }
@@ -1285,24 +1161,54 @@ HcclResult hcclImpl::AddSubStreamToProfiling(const std::string &tag, HcclCMDType
 
 HcclResult hcclImpl::RegisterToHeartBeat()
 {
-    return HeartbeatPub::RegisterToHeartBeat(deviceLogicId_, userRank_, deviceType_,
-        hbRankInfoList_, identifier_, isUsedRdmaLevel0_);
+    if (g_RegisterToHeartBeatCallBack != nullptr) {
+        return g_RegisterToHeartBeatCallBack(deviceLogicId_, userRank_, deviceType_, rankInfoList_, localNicPort_,
+            isNeedInitNic_, INVALID_VALUE_RANKID, identifier_, "", useSuperPodMode_, isUsedRdmaLevel0_);
+    } else {
+        HCCL_RUN_WARNING("[RegisterToHeartBeat] g_RegisterToHeartBeatCallBack is nullptr");
+    }
+    return HCCL_SUCCESS;
 }
 
 HcclResult hcclImpl::RegisterToHeartBeat(u32 peerRankId, const std::string& tag)
 {
-    return HeartbeatPub::RegisterToHeartBeat(deviceLogicId_, userRank_, deviceType_,
-        hbRankInfoList_, peerRankId, identifier_, tag, isUsedRdmaLevel0_);
+    if (g_RegisterToHeartBeatCallBack != nullptr) {
+        return g_RegisterToHeartBeatCallBack(deviceLogicId_, userRank_, deviceType_, rankInfoList_, localNicPort_,
+            isNeedInitNic_, peerRankId, identifier_, tag, useSuperPodMode_, isUsedRdmaLevel0_);
+    } else {
+        HCCL_RUN_WARNING("[RegisterToHeartBeat] g_RegisterToHeartBeatCallBack is nullptr");
+    }
+    return HCCL_SUCCESS;
 }
 
 void hcclImpl::UnRegisterToHeartBeat()
 {
-    HeartbeatPub::UnRegisterToHeartBeat(deviceLogicId_, deviceType_, identifier_);
+    if (g_UnRegisterToHeartBeatCallBack != nullptr) {
+        return g_UnRegisterToHeartBeatCallBack(deviceLogicId_, deviceType_, identifier_, "");
+    } else {
+        HCCL_RUN_WARNING("[UnRegisterToHeartBeat] g_UnRegisterToHeartBeatCallBack is nullptr");
+    }
+    return;
 }
 
 void hcclImpl::UnRegisterToHeartBeat(const std::string& tag)
 {
-    HeartbeatPub::UnRegisterToHeartBeat(deviceLogicId_, deviceType_, identifier_, tag);
+    if (g_UnRegisterToHeartBeatCallBack != nullptr) {
+        return g_UnRegisterToHeartBeatCallBack(deviceLogicId_, deviceType_, identifier_, tag);
+    } else {
+        HCCL_RUN_WARNING("[UnRegisterToHeartBeat] g_UnRegisterToHeartBeatCallBack is nullptr");
+    }
+    return;
+}
+
+HcclResult hcclImpl::SetRankPortInfo(s32 deviceLogicID, bool isUseRankPort, std::vector<u32> &ranksPort)
+{
+    if (g_SetRankPortInfoCallBack != nullptr) {
+        return g_SetRankPortInfoCallBack(deviceLogicID, isUseRankPort, ranksPort);
+    } else {
+        HCCL_RUN_WARNING("[SetRankPortInfo] g_SetRankPortInfoCallBack is nullptr");
+    }
+    return HCCL_SUCCESS;
 }
 
 u32 hcclImpl::GetSubRootForScatter(const u32 root)
@@ -1620,6 +1526,18 @@ HcclResult hcclImpl::GetDispatcher(HcclDispatcher &dispatcher)
     dispatcher = dispatcher_;
     return HCCL_SUCCESS;
 }
-
+#ifdef __cplusplus
+extern "C" {
+#endif // __cplusplus
+void RegisterHeartBeatCallBack(RegisterToHeartBeatCallBack p1, UnRegisterToHeartBeatCallBack p2,
+    SetRankPortInfoCallBack p3)
+{
+    g_RegisterToHeartBeatCallBack = p1;
+    g_UnRegisterToHeartBeatCallBack = p2;
+    g_SetRankPortInfoCallBack = p3;
+}
+#ifdef __cplusplus
+}
+#endif // __cplusplus
 }
 // namespace hccl

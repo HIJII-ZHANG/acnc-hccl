@@ -468,6 +468,10 @@ void ZeroCopyMemoryAgent::DealWithIpcMemoryRequest()
         }
         SaluSleep(USLEEP_ONE_THOUSAND);
     } while (threadRun_);
+    if (hrtResetDevice(deviceLogicId_) != HCCL_SUCCESS) {
+        HCCL_ERROR("[ZeroCopyMemoryAgent][DealWithIpcMemoryRequest] reset device failed");
+        return;
+    }
 }
 
 HcclResult ZeroCopyMemoryAgent::ParseSetMemoryRange(u8* &exchangeDataPtr, u32 &exchangeDataBlankSize)

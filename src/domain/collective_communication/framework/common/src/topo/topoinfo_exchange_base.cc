@@ -125,13 +125,28 @@ HcclResult TopoInfoExchangeBase::Json2Struct(const nlohmann::json& jClusterJson,
         CHK_RET(rankInfo.hostIp.SetReadableAddress(rankInfoJson[PROP_HOST_IP]));
         rankInfo.deviceInfo.devicePhyId = rankInfoJson[PROP_DEV_INFO][PROP_DEV_ID];
         rankInfo.deviceInfo.deviceType = rankInfoJson[PROP_DEV_INFO][PROP_DEV_TYPE];
+        CHK_PRT_RET(rankInfoJson[PROP_DEV_INFO].find(PROP_DEV_NIC_PORT) == rankInfoJson[PROP_DEV_INFO].end()
+            || rankInfoJson[PROP_DEV_INFO].find(PROP_DEV_VNIC_PORT) == rankInfoJson[PROP_DEV_INFO].end()
+            || rankInfoJson[PROP_DEV_INFO].find(PROP_BACKUP_DEV_PORT) == rankInfoJson[PROP_DEV_INFO].end(),
+            HCCL_ERROR("[Json2Struct] Fail to find port infos in rank info json. "
+            "Please make sure the CANN version is consistent within the communication."),
+            HCCL_E_NOT_SUPPORT);
+        rankInfo.deviceInfo.port = rankInfoJson[PROP_DEV_INFO][PROP_DEV_NIC_PORT];
+        rankInfo.deviceInfo.vnicPort = rankInfoJson[PROP_DEV_INFO][PROP_DEV_VNIC_PORT];
+        rankInfo.deviceInfo.backupPort = rankInfoJson[PROP_DEV_INFO][PROP_BACKUP_DEV_PORT];
         for (auto& devIp : rankInfoJson[PROP_DEV_INFO][PROP_DEV_IP]) {
             std::string ipStr = devIp;
             rankInfo.deviceInfo.deviceIp.emplace_back(ipStr);
         }
-        for (auto& backupDevIp : rankInfoJson[PROP_DEV_INFO][PROP_BACKUP_DEV_IP]) {
-            std::string backupIpStr = backupDevIp;
-            rankInfo.deviceInfo.backupDeviceIp.emplace_back(backupIpStr);
+        if (rankInfoJson[PROP_DEV_INFO].find(PROP_BACKUP_DEV_IP) == rankInfoJson[PROP_DEV_INFO].end()) {
+            HCCL_RUN_WARNING("[Json2Struct] Fail to find backup device ip in rank info json. "
+            "Backup device ip will not be parsed. If you want to use backup device ip, "
+            "Please make sure the CANN version is consistent within the communication.");
+        } else {
+            for (auto& backupDevIp : rankInfoJson[PROP_DEV_INFO][PROP_BACKUP_DEV_IP]) {
+                std::string backupIpStr = backupDevIp;
+                rankInfo.deviceInfo.backupDeviceIp.emplace_back(backupIpStr);
+            }
         }
 
         rankInfo.superPodId = rankInfoJson[PROP_SUPER_POD_ID];
@@ -213,6 +228,9 @@ HcclResult TopoInfoExchangeBase::TransformRankListToJson(const RankTable_t &clus
         nlohmann::json devInfoJson;
         devInfoJson[PROP_DEV_ID] = rankInfo.deviceInfo.devicePhyId;
         devInfoJson[PROP_DEV_TYPE] = rankInfo.deviceInfo.deviceType;
+        devInfoJson[PROP_DEV_NIC_PORT] = rankInfo.deviceInfo.port;
+        devInfoJson[PROP_DEV_VNIC_PORT] = rankInfo.deviceInfo.vnicPort;
+        devInfoJson[PROP_BACKUP_DEV_PORT] = rankInfo.deviceInfo.backupPort;
         devInfoJson[PROP_DEV_IP] = deviceIp;
         devInfoJson[PROP_BACKUP_DEV_IP] = backupDeviceIp;
         nlohmann::json rankJson;

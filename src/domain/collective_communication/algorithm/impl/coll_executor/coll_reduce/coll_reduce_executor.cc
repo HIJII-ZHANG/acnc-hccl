@@ -24,7 +24,7 @@ HcclResult CollReduceExecutor::Orchestrate(OpParam& param, AlgResourceResponse& 
     HcclUs startut = TIME_NOW();
 
     tag_ = param.tag;
-    if (UseInterServerHDAlgo(algType_)) {
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_HD) {
         u32 part1Size = 2 * (topoAttr_.moduleNum - (1 << static_cast<u32>(log2(topoAttr_.moduleNum))));
         u32 rootId = param.root / topoAttr_.deviceNumPerAggregation;
         std::string appendTag = std::to_string((rootId >= part1Size) || ((rootId % 2) == 0));
@@ -155,10 +155,10 @@ HcclResult CollReduceExecutor::RunLoopInner(OpParam &param, const ReduceType &re
 
     /* 设置子图复用标志 */
     bool isRootRank = param.root == topoAttr_.realUserRank ? true : false;
-    auto autoSelectedAlgTypeLevel1 = static_cast<u32>(algType_) >> HCCL_LEVEL_ALGO_WIDTH;
+    auto autoSelectedAlgTypeLevel1 = static_cast<u32>(algType_.algoLevel1);
     bool hugeData = IsHugeData(curSize);    // override
     /* TBE reduce 当总count数超过INT32_MAX时，不使能子图复用 */
-    if (reduceType == ReduceType::TBE_REDUCE) {       
+    if (reduceType == ReduceType::TBE_REDUCE) {
         hugeData = hugeData || param.DataDes.count > INT32_MAX;
     }
     HCCL_DEBUG("[CollReduceExecutor][RunLoopInner]IsHugeData:[%u]", hugeData);

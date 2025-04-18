@@ -539,10 +539,10 @@ HcclResult CfgGetRoleTableInfo(const std::string &rankTableM, RoleTableInfo &rol
 }
 
 void SetRetryEnable(DevType deviceType, const u32 &superPodNum, const u32 &serverNum,
-    const u32 &deviceNumPerAggregation, bool &retryEnable)
+    const u32 &deviceNumPerAggregation, const bool &isDiffDeviceType, bool &retryEnable)
 {
     retryEnable = false;
-    if (deviceType != DevType::DEV_TYPE_910_93) {
+    if (deviceType != DevType::DEV_TYPE_910_93 || isDiffDeviceType) {
         retryEnable = false;
     } else if (superPodNum > 1) { // L2重执行
         retryEnable = GetExternalInputInterSuperPodRetryEnable();
@@ -552,6 +552,7 @@ void SetRetryEnable(DevType deviceType, const u32 &superPodNum, const u32 &serve
         retryEnable = GetExternalInputIntraServerRetryEnable();
     }
 
-    HCCL_INFO("[Config][SetRetryEnable]deviceType[%d], superPodNum[%u], serverNum[%u], deviceNum[%u], retryEnable[%d].",
-        deviceType, superPodNum, serverNum, deviceNumPerAggregation, retryEnable);
+    HCCL_INFO("[Config][SetRetryEnable]deviceType[%d], superPodNum[%u], serverNum[%u], deviceNum[%u],"
+                "isDiffDeviceType[%d], retryEnable[%d].",
+        deviceType, superPodNum, serverNum, deviceNumPerAggregation, isDiffDeviceType, retryEnable);
 }

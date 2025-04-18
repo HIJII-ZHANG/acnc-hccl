@@ -54,7 +54,17 @@ HcclResult CollScatterRingFor91093Executor::CalcLevel1CommInfo(TransportMemType 
     TransportMemType outputType,
     std::vector<LevelNSubCommTransport>& opTransport)
 {
-    CommParaInfo commParaLevel1(COMM_LEVEL1, CommType::COMM_TAG_RING_INNER);
+    CommParaInfo commParaLevel1(COMM_LEVEL1, CommType::COMM_TAG_MAX);
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
+        commParaLevel1.commType = CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING;
+        HCCL_INFO("[%s]Calc NHRCommInfo", __func__);
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
+        commParaLevel1.commType = CommType::COMM_TAG_NONUNIFORM_BRUCK;
+        HCCL_INFO("[%s]Calc NBCommInfo", __func__);
+    } else {
+        commParaLevel1.commType = CommType::COMM_TAG_RING_INNER;
+        HCCL_INFO("[%s]Calc RingCommInfo", __func__);
+    }
     CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel1, opTransport[COMM_LEVEL1], inputType, outputType));
 
     return HCCL_SUCCESS;
@@ -64,8 +74,19 @@ HcclResult CollScatterRingFor91093Executor::CalcLevel2CommInfo(TransportMemType 
     TransportMemType outputType,
     std::vector<LevelNSubCommTransport>& opTransport)
 {
-    // 910_93 level2当前仅支持ring算法
-    CommParaInfo commParaLevel2(COMM_LEVEL2, CommType::COMM_TAG_RING_INNER);
+    // 910_93 level2当前仅支持nhr、nb、ring算法
+    CommParaInfo commParaLevel2(COMM_LEVEL2, CommType::COMM_TAG_MAX);
+ 
+    if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NHR) {
+        commParaLevel2.commType = CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING;
+        HCCL_INFO("[%s]Calc NHRCommInfo", __func__);
+    } else if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NB) {
+        commParaLevel2.commType = CommType::COMM_TAG_NONUNIFORM_BRUCK;
+        HCCL_INFO("[%s]Calc NBCommInfo", __func__);
+    } else {
+        commParaLevel2.commType = CommType::COMM_TAG_RING_INNER;
+        HCCL_INFO("[%s]Calc RingCommInfo", __func__);
+    }
 
     CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel2, opTransport[COMM_LEVEL2], inputType, outputType));
     return HCCL_SUCCESS;
@@ -115,9 +136,17 @@ HcclResult CollScatterRingFor91093Executor::KernelRunLevel2(const OpParam &param
         u32 planeRootSupperPod = 0;
         CHK_RET(GetRankByUserRank(COMM_LEVEL2, COMM_INDEX_0, param.root, planeRootSupperPod));
         std::unique_ptr<AlgTemplateBase> level2TempAlg;
+        if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NB) {
+            level2TempAlg.reset(new (std::nothrow) ScatterNB(dispatcher_));
+            HCCL_INFO("scatter ring: using nonuniform-bruck algo inter-superPod.");
+        } else if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NHR) {
+            level2TempAlg.reset(new (std::nothrow) ScatterNHR(dispatcher_));
+            HCCL_INFO("scatter ring: using nonuniform-hierarchical-ring algo inter-superPod.");
+        } else {
+            level2TempAlg.reset(new (std::nothrow) ScatterRing(dispatcher_));
+            HCCL_INFO("scatter ring: using ring algo inter-superPod.");
+        }
 
-        level2TempAlg.reset(new (std::nothrow) ScatterRing(dispatcher_));
-        HCCL_INFO("scatter ring: using ring algo inter-superPod.");
         CHK_SMART_PTR_NULL(level2TempAlg);
 
         u64 level2Count = execMem.inputMem.size() / perDataSize_;
@@ -155,8 +184,16 @@ HcclResult CollScatterRingFor91093Executor::KernelRunLevel1(const OpParam &param
         CHK_RET(GetRankByUserRank(COMM_LEVEL1, commIndex_, subUserRankRootSupperPod_, rootRankLevel1));
 
         std::unique_ptr<AlgTemplateBase> level1TempAlg;
-        level1TempAlg.reset(new (std::nothrow) ScatterRing(dispatcher_));
-        HCCL_INFO("scatter ring: using ring algo inter-server.");
+        if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
+            level1TempAlg.reset(new (std::nothrow) ScatterNB(dispatcher_));
+            HCCL_INFO("scatter ring: using nonuniform-bruck algo inter-server.");
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
+            level1TempAlg.reset(new (std::nothrow) ScatterNHR(dispatcher_));
+            HCCL_INFO("scatter ring: using nonuniform-hierarchical-ring algo inter-server.");
+        } else {
+            level1TempAlg.reset(new (std::nothrow) ScatterRing(dispatcher_));
+            HCCL_INFO("scatter ring: using ring algo inter-server.");
+        }
         CHK_SMART_PTR_NULL(level1TempAlg);
 
         DeviceMem level1InputMem = execMem.inputMem.range(level1SliceOffset_, level1SliceSize);

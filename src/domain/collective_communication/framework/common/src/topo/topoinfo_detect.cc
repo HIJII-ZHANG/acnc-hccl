@@ -10,12 +10,12 @@
 
 #include "topoinfo_detect.h"
 #include <string>
-#include "externalinput_pub.h"
 #include "adapter_rts_common.h"
 #include "hccl_whitelist.h"
 #include "hccl_socket.h"
 #include "sal_pub.h"
 #include "device_capacity.h"
+#include "preempt_port_manager.h"
 
 using namespace std;
 namespace hccl {
@@ -52,6 +52,13 @@ HcclResult TopoInfoDetect::GetAgentConnection(std::shared_ptr<HcclSocket> &conne
 {
     CHK_SMART_PTR_NULL(pTopoExchangeAgent_);
     return pTopoExchangeAgent_->GetConnection(connectSocket);
+}
+
+HcclResult TopoInfoDetect::GetAgentListenSocket(HcclSocketPortConfig &commPortConfig)
+{
+    // 将抢占的端口传入comm connection参数中
+    commPortConfig = commPortConfig_;
+    return HCCL_SUCCESS;
 }
 
 void TopoInfoDetect::SetupTopoExchangeServer(s32 devicePhysicID, s32 deviceLogicID, HcclIpAddress hostIP, u32 hostPort,
@@ -145,15 +152,18 @@ HcclResult TopoInfoDetect::SetupServer(HcclRootHandle &rootInfo)
     CHK_PRT_RET((deviceLogicID_ >= deviceNum),
         HCCL_ERROR("[Setup][Server]deviceLogicID[%d] is invalid,deviceNum[%d].", deviceLogicID_, deviceNum),
         HCCL_E_PARA);
-    
-    u32 hostPort = HCCL_INVALIED_IF_BASE_PORT;
-    if (GetExternalInputHcclIfBasePort() == HCCL_INVALIED_IF_BASE_PORT) {
-        hostPort = HOST_CONTROL_BASE_PORT + devicePhysicID_;
-    } else {
-        hostPort = GetExternalInputHcclIfBasePort() + devicePhysicID_;
+
+    u32 hostPort = HCCL_INVALID_PORT;
+    if (!GetExternalInputHostPortSwitch()) {
+        // 不开启host侧端口范围配置, 则使用默认端口
+        if (GetExternalInputHcclIfBasePort() == HCCL_INVALID_PORT) {
+            hostPort = devicePhysicID_ + HOST_PARA_BASE_PORT;
+        } else {
+            hostPort = devicePhysicID_ + GetExternalInputHcclIfBasePort();
+        }
     }
-    CHK_RET(GenerateRootInfo(hostIP, hostPort, devicePhysicID_, rootInfo_));
     CHK_RET(StartRootNetwork(whitelist, hostIP, hostPort));
+    CHK_RET(GenerateRootInfo(hostIP, hostPort, devicePhysicID_, rootInfo_));
     g_topoExchangeServerStatus_.EmplaceAndUpdate(hostPort, [] (volatile u32 &status) {
         status = TOPO_EXCHANGE_SERVER_STATUS_RUNING;
     });
@@ -278,10 +288,10 @@ HcclResult TopoInfoDetect::SetupAgent(u32 rankSize, u32 myrank, const HcclRootHa
         HCCL_ERROR("[Setup][Agent]topo detect generate local rank info failed! rank[%u]", myrank), ret);
 
     /* 首节点日志，建链失败属常见问题，在建链前记录相关信息 */
-    HCCL_RUN_INFO("[HCCL_TRACE]SetupAgent rankNum[%u], rank[%u], rootInfo identifier[%s], server[%s], "
+    HCCL_RUN_INFO("[HCCL_TRACE]SetupAgent rankNum[%u], rank[%u], rootInfo identifier[%s], server[%s], serverPort[%u]"
         "deviceType[%d], logicDevId[%d], phydevId[%d], deviceIp[%s]", rankSize, myrank, rootInfo.identifier,
-        localRankInfo_.hostIP.GetReadableAddress(), localRankInfo_.deviceType, localRankInfo_.deviceLogicID,
-        localRankInfo_.devicePhysicID, localRankInfo_.deviceIP[0].GetReadableIP()) ;
+        localRankInfo_.hostIP.GetReadableAddress(), rootInfo.port, localRankInfo_.deviceType,
+        localRankInfo_.deviceLogicID, localRankInfo_.devicePhysicID, localRankInfo_.deviceIP[0].GetReadableIP()) ;
 
     pTopoExchangeAgent_.reset(new (nothrow) TopoInfoExchangeAgent(rootIP, rootInfo.port,
         rootInfo.identifier, agentPortCtx_, localRankInfo_));
@@ -296,17 +306,18 @@ HcclResult TopoInfoDetect::SetupAgent(u32 rankSize, u32 myrank, const HcclRootHa
 
 HcclResult TopoInfoDetect::TeardownAgent()
 {
-    if (!pTopoExchangeAgent_) {
+    bool bInitDevNic = clusterTopoInfo_.rankNum != 1 ? true : false;
+    HcclIpAddress hostIP = GetBootstrapHostIP();
+
+    if (!pTopoExchangeAgent_) { // 异常处理：如果没有创建agent，对标SetupAgent函数中的网络操作，则直接StopNetwork
+        auto ret = StopNetwork(hostIP, bInitDevNic);
+        CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[Setup][Agent]topo detect agent stop network failed!"), ret);
         return HCCL_SUCCESS;
     }
     CHK_RET(pTopoExchangeAgent_->Teardown());
 
-    bool bInitDevNic = clusterTopoInfo_.rankNum != 1 ? true : false;
-    HcclIpAddress hostIP = GetBootstrapHostIP();
-
     auto ret = StopNetwork(hostIP, bInitDevNic);
-    CHK_PRT_RET(ret != HCCL_SUCCESS,
-        HCCL_ERROR("[Setup][Agent]topo detect agent stop network failed!"), ret);
+    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[Setup][Agent]topo detect agent stop network failed!"), ret);
     HCCL_INFO("TopoInfoDetect TeardownAgent ok, identifier[%s].", rootInfo_.identifier);
     return HCCL_SUCCESS;
 }
@@ -451,16 +462,30 @@ HcclResult TopoInfoDetect::GetRootHostIP(const vector<HcclIpAddress> &whitelist,
 }
 
 HcclResult TopoInfoDetect::StartRootNetwork(const vector<HcclIpAddress> &whitelist, const HcclIpAddress& hostIP,
-    u32 usePort)
+    u32 &usePort)
 {
     CHK_RET(HcclNetOpenDev(&serverPortCtx_, NicType::HOST_NIC_TYPE, devicePhysicID_, deviceLogicID_, hostIP));
     CHK_PTR_NULL(serverPortCtx_);
 
-    listenSocket_.reset(new (nothrow) HcclSocket(serverPortCtx_, usePort));
-    CHK_SMART_PTR_NULL(listenSocket_);
-    CHK_RET(listenSocket_->Init());
-
-    CHK_RET(listenSocket_->Listen());
+    if (usePort == HCCL_INVALID_PORT) {
+        // 通过抢占的方式获得Root节点监听的host端口
+        listenSocket_.reset(new (nothrow) HcclSocket(serverPortCtx_));
+        CHK_SMART_PTR_NULL(listenSocket_);
+        CHK_RET(listenSocket_->Init());
+        HcclResult ret = PreemptPortManager::GetInstance(deviceLogicID_).ListenPreempt(listenSocket_,
+            GetExternalInputHostSocketPortRange(), usePort);
+        CHK_PRT_RET(ret != HCCL_SUCCESS,
+            HCCL_ERROR("[TopoInfoDetect][StartRootNetwork] devPhyId[%u], devLogicId[%u], host ip[%s], "
+            "try to preempt port on host nic fail.",
+            devicePhysicID_, deviceLogicID_, hostIP.GetReadableAddress()), ret);
+    } else {
+        // 1. 使用MasterInfo初始化时，不支持抢占master节点的监听端口
+        // 2. 未配置port range时，不支持抢占监听端口
+        listenSocket_.reset(new (nothrow) HcclSocket(serverPortCtx_, usePort));
+        CHK_SMART_PTR_NULL(listenSocket_);
+        CHK_RET(listenSocket_->Init());
+        CHK_RET(listenSocket_->Listen());
+    }
 
     HCCL_INFO("topo info exchange server start with host ip[%s] and port[%u]", hostIP.GetReadableAddress(), usePort);
 
@@ -558,6 +583,125 @@ HcclResult TopoInfoDetect::FilterDevIPs(std::vector<HcclIpAddress> &sourceDevice
     return HCCL_SUCCESS;
 }
 
+HcclResult TopoInfoDetect::PreemptDeviceNicPort(const u32 devPhyId, const s32 devLogicId,
+    const HcclIpAddress &deviceIp, u32 &usePort)
+{
+    HcclNetDevCtx netCtx{nullptr};
+    CHK_RET(HcclNetInit(NICDeployment::NIC_DEPLOYMENT_DEVICE, devPhyId, devLogicId, false, false));
+    CHK_RET(HcclNetOpenDev(&netCtx, NicType::DEVICE_NIC_TYPE, devPhyId, devLogicId, deviceIp));
+    CHK_PTR_NULL(netCtx);
+    commPortConfig_.devNicListen = std::make_pair(nullptr, netCtx);
+
+    commPortConfig_.devNicListen.first.reset(new (std::nothrow) HcclSocket(netCtx));
+    CHK_SMART_PTR_NULL(commPortConfig_.devNicListen.first);
+    CHK_RET(commPortConfig_.devNicListen.first->Init());
+
+    HcclResult ret = PreemptPortManager::GetInstance(devLogicId).ListenPreempt(commPortConfig_.devNicListen.first,
+        GetExternalInputNpuSocketPortRange(), usePort);
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[TopoInfoDetect][PreemptDeviceNicPort] devPhyId[%u], devLogicId[%u], device ip[%s], "
+        "try to preempt port on device nic fail.", devPhyId, devLogicId, deviceIp.GetReadableAddress()), ret);
+
+    HCCL_INFO("[TopoInfoDetect][PreemptDeviceNicPort]devPhyId[%u], devLogicId[%d], "
+        "preempt port[%u] on ip[%s] success.", devPhyId, devLogicId, usePort, deviceIp.GetReadableAddress());
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoInfoDetect::PreemptDeviceVnicPort(HcclBasicRankInfo &localRankInfo)
+{
+    u32 devPhyId = localRankInfo.devicePhysicID;
+    s32 devLogicId = localRankInfo.deviceLogicID;
+    HcclIpAddress vnicIp(devPhyId);
+    bool useSuperPodMode = false;
+    if (localRankInfo.superDeviceId != INVALID_UINT) {
+        CHK_RET(IsSuperPodMode(useSuperPodMode));
+    }
+    if (useSuperPodMode) {
+        CHK_RET(hrtRaGetSingleSocketVnicIpInfo(
+            devPhyId, DeviceIdType::DEVICE_ID_TYPE_SDID, localRankInfo.superDeviceId, vnicIp));
+    } else {
+        CHK_RET(hrtRaGetSingleSocketVnicIpInfo(
+            devPhyId, DeviceIdType::DEVICE_ID_TYPE_PHY_ID, devPhyId, vnicIp));
+    }
+
+    HCCL_INFO("[TopoInfoDetect][PreemptDeviceVnicPort] vnicIp is [%s]", vnicIp.GetReadableAddress());
+
+    HcclNetDevCtx netCtx{nullptr};
+    CHK_RET(HcclNetInit(NICDeployment::NIC_DEPLOYMENT_DEVICE, devPhyId, devLogicId, false, false));
+    CHK_RET(HcclNetOpenDev(&netCtx, NicType::VNIC_TYPE, devPhyId, devLogicId, vnicIp));
+    CHK_PTR_NULL(netCtx);
+    commPortConfig_.devVnicListen = std::make_pair(nullptr, netCtx);
+
+    commPortConfig_.devVnicListen.first.reset(new (std::nothrow) HcclSocket(netCtx));
+    CHK_SMART_PTR_NULL(commPortConfig_.devVnicListen.first);
+    CHK_RET(commPortConfig_.devVnicListen.first->Init());
+
+    HcclResult ret = PreemptPortManager::GetInstance(devLogicId).ListenPreempt(commPortConfig_.devVnicListen.first,
+        GetExternalInputNpuSocketPortRange(), localRankInfo.deviceVnicPort);
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[TopoInfoDetect][PreemptDeviceVnicPort] devPhyId[%u], devLogicId[%u], vnicIp[%s], "
+        "try to preempt port on vnic fail.", devPhyId, devLogicId, vnicIp.GetReadableAddress()), ret);
+
+    HCCL_INFO("[TopoInfoDetect][PreemptDeviceVnicPort] devPhyId[%u], devLogicId[%d], "
+        "preempt vnic on ip[%s], port[%u] success.",
+        devPhyId, devLogicId, vnicIp.GetReadableAddress(), localRankInfo.deviceVnicPort);
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoInfoDetect::PreemptBackupDeviceNicPort(const u32 devPhyId, const s32 devLogicId,
+    const HcclIpAddress &deviceIp, const HcclIpAddress &backupDeviceIp, u32 &usePort)
+{
+    HcclNetDevCtx netCtx{nullptr};
+    CHK_RET(HcclNetInit(NICDeployment::NIC_DEPLOYMENT_DEVICE, devPhyId, devLogicId, false, true));
+    CHK_RET(HcclNetOpenDev(&netCtx, NicType::DEVICE_NIC_TYPE, devPhyId, devLogicId, backupDeviceIp, deviceIp));
+    CHK_PTR_NULL(netCtx);
+    commPortConfig_.backupDevNicListen = std::make_pair(nullptr, netCtx);
+
+    commPortConfig_.backupDevNicListen.first.reset(new (std::nothrow) HcclSocket(netCtx));
+    CHK_SMART_PTR_NULL(commPortConfig_.backupDevNicListen.first);
+    CHK_RET(commPortConfig_.backupDevNicListen.first->Init());
+
+    HcclResult ret = PreemptPortManager::GetInstance(devLogicId).ListenPreempt(commPortConfig_.backupDevNicListen.first,
+        GetExternalInputNpuSocketPortRange(), usePort);
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[TopoInfoDetect][PreemptBackupDeviceNicPort] devPhyId[%u], devLogicId[%u], device ip[%s], "
+        "backup device ip[%s], try to preempt port on device nic fail.",
+        devPhyId, devLogicId, deviceIp.GetReadableAddress(), backupDeviceIp.GetReadableAddress()), ret);
+
+    HCCL_INFO("[TopoInfoDetect][PreemptBackupDeviceNicPort]devPhyId[%u], devLogicId[%d], local ip[%s]"
+        "preempt port[%u] on backup device ip[%s] success[%u].",
+        devPhyId, devLogicId, deviceIp.GetReadableAddress(), usePort, backupDeviceIp.GetReadableAddress());
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoInfoDetect::GetDeviceBackupNicInfo(HcclBasicRankInfo &localRankInfo)
+{
+    std::vector<std::vector<HcclIpAddress>> chipDeviceIPs;
+    CHK_RET(hrtRaGetDeviceAllNicIP(chipDeviceIPs));
+    if (chipDeviceIPs.size() != 2U) {
+        // 910A3场景一个chip上有两组deviceIP
+        HCCL_RUN_WARNING("[TopoInfoDetect][GetDeviceBackupNicInfo]Fail to load backup device ip!"
+            "Please check the driver version!");
+    } else {
+        // 取到一组backup ip，按照devPhyId排序，ipv4在前，ipv6在后，每个网卡的ip顺序一一对应
+        // 取其中对端网卡的ip作为备用网卡ip
+        u32 ipIdex = 1U - (localRankInfo.devicePhysicID % 2U);
+        CHK_RET(FilterDevIPs(chipDeviceIPs[ipIdex], localRankInfo.backupDeviceIP));
+        HCCL_INFO("[TopoInfoDetect][GetDeviceBackupNicInfo]devicePhysicID[%u], backupDeviceIP[0]:[%s]",
+            localRankInfo.devicePhysicID, localRankInfo.backupDeviceIP[0].GetReadableAddress());
+        // 开启device侧端口配置，并且存在备用网卡时，抢占一个备用网卡上的端口
+        if (GetExternalInputNpuPortSwitch() && localRankInfo.backupDeviceIP.size() > 0) {
+            u32 backupDevPhyId = INVALID_INT;
+            u32 backupDevLogicId = INVALID_INT;
+            CHK_RET(hrtGetPairDevicePhyId(localRankInfo.devicePhysicID, backupDevPhyId));
+            CHK_RET(hrtGetDeviceIndexByPhyId(backupDevPhyId, backupDevLogicId));
+            CHK_RET(PreemptBackupDeviceNicPort(backupDevPhyId, backupDevLogicId, localRankInfo.deviceIP[0],
+                localRankInfo.backupDeviceIP[0], localRankInfo.backupDevicePort));
+        }
+    }
+    return HCCL_SUCCESS;
+}
+
 HcclResult TopoInfoDetect::GenerateLocalRankInfo(u32 rankSize, u32 rankID, HcclBasicRankInfo &localRankInfo)
 {
     localRankInfo.hostIP = GetBootstrapHostIP();
@@ -579,25 +723,23 @@ HcclResult TopoInfoDetect::GenerateLocalRankInfo(u32 rankSize, u32 rankID, HcclB
         std::vector<HcclIpAddress> deviceIPs;
         CHK_RET(hrtRaGetDeviceIP(localRankInfo.devicePhysicID, deviceIPs));
         CHK_RET(FilterDevIPs(deviceIPs, localRankInfo.deviceIP));
+        // 开启device侧端口配置时，需要抢占监听端口
+        if (GetExternalInputNpuPortSwitch()) {
+            // 如果有device nic，则抢占device nic的port
+            if (localRankInfo.deviceIP.size() > 0) {
+                CHK_RET(PreemptDeviceNicPort(localRankInfo.devicePhysicID, localRankInfo.deviceLogicID,
+                    localRankInfo.deviceIP[0], localRankInfo.deviceNicPort));
+            }
+            // 使用device网卡时，必定抢占vnic上的port
+            CHK_RET(PreemptDeviceVnicPort(localRankInfo));
+            commPortConfig_.devPortSwitchOn = true;
+        }
 
         // 此处不知道拓扑形态，无法判断是否需要backupIp，只能从硬件类型和重执行开关判断一下
         bool useSuperPodMode = false;
         CHK_RET(IsSuperPodMode(useSuperPodMode));
         if (useSuperPodMode && GetExternalInputHcclAicpuUnfold() && GetExternalInputInterSuperPodRetryEnable()) {
-            std::vector<std::vector<HcclIpAddress>> chipDeviceIPs;
-            CHK_RET(hrtRaGetDeviceAllNicIP(chipDeviceIPs));
-            if (chipDeviceIPs.size() != 2U) {
-                // 910A3场景一个chip上有两组deviceIP
-                HCCL_RUN_WARNING("[TopoInfoDetect][GenerateLocalRankInfo]Fail to load backup device ip!"
-                    "Please check the driver version!");
-            } else {
-                // 取到一组backup ip，按照devPhyId排序，ipv4在前，ipv6在后，每个网卡的ip顺序一一对应
-                // 取其中对端网卡的ip作为备用网卡ip
-                u32 ipIdex = 1U - (localRankInfo.devicePhysicID % 2U);
-                CHK_RET(FilterDevIPs(chipDeviceIPs[ipIdex], localRankInfo.backupDeviceIP));
-                HCCL_INFO("[TopoInfoDetect][GenerateLocalRankInfo]devicePhysicID[%u], backupDeviceIP[0]:[%s]",
-                    localRankInfo.devicePhysicID, localRankInfo.backupDeviceIP[0].GetReadableAddress());
-            }
+            CHK_RET(GetDeviceBackupNicInfo(localRankInfo));
         }
     }
 
@@ -684,6 +826,15 @@ HcclResult TopoInfoDetect::TransformDeviceList(const RankTable_t &clusterInfo,
             perDeviceJson[PROP_DEV_ID] = to_string(it->deviceInfo.devicePhyId);
             perDeviceJson[PROP_RANK_ID] = to_string(it->rankId);
             perDeviceJson[PROP_SUPER_DEVICE_ID] = to_string(it->superDeviceId);
+            if (it->deviceInfo.port != HCCL_INVALID_PORT) {
+                perDeviceJson[PROP_DEV_NIC_PORT] = to_string(it->deviceInfo.port);
+            }
+            if (it->deviceInfo.vnicPort != HCCL_INVALID_PORT) {
+                perDeviceJson[PROP_DEV_VNIC_PORT] = to_string(it->deviceInfo.vnicPort);
+            }
+            if (it->deviceInfo.backupPort != HCCL_INVALID_PORT) {
+                perDeviceJson[PROP_BACKUP_DEV_PORT] = to_string(it->deviceInfo.backupPort);
+            }
             if (clusterInfo.nicDeploy == NICDeployment::NIC_DEPLOYMENT_DEVICE && it->deviceInfo.deviceIp.size() != 0 &&
                 !it->deviceInfo.deviceIp[0].IsInvalid()) {
                 perDeviceJson[PROP_DEV_IP] = std::string(it->deviceInfo.deviceIp[0].GetReadableIP());

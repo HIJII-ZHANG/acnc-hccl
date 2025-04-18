@@ -136,14 +136,14 @@ HcclResult CollAllGatherMixExecutor::KernelRun(const OpParam &param, ExecMem &ex
 
     //  第一步，AI server间all gather
     std::unique_ptr<AlgTemplateBase> level1Executor;
-    if (UseInterServerRingAlgo(algType_)) {
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
         level1Executor.reset(new (std::nothrow) AllGatherRing(dispatcher_));
         HCCL_INFO("[CollAllGatherMixExecutor][KernelRun]allgather mix: using ring algo inter-server.");
-    } else if (UseInterServerNHRAlgo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
         level1Executor.reset(new (std::nothrow) AllGatherNHR(dispatcher_));
         HCCL_INFO("[CollAllGatherMixExecutor][KernelRun]allgather mix: using nhr algo inter-server.");
     } else {
-        HCCL_ERROR("[CollAllGatherMixExecutor][KernelRun]allgather mix: algType[%u] is not supported.", algType_);
+        HCCL_ERROR("[CollAllGatherMixExecutor][KernelRun]allgather mix: algType_[%u] is not supported.", algType_.algoLevel1);
         return HCCL_E_NOT_SUPPORT;
     }
     CHK_SMART_PTR_NULL(level1Executor);

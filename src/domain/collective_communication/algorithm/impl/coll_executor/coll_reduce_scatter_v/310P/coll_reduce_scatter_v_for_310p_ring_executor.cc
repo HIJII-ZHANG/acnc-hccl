@@ -117,6 +117,10 @@ HcclResult CollReduceScatterVFor310PRingExecutor::KernelRun(const OpParam &param
     u64 reduceAttr = 0;
     if (isInlineReduce) {
         SalSetBitOne(reduceAttr, ATTR_POS_INLINE_REDUCE);
+    } else {
+        HCCL_ERROR("[CollReduceScatterVFor310PRingExecutor][KernelRun] ReduceScatterV only support InlineReduce!");
+
+        return HCCL_E_NOT_SUPPORT;
     }
 
     // 根据counts和displace计算每个rank的数据范围

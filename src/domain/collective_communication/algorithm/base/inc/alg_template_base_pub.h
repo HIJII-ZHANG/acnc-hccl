@@ -24,6 +24,8 @@
 #include "dispatcher.h"
 #include "local_notify.h"
 #include "ffts_common_pub.h"
+#include "coll_alg_param.h"
+#include "common.h"
 
 namespace hccl {
 constexpr s32 HCCL_EXEC_STAGE_NOT_SET = -1;
@@ -51,6 +53,19 @@ constexpr u32 BEST_SPLIT_VALUE_SR = 87;
 constexpr u32 BEST_SPLIT_VALUE_DR = 90;
 constexpr u64 HCCL_SPLIT_SIZE_INTER_SERVER = 8388608; // 每卡通信量的切分边界
 
+enum TemplateType {
+    // 内置template
+    TEMPLATE_ALL_GATHER_HD_STAGE = 0,               // AllGatherHDStage
+    TEMPLATE_ALL_2_ALL_V_DIRECT_FULL_MESH = 1,      // AlltoAllVDirectFullMesh
+    TEMPLATE_ALL_REDUCE_REDUCE_BCAST = 2,           // AllReduceReduceBcast
+    TEMPLATE_BROADCAST_NHR_V1 = 3,                  // BroadcastNHRV1
+
+    TEMPLATE_NATIVE_MAX_NUM,                        // 内置template最大值
+
+    TEMPLATE_CUSTOM_BEGIN = 1000,                   // 用户自定义template起始值
+    TEMPLATE_CUSTOM_MAX_NUM = 2000                  // 用户自定义template最大值
+};
+
 enum class SliceType {
     SLICE_TYPE_TX,
     SLICE_TYPE_RX
@@ -63,10 +78,6 @@ enum class HalvingDoublingType {
 };
 
 using SliceType = enum SliceType;
-struct Slice {
-    u64 offset{0}; // Slice相对于input/output的偏移字节数，gather类操作取output，scatter类操作取input
-    u64 size{0};    // Slice的数据大小，单位：字节
-};
 
 enum class RunStage {
     RUN_PREPARE,
@@ -76,16 +87,62 @@ enum class RunStage {
     RUN_DEFAULT
 };
 
+struct PrepareData {
+    u32 root = INVALID_VALUE_RANKID;
+    u32 userRank = INVALID_VALUE_RANKID;
+    u32 userRankSize = 0;
+    u32 interRank = INVALID_VALUE_RANKID;
+    u32 interRankSize = 0;
+
+    u64 count = 0;
+    HcclDataType dataType = HCCL_DATA_TYPE_RESERVED;
+    HcclReduceOp reductionOp = HCCL_REDUCE_RESERVED;
+    u64 baseOffset = 0;
+
+    DeviceMem inputMem;
+    DeviceMem outputMem;
+    DeviceMem scratchMem;
+    DeviceMem cclInMem;
+    DeviceMem cclOutMem;
+
+    Stream stream;
+    const std::vector<Stream>* subStreamsPtr = nullptr;
+    const std::vector<std::shared_ptr<LocalNotify>>* signalPtr = nullptr;
+    const std::vector<std::shared_ptr<LocalNotify>>* signalAuxPtr = nullptr;
+
+    const std::vector<LINK>* linksPtr = nullptr;
+    const std::vector<Slice>* slicesPtr = nullptr;
+    const std::vector<std::vector<Slice>>* multRingsSlicesPtr = nullptr;
+    const std::vector<u32>* nicRankListPtr = nullptr;
+
+    HcclWorkflowMode workMode = HcclWorkflowMode::HCCL_WORKFLOW_MODE_RESERVED;
+    HcomCollOpInfo *opInfo = nullptr;
+    bool disableDMAReduce = false;
+    bool isSuPodAsym = false;
+    HcclCMDType opType = HcclCMDType::HCCL_CMD_INVALID;
+
+    const SendRecvInfo *localSendRecvInfoPtr = nullptr;
+    u32 devNumInlocalPod = 0;
+    u32 rankIdxInPod = 0;
+    u64 reduceAttr = 0;
+
+    AlgOpContext algOpContext;
+};
+
+struct HcclTopoInfo;
+class TopoMatcher;
 class ExecutorBase {
 public:
     explicit ExecutorBase(const HcclDispatcher dispatcher);
     virtual ~ExecutorBase();
 
+    virtual HcclResult RunAsync();
     virtual HcclResult RunAsync(const u32 rank, const u32 rankSize,
         const std::vector<std::shared_ptr<Transport> > &links);
     virtual HcclResult RunAsyncStaged(const u32 rank, const u32 rankSize,
         const std::vector<std::shared_ptr<Transport> > &links, RunStage stage);
-    HcclResult Prepare(DeviceMem &inputMem, DeviceMem &outputMem, DeviceMem &scratchMem, const u64 count,
+
+    virtual HcclResult Prepare(DeviceMem &inputMem, DeviceMem &outputMem, DeviceMem &scratchMem, const u64 count,
                          const HcclDataType dataType, const Stream &stream,
                          const HcclReduceOp reductionOp = HCCL_REDUCE_RESERVED,
                          const u32 root = INVALID_VALUE_RANKID,
@@ -93,13 +150,14 @@ public:
                          const u64 baseOffset = 0, std::vector<u32> nicRankList = {0, 1, 2, 3, 4, 5, 6, 7},
                          const bool disableDMAReduce = false);
 
-    HcclResult Prepare(DeviceMem &inputMem, DeviceMem &scratchMem, const u64 count,
+    virtual HcclResult Prepare(DeviceMem &inputMem, DeviceMem &scratchMem, const u64 count,
                          const HcclDataType dataType,
                          const Stream &stream, const HcclReduceOp reductionOp = HCCL_REDUCE_RESERVED,
                          const u32 root = INVALID_VALUE_RANKID,
                          const std::vector<Slice> &slices = std::vector<Slice>(ZERO_SLICE),
                          const u64 baseOffset = 0, std::vector<u32> nicRankList = {0, 1, 2, 3, 4, 5, 6, 7},
                          const bool disableDMAReduce = false);
+
     virtual HcclResult Prepare(DeviceMem &inputMem, DeviceMem &outputMem, DeviceMem &scratchMem, const u64 count,
                         const HcclDataType dataType, const Stream &stream,
                         const std::vector<std::vector<Slice>> &multRingsSlices,
@@ -107,6 +165,9 @@ public:
                         const u32 root = INVALID_VALUE_RANKID,
                         const u64 baseOffset = 0,
                         const bool disableDMAReduce = false);
+
+    virtual HcclResult Prepare(PrepareData &param);
+
     HcclResult Sum(const std::vector<Slice> &inputSlices, u32 start, u32 num, u64 &sizeOut);
     HcclResult RegisterProfiler(s32 planeId, s32 stage, s32 step, const Stream &stream);
     static HcclResult ExecEmptyTask(DeviceMem &inputMem, DeviceMem &outputMem, Stream &stream,
@@ -189,6 +250,7 @@ protected:
     bool barrierSwitchOn_;
     // 用于91093 aligend double ring算法
     std::vector<std::vector<Slice>> multRingsSlices_;
+    AlgOpContext algOpContext_;
 private:
     static void CalcBinaryBlockParams(u32 rank, u32 rankSize, u32 &stepsInBlock, u32 &lowerBlockSize,
         u32 &myBlockSize, u32 &rankInMyBlock, u32 &myBlockOffset, u32 &higherBlockSize);

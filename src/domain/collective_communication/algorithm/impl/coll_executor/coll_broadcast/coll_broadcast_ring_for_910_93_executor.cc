@@ -62,7 +62,16 @@ HcclResult CollBroadCastRingFor91093::CalcLevel2CommInfo(TransportMemType inputT
     std::vector<LevelNSubCommTransport>& opTransport)
 {
     CommParaInfo commParaLevel2(COMM_LEVEL2, CommType::COMM_TAG_MAX);
-    commParaLevel2.commType = CommType::COMM_TAG_HALVING_DOUBLING;
+    if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NHR) {
+        commParaLevel2.commType = CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING;
+        HCCL_INFO("[%s]Calc NHRCommInfo", __func__);
+    } else if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NB) {
+        commParaLevel2.commType = CommType::COMM_TAG_NONUNIFORM_BRUCK;
+        HCCL_INFO("[%s]Calc NBCommInfo", __func__);
+    } else {
+        commParaLevel2.commType = CommType::COMM_TAG_HALVING_DOUBLING;
+        HCCL_INFO("[%s]Calc HDCommInfo", __func__);
+    }
 
     CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel2, opTransport[COMM_LEVEL2], inputType, outputType));
     return HCCL_SUCCESS;
@@ -73,8 +82,8 @@ HcclResult CollBroadCastRingFor91093::KernelRun(const OpParam &param, ExecMem &e
     HCCL_INFO("[BroadCastOperator][CollBroadCastRingFor91093] The CollBroadCastRingFor91093 starts.");
     u32 perDataSize = 0;
     CHK_RET(SalGetDataTypeSize(param.DataDes.dataType, perDataSize));
-    CHK_PRT_RET(perDataSize == 0, 
-        HCCL_ERROR("[CollBroadCastRingFor91093][KernelRun]errNo[0x%01611x] datatype[%d] is invalid", 
+    CHK_PRT_RET(perDataSize == 0,
+        HCCL_ERROR("[CollBroadCastRingFor91093][KernelRun]errNo[0x%01611x] datatype[%d] is invalid",
             HCCL_ERROR_CODE(HCCL_E_PARA), param.DataDes.dataType), HCCL_E_PARA);
     std::vector<Slice> dataSegsSlice; // 数据分成ranksize份，每份的起始偏移和大小
     std::vector<std::vector<Slice>> mulRingSlice;  // 数据基于该rank上环0的偏移
@@ -136,9 +145,10 @@ HcclResult CollBroadCastRingFor91093::KernelRun(const OpParam &param, ExecMem &e
     if (topoAttr_.superPodNum <= 1) {
         HCCL_INFO("Broadcast double ring No level2.");
         /* step2: server间 broadcast */
+        bool isUsedRegister = false;
         std::unique_ptr<AlgTemplateBase> level1TempAlg;
         u64 curSize = execMem.count * SIZE_TABLE[param.DataDes.dataType];
-        if (UseInterServerNHRAlgo(algType_)) {
+        if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
             HCCL_DEBUG("broadcast ring: curSize[%llu] deviceNumPerAggregation[%u] commLevel0Size[%u]",
                 curSize, topoAttr_.deviceNumPerAggregation, level0CommInfo.localRankSize);
             if (curSize / topoAttr_.deviceNumPerAggregation <= NHR_BCAST_SMALL_SIZE) {
@@ -147,10 +157,12 @@ HcclResult CollBroadCastRingFor91093::KernelRun(const OpParam &param, ExecMem &e
                 level1TempAlg.reset(new (std::nothrow) BroadcastNHR(dispatcher_));
             }
             HCCL_INFO("broadcast ring: using nhr algo inter-server.");
-        } else if (UseInterServerNHRV1Algo(algType_)) {
-            level1TempAlg.reset(new (std::nothrow) BroadcastNHRV1(dispatcher_));
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
+            isUsedRegister = true;
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_BROADCAST_NHR_V1,
+                dispatcher_);
             HCCL_INFO("broadcast ring: using nhr_v1 algo inter-server.");
-        } else if (UseInterServerNBAlgo(algType_)) {
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
             const u32 level1RankSize = level1CommInfo.localRankSize;
             if (ShouldUseBinaryBroadcastOfNB(curSize / topoAttr_.deviceNumPerAggregation, level1RankSize,
                                              topoAttr_.userRankSize, topoAttr_.deviceNumPerAggregation)) {
@@ -173,9 +185,23 @@ HcclResult CollBroadCastRingFor91093::KernelRun(const OpParam &param, ExecMem &e
         CHK_RET(GetRankByUserRank(COMM_LEVEL1, commIndex, subUserrankRoot, planeRoot));
         u32 ranksize = level1CommInfo.localRankSize;
         // 节点间的hd 使用环0来记录
-        CHK_RET(level1TempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.outputMem, level1DataCount, 
-            param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, planeRoot, std::vector<Slice>(0),
-            dataSegsSlice[segmentIdx].offset));
+        if (isUsedRegister) {
+            PrepareData prepareData;
+            prepareData.inputMem = execMem.inputMem;
+            prepareData.outputMem = execMem.inputMem;
+            prepareData.scratchMem = execMem.outputMem;
+            prepareData.count = level1DataCount;
+            prepareData.dataType = param.DataDes.dataType;
+            prepareData.stream = param.stream;
+            prepareData.reductionOp = HCCL_REDUCE_RESERVED;
+            prepareData.root = planeRoot;
+            prepareData.baseOffset = dataSegsSlice[segmentIdx].offset;
+            CHK_RET(level1TempAlg->Prepare(prepareData));
+        } else {
+            CHK_RET(level1TempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.outputMem, level1DataCount,
+                param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, planeRoot, std::vector<Slice>(0),
+                dataSegsSlice[segmentIdx].offset));
+        }
 
         CHK_RET(level1TempAlg->RegisterProfiler((ranksize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1CommInfo.localRank,
             PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
@@ -198,14 +224,14 @@ HcclResult CollBroadCastRingFor91093::KernelRun(const OpParam &param, ExecMem &e
 
         if (level1RankSize > 1) {
             std::unique_ptr<AlgTemplateBase> level1TempAlg;
-            if (UseInterServerNHRAlgo(algType_)) {
+            if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
                 level1TempAlg.reset(new (std::nothrow) ScatterNHR(dispatcher_));
                 HCCL_INFO("broadcast ring: using nhr algo inter-server.");
-            } else if (UseInterServerNBAlgo(algType_)) {
+            } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
                 level1TempAlg.reset(new (std::nothrow) ScatterNB(dispatcher_));
                 HCCL_INFO("broadcast ring: using nonuniform-bruck algo inter-server.");
             } else {
-                HCCL_ERROR("broadcast level1 only supports NB/NHR algo. not support algType[%u]", algType_);
+                HCCL_ERROR("broadcast level1 only supports NB/NHR algo. not support algType_[%u]", algType_.algoLevel1);
                 return HCCL_E_NOT_SUPPORT;
             }
             CHK_SMART_PTR_NULL(level1TempAlg);
@@ -246,9 +272,16 @@ HcclResult CollBroadCastRingFor91093::KernelRun(const OpParam &param, ExecMem &e
             subUserrankRootSupperPod, planeRootSupperPod);
 
         std::unique_ptr<AlgTemplateBase> level2TempAlg;
-        level2TempAlg.reset(new (std::nothrow) BcastRecursiveHalvingDoubling(dispatcher_));
-        HCCL_INFO("[superpod]Broadcast level2-broadcast: using Recursive halving-doubling algo inter-superPod.");
-
+        if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NB) {
+            level2TempAlg.reset(new (std::nothrow) BroadcastNB(dispatcher_));
+            HCCL_INFO("[superpod]Broadcast level2-broadcast: using nonuniform-bruck algo inter-superPod.");
+        } else if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NHR) {
+            level2TempAlg.reset(new (std::nothrow) BroadcastNHR(dispatcher_));
+            HCCL_INFO("[superpod]Broadcast level2-broadcast: using nonuniform-hierarchical-ring algo inter-superPod.");
+        } else {
+            level2TempAlg.reset(new (std::nothrow) BcastRecursiveHalvingDoubling(dispatcher_));
+            HCCL_INFO("[superpod]Broadcast level2-broadcast: using Recursive halving-doubling algo inter-superPod.");
+        }
         CHK_SMART_PTR_NULL(level2TempAlg);
         u64 bcastCount = dataSegsSlice[localRank].size / perDataSize;
 
@@ -268,14 +301,14 @@ HcclResult CollBroadCastRingFor91093::KernelRun(const OpParam &param, ExecMem &e
         /* step4: 节点间 allgather */
         if (level1RankSize > 1) {
             std::unique_ptr<AlgTemplateBase> level1AGTempAlg;
-            if (UseInterServerNBAlgo(algType_)) {
+            if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
                 level1AGTempAlg.reset(new (std::nothrow) AllGatherNB(dispatcher_));
                 HCCL_INFO("allgather ring: using nonuniform-bruck algo inter-server.");
-            } else if (UseInterServerNHRAlgo(algType_)) {
+            } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
                 level1AGTempAlg.reset(new (std::nothrow) AllGatherNHR(dispatcher_));
                 HCCL_INFO("allgather ring: using nonuniform-hierarchical-ring algo inter-server.");
             } else {
-                HCCL_ERROR("allgather ring: algType[%u] is not supported.", algType_);
+                HCCL_ERROR("allgather ring: algType_[%u] is not supported.", algType_.algoLevel1);
                 return HCCL_E_NOT_SUPPORT;
             }
 

@@ -528,7 +528,7 @@ HcclResult CollCommExecutor::Level1AllGatherConcurrent(DeviceMem inputMem, Devic
         SubCommInfo level1RdmaCommInfo = GetSubCommInfo(COMM_LEVEL1_ANYPATH_RDMA, level0ServerIndex);
         SubCommInfo level1TempCommInfo = level1MultSlice[planeIndex].first ? level1CommInfo : level1RdmaCommInfo;
         std::unique_ptr<AlgTemplateBase> level1TempAlg;
-        if (UseInterServerNBAlgo(algType_)) {
+        if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
             level1TempAlg.reset(new (std::nothrow) AllGatherNB(dispatcher_));
             HCCL_INFO("allgather ring: using nonuniform-bruck algo inter-server.");
         } else {
@@ -1105,7 +1105,7 @@ HcclResult CollCommExecutor::Level1ReduceScatterConcurrent(DeviceMem inputMem, D
         std::vector<Slice> &singleSlice = level1MultSlice[planeIndex].second;
         SubCommInfo level1TempCommInfo = level1MultSlice[planeIndex].first ? level1CommInfo : level1RdmaCommInfo;
         std::unique_ptr<AlgTemplateBase> level1TempAlg;
-        if (UseInterServerNBAlgo(algType_)) {
+        if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
             level1TempAlg.reset(new (std::nothrow) ReduceScatterNB(dispatcher_, reduceAttr));
             HCCL_INFO("reducescatter ring: using nonuniform-bruck algo inter-server.");
         } else {
@@ -1193,7 +1193,7 @@ HcclResult CollCommExecutor::Level1AllReduceConcurrent(DeviceMem inputMem, Devic
         u64 SliceCount = dmaSlice.size / perDataSize;
         u64 reduceAttr = GetReduceAttr(allreduceInput, allreduceOutput, dataType, reductionOp);
         std::unique_ptr<AlgTemplateBase> level1TempAlg;
-        if (UseInterServerNBAlgo(algType_)) {
+        if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
             level1TempAlg.reset(new (std::nothrow) AllReduceNB(dispatcher_, reduceAttr));
             HCCL_INFO("allreduce ring: using nonuniform-bruck algo inter-server.");
         } else {
@@ -1832,7 +1832,7 @@ u64 CollCommExecutor::GetReduceAttr(DeviceMem &inputMem, DeviceMem &outputMem, H
         SalSetBitOne(reduceAttr, ATTR_POS_INLINE_REDUCE);
     }
 
-    bool isRdmaReduce = IsOverFlowInfNanMode() && IsSupportRDMAReduce(dataType, op);
+    bool isRdmaReduce = IsSupportRDMAReduce(dataType, op);
     if (isRdmaReduce) {
         SalSetBitOne(reduceAttr, ATTR_POS_SUPPORT_RDMA_REDUCE);
     }

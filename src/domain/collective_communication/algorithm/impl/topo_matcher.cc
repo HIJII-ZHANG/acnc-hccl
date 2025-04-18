@@ -81,7 +81,7 @@ HcclResult TopoMatcher::CalcCommPlaneInfo(const std::string &tag, const CommPara
                 topoInfo_.CommPlaneSubGroupVector[commParaInfo.commPlane].size() == 0,
                 HCCL_ERROR("[TopoMatcher][CalcCommPlaneInfo] CommPlaneSubGroupVector para init error."), HCCL_E_PARA);
             calcTransportReq.reset(new (std::nothrow) CalcAHCTransportReq(CommPlaneVector_[commParaInfo.commPlane],
-                isBridgeVector_, userRank_, topoInfo_.CommPlaneSubGroupVector[commParaInfo.commPlane]));
+                isBridgeVector_, userRank_, topoInfo_.CommPlaneSubGroupVector[commParaInfo.commPlane][0]));
             break;
         }
         case CommType::COMM_TAG_ASYMMETRIC_HIERARCHICAL_CONCATENATE_BROKE:
@@ -91,7 +91,7 @@ HcclResult TopoMatcher::CalcCommPlaneInfo(const std::string &tag, const CommPara
                 topoInfo_.CommPlaneSubGroupVector[commParaInfo.commPlane].size() == 0,
                 HCCL_ERROR("[TopoMatcher][CalcCommPlaneInfo] CommPlaneSubGroupVector para init error."), HCCL_E_PARA);
             calcTransportReq.reset(new (std::nothrow) CalcAHCBrokeTransportReq(CommPlaneVector_[commParaInfo.commPlane],
-                isBridgeVector_, userRank_, topoInfo_.CommPlaneSubGroupVector[commParaInfo.commPlane]));
+                isBridgeVector_, userRank_, topoInfo_.CommPlaneSubGroupVector[commParaInfo.commPlane][0]));
             break;
         }
         case CommType::COMM_TAG_NONUNIFORM_BRUCK:
@@ -194,12 +194,6 @@ HcclResult TopoMatcher::GetIsUsedRdma(const CommParaInfo &commParaInfo, bool &is
         commP2PRankVec.push_back(topoInfo_.userRank);
         commP2PRankVec.push_back(commParaInfo.peerUserRank);
         commP2PPlaneVec.push_back(commP2PRankVec);
-    } else if (commParaInfo.commType == CommType::COMM_TAG_WHOLE_AHC ||
-               commParaInfo.commType == CommType::COMM_TAG_WHOLE_AHC_BROKE ||
-               commParaInfo.commType == CommType::COMM_TAG_ASYMMETRIC_HIERARCHICAL_CONCATENATE ||
-               commParaInfo.commType == CommType::COMM_TAG_ASYMMETRIC_HIERARCHICAL_CONCATENATE_BROKE) {
-        isUsedRdma = false;
-        return HCCL_SUCCESS;
     }
 
     std::vector<std::vector<u32> > &commPlaneVec = (commParaInfo.commType == CommType::COMM_TAG_P2P) ?
@@ -297,6 +291,7 @@ u32 TopoMatcher::GetExternalInputInterHccsDisable()
 
 bool CheckRankNeighbors(const std::vector<u32> &nicList)
 {
+    // 组成ROH环路必须偶数个,且2节点不能组成双环？
     if (nicList.size() % 2 != 0 || nicList.size() < HCCL_DEVICE_NUM_FOUR) {
         return false;
     }
@@ -315,6 +310,7 @@ bool CheckRankNeighbors(const std::vector<u32> &nicList)
     return true;
 }
 
+// 适配ROH平面网段隔离，奇数rank互通，偶数rank互通，奇偶不通
 bool TopoMatcher::CheckSdmaWithRohTopo(const std::vector<u32> &nicList, std::vector<u32> &topoList)
 {
     std::vector<u32> tmpNicList(nicList);
@@ -527,20 +523,59 @@ u8 TopoMatcher::GetDeterministicConfig() const
     return externalEnable_.deterministic;
 }
 
-bool TopoMatcher::GetLevelAsymType(const CommPlane level) const
-{
-    return topoInfo_.isAsymPlanVector[level];
-}
-
-HcclResult TopoMatcher::GetLevelSubGroups(const CommPlane level, std::vector<std::vector<u32>> &subGroups)
-{
-    subGroups = topoInfo_.CommPlaneSubGroupVector[level];
+HcclResult TopoMatcher::SetAivModeConfig(const bool aivMode)
+{   
+    HCCL_INFO("[SetAivMode]AivMode is set to [%d]", aivMode);
+    externalEnable_.aivMode = aivMode;
     return HCCL_SUCCESS;
 }
 
-HcclResult TopoMatcher::SetLevelSubGroups(const CommPlane level, std::vector<std::vector<u32>> &subGroups)
+bool TopoMatcher::GetAivModeConfig() const
 {
-    topoInfo_.CommPlaneSubGroupVector[level] = subGroups;
+    return externalEnable_.aivMode;
+}
+
+HcclResult TopoMatcher::SetAicpuUnfoldConfig(const bool aicpuUnfold)
+{   
+    HCCL_INFO("[SetAicpuMode]Aicpu is set to [%d]", aicpuUnfold);
+    externalEnable_.aicpuUnfold = aicpuUnfold;
+    return HCCL_SUCCESS;
+}
+
+bool TopoMatcher::GetAicpuUnfoldConfig() const
+{
+    return externalEnable_.aicpuUnfold;
+}
+
+HcclResult TopoMatcher::GetGlobalSubGroups(const CommPlane level, std::vector<std::vector<std::vector<u32>>> &globalSubGroups)
+{
+    globalSubGroups = topoInfo_.CommPlaneSubGroupVector[level];
+    CHK_PRT_RET(globalSubGroups.size() == 0,
+        HCCL_ERROR("[TopoMatcher][GetGlobalSubGroups] globalSubGroups para init error."), HCCL_E_PARA);
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoMatcher::SetGlobalSubGroups(const CommPlane level, std::vector<std::vector<std::vector<u32>>> &globalSubGroups)
+{
+    topoInfo_.CommPlaneSubGroupVector[level] = globalSubGroups;
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoMatcher::GetCommPlaneSubGroupVector(std::vector<std::vector<std::vector<std::vector<u32>>>> &commPlaneSubGroupVector)
+{
+    commPlaneSubGroupVector = topoInfo_.CommPlaneSubGroupVector;
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoMatcher::SetCommPlaneSubGroupVector(std::vector<std::vector<std::vector<std::vector<u32>>>> &commPlaneSubGroupVector)
+{
+    topoInfo_.CommPlaneSubGroupVector = commPlaneSubGroupVector;
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoMatcher::GetAHCAlgOption(std::map<std::string, std::string> &ahcAlgOption)
+{
+    ahcAlgOption = topoInfo_.ahcAlgOption;
     return HCCL_SUCCESS;
 }
 

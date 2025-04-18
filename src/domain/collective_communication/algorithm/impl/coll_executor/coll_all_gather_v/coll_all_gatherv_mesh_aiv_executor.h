@@ -23,7 +23,6 @@ public:
 
 private:
     /* *************** 资源计算 *************** */
-    void ParseParam(const OpParam& param) override;
     HcclResult GetIfNeedAivBuffer(bool &needAivBuffer) override;
     HcclResult CalcCommInfo(std::vector<LevelNSubCommTransport>& opTransport) override;
     HcclResult CalcLevel0CommInfo(TransportMemType inputType,
@@ -33,7 +32,6 @@ private:
 
     /* *************** 算法编排 *************** */
     HcclResult KernelRun(const OpParam &param, ExecMem &execMem) override;
-    bool isBigData_;
 };
 
 } // namespace hccl

@@ -47,5 +47,5 @@ HcclResult GetServerNum(const std::vector<hccl::RankInfo> &rankList, u32 &server
 HcclResult GetSuperPodNum(const std::vector<hccl::RankInfo_t> &rankList, u32 &superPodNum);
 HcclResult GetSuperPodNum(const std::vector<hccl::RankInfo> &rankList, u32 &superPodNum);
 void SetRetryEnable(DevType deviceType, const u32 &superPodNum, const u32 &serverNum,
-    const u32 &deviceNumPerAggregation, bool &retryEnable);
+    const u32 &deviceNumPerAggregation, const bool &isDiffDeviceType, bool &retryEnable);
 #endif  // CONFIG_H

@@ -33,17 +33,8 @@ HcclResult CollScatterRingExecutor::CalcLevel0CommInfo(TransportMemType inputTyp
 HcclResult CollScatterRingExecutor::CalcStreamNum(u32& streamNum)
 {
     u32 totalStreamNum = LEVEL0_PLANE_NUM_IN_NPRING_SINGLE;
-    switch (algType_) {
-        case AlgType::ALG_8P_RING_PLUS_HD:
-        case AlgType::ALG_8P_RING_PLUS_RING:
-        case AlgType::ALG_8P_RING_PLUS_NHR:
-        case AlgType::ALG_8P_RING_PLUS_NHR_V1:
-        case AlgType::ALG_8P_RING_PLUS_NB:
-        case AlgType::ALG_8P_RING_PLUS_PIPELINE:
-            totalStreamNum = LEVEL0_PLANE_NUM_IN_8PRING;
-            break;
-        default:
-            break;
+    if (algType_.algoLevel0 == AlgTypeLevel0::ALG_LEVEL0_8P_RING) {
+        totalStreamNum = LEVEL0_PLANE_NUM_IN_8PRING;
     }
     streamNum = totalStreamNum - 1;
     HCCL_INFO("[CollScatterRingExecutor][CalcStreamNum] tag[%s] streamNum[%u]", tag_.c_str(), streamNum);

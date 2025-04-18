@@ -46,7 +46,7 @@ HcclResult ReduceScatterVOperator::SelectAlg(const std::string& tag, const OpPar
         if (deviceType_ == DevType::DEV_TYPE_310P3) {
             newTag = tag + algName;
         } else {
-            AlgTypeLevel1 algType1 = GetLevel1AlgType(algType_);
+            AlgTypeLevel1 algType1 = algType_.algoLevel1;
             auto level1Iter = HCCL_ALGO_LEVEL1_NAME_MAP.find(algType1);
             CHK_PRT_RET(level1Iter == HCCL_ALGO_LEVEL1_NAME_MAP.end(),
                 HCCL_ERROR("level1: algType1[%u] is invalid.", algType1), HCCL_E_INTERNAL);
@@ -67,26 +67,23 @@ HcclResult ReduceScatterVOperator::SelectAlg(const std::string& tag, const OpPar
 
 HcclResult ReduceScatterVOperator::SelectAlgfor910B(const OpParam& param, std::string& algName)
 {
-    if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE &&
-        IsSupportSDMAReduce(cclBufferManager_.GetInCCLbuffer().ptr(),
-            cclBufferManager_.GetOutCCLbuffer().ptr(), param.VDataDes.dataType, param.reduceType)) {
-        algName = "ReduceScatterVMeshOpbaseExecutor";
+    if(!isSingleMeshAggregation_) {
+        HCCL_ERROR("[ReduceScatterVOperator][SelectAlgforA2] ReduceScatterV only support one module.");
+        return HCCL_E_NOT_SUPPORT;
     }
+
     const auto *countsPtr = static_cast<const u64*>(param.VDataDes.counts);
     auto countsPerRank = std::vector<u64>(countsPtr, countsPtr + userRankSize_);
     u64 maxCount = *std::max_element(countsPerRank.begin(), countsPerRank.end());
     u32 unitSize = SIZE_TABLE[param.VDataDes.dataType];
     u64 maxDataSize = maxCount * unitSize; // 单位：字节
     // 910B单机AIV模式下ReduceScatterV算子当前仅支持单卡数据量不大于256M的场景，大于256M暂不支持
-    bool isAivMode = GetExternalInputHcclAivMode() && isSingleMeshAggregation_ && maxDataSize <= AIV_BIG_SIZE
+    bool isAivMode = topoMatcher_->GetAivModeConfig() && isSingleMeshAggregation_ && maxDataSize <= AIV_BIG_SIZE
         && IsSupportAIVReduce(param.VDataDes.dataType, param.reduceType)
         && topoMatcher_->GetDeterministicConfig() == DETERMINISTIC_CONFIG_DISABLE;
     HCCL_INFO("[ReduceScatterVOperator][SelectAlgfor910B]isAivMode[%d], maxCount[%llu], maxDataSize[%llu], "
         "deterministic[%u], isSingleMeshAggregation[%d].", isAivMode, maxCount, maxDataSize,
         topoMatcher_->GetDeterministicConfig(), isSingleMeshAggregation_);
-
-    bool sdmaReduce = IsSupportSDMAReduce(cclBufferManager_.GetInCCLbuffer().ptr(),
-            cclBufferManager_.GetOutCCLbuffer().ptr(), param.VDataDes.dataType, param.reduceType);
 
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && isAivMode) {
         if (maxDataSize > AIV_REDUCE_SCATTER_MID_SIZE) {
@@ -94,10 +91,15 @@ HcclResult ReduceScatterVOperator::SelectAlgfor910B(const OpParam& param, std::s
         } else {
             algName = "ReduceScatterVMeshAivSmallCountExecutor";
         }
-    } else if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && sdmaReduce) {
+    } else if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE &&
+        IsSupportSDMAReduce(cclBufferManager_.GetInCCLbuffer().ptr(),
+            cclBufferManager_.GetOutCCLbuffer().ptr(), param.VDataDes.dataType, param.reduceType)) {
         algName = "ReduceScatterVMeshOpbaseExecutor";
+    } else if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB &&
+        IsSupportSDMAReduce(param.inputPtr, param.outputPtr, param.VDataDes.dataType, param.reduceType)) {
+        algName = "ReduceScatterVMeshExecutor";
     } else {
-        HCCL_ERROR("[ReduceScatterVOperator][SelectAlgforA2] ReduceScatterV only support op base with inlinereduce.");
+        HCCL_ERROR("[ReduceScatterVOperator][SelectAlgforA2] ReduceScatterV only support inlinereduce.");
         return HCCL_E_NOT_SUPPORT;
     }
     HCCL_INFO("[SelectAlgforA2] reduce_scatter_v SelectAlgforA2 is algName [%s]", algName.c_str());

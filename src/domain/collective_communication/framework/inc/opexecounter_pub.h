@@ -16,6 +16,7 @@
 #include <memory>
 #include "dispatcher.h"
 #include "hccl/hccl_types.h"
+#include "aicpu_operator_pub.h"
 
 namespace hccl {
 
@@ -25,6 +26,7 @@ constexpr int TAIL = 1;
 HcclResult StarsCounter(const HcclDispatcher &dispatcher, Stream &stream, int flag);
 HcclResult FftsHeadCounter(const HcclDispatcher &dispatcher, Stream &stream);
 HcclResult FftsTailCounter(const HcclDispatcher &dispatcher, Stream &stream);
+HcclResult GetOpCountInfo(OpCounterInfo &opCounterInfo);
 
 class OpExeCounter {
 public:
@@ -33,6 +35,7 @@ public:
     HcclResult GetCounter(std::pair<int32_t, int32_t> &counter);
     HcclResult InitCounter();
     HcclResult DeInitCounter();
+    HcclResult GetOpCountInfo(OpCounterInfo &opCounterInfo);
 
 private:
     OpExeCounter() = default;
@@ -42,6 +45,7 @@ private:
     void* tailCountMem_{};
     void* addOneMem_{};
     int refCount_ = 0;
+    uint32_t memSize_ = 0;
     bool isNeedOpCounter_ = false;
 };
 } // namespace hccl

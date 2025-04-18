@@ -70,6 +70,7 @@ HcclResult CollAllReduceMeshMidCountExecutor::CalcLevel0CommInfo(TransportMemTyp
 
 bool CollAllReduceMeshMidCountExecutor::IsHugeData(const u64 curSize)
 {
+    // 只有server内通信，多QP哈希散列下不刷新子图
     bool hugeData = curSize > SDMA_SEND_MAX_SIZE;
     return hugeData;
 }

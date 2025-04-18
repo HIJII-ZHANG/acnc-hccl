@@ -17,6 +17,8 @@
 #include "device_capacity.h"
 #include "p2p_mgmt_pub.h"
 #include "rank_consistentcy_checker.h"
+#include "transport_common.h"
+
 namespace hccl {
 constexpr s32 HCCL_DEFAULT_INITIAL_VALUE = -1;
 CommBase::CommBase(const std::string &collectiveId, const u32 userRank, const u32 userRankSize,
@@ -211,10 +213,10 @@ u32 CommBase::GetSocketsPerLink()
                 paraVector_[rank_].deviceType  == DevType::DEV_TYPE_910_93;
     if (GetExternalInputQpSrcPortConfigPath() != "" &&
         GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && multiQpDevType) {
-        return 2;
+        return 2; // 2：多QP方式下额外创建一个socket用于同步QP状态迁移完成状态
     } else if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT &&
                GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && multiQpDevType) {
-        return 2;
+        return 2; // 2：多QP方式下额外创建一个socket用于同步QP状态迁移完成状态
     }
     return 1;
 }
@@ -397,7 +399,7 @@ HcclResult CommBase::CreateIntraThread(const u32 role, u32 dstRank,
             new (std::nothrow) std::thread(&CommBase::CreateDestLink, this, hrtErrMGetErrorContextPub(),
                 MachineType::MACHINE_CLIENT_TYPE, paraVector_[rank_].serverId, dstRank, threadStr, sockets));
     }
-    
+
     if (!linkThreads_[threadsRapplyNum_]) {
         HCCL_ERROR("[Create][IntraThread] link threads[%u] reset failed.", threadsRapplyNum_);
         return HCCL_E_INTERNAL;
@@ -444,7 +446,6 @@ HcclResult CommBase::CreateInterLinks()
     interSocketManager_.reset(
         new (std::nothrow) HcclSocketManager(nicDeployInner_, deviceLogicId_, devicePhyId_, userRank_));
     CHK_PTR_NULL(interSocketManager_);
-    CHK_RET(interSocketManager_->Init());
 
     if (dstInterServerMap_.size() + dstInterClientMap_.size() == 0) {
         HCCL_DEBUG("[Create][InterLinks] do not need create links.");
@@ -526,15 +527,14 @@ HcclResult CommBase::CreateInterThread(const u32 role, u32 dstRank,
 
 u32 CommBase::GetInterRemotePort(s32 devicePhyId, u32 dstUserRank)
 {
-    if (!GetExternalInputHcclDeviceNicDisable() &&
-        (!ranksPort_.size() || ranksPort_[dstUserRank] == HCCL_INVALIED_IF_BASE_PORT ||
-        (!isUseRankPort_ && !Is310PDevice()))) {
+    if (isUseRankPort_ && dstUserRank < ranksPort_.size() && ranksPort_[dstUserRank] != HCCL_INVALID_PORT) {
+        HCCL_INFO("[GetInterRemotePort] port[%u] from ranks port", ranksPort_[dstUserRank]);
+        return ranksPort_[dstUserRank];
+    } else if (!GetExternalInputHcclDeviceNicDisable() && !GetExternalInputHcclHostRdmaEnable()
+        && (!isUseRankPort_ && !Is310PDevice())) {
         HCCL_INFO("[GetInterRemotePort] port[%u]", HETEROG_CCL_PORT);
         return HETEROG_CCL_PORT;
-    } else if (isUseRankPort_ && ranksPort_.size()) {
-        // 此处应使用RankInfo中的userRank而非算法的rank
-        return ranksPort_[dstUserRank];
-    } else if (GetExternalInputHcclIfBasePort() == HCCL_INVALIED_IF_BASE_PORT) {
+    } else if (GetExternalInputHcclIfBasePort() == HCCL_INVALID_PORT) {
         return (devicePhyId + HOST_PARA_BASE_PORT);
     } else {
         return (devicePhyId + GetExternalInputHcclIfBasePort() + HCCL_AISERVER_DEVICE_NUM);
@@ -670,11 +670,11 @@ HcclResult CommBase::CreateDestLink(const ErrContextPub &error_context, const Ma
     if (ret != HCCL_SUCCESS) {
         transportInfo_[dstRank] = nullptr;
         if (ret == HCCL_E_MEMORY) {
-            RPT_INPUT_ERR(true, "EI0009", std::vector<std::string>({"reason"}),
-                std::vector<std::string>({"[Create][DestLink]Transport init error! IPC memory allocation failed due to "
+            std::string err_str = "[Create][DestLink]Transport init error! IPC memory allocation failed due to "
                 "possible memory limit exceeded. Suggested solution: Use 3TB / (ranksize * 2) as the upper limit of "
-                "HCCL_BUFFSIZE."}));
-            HCCL_ERROR("[Create][DestLink]Transport init error! IPC memory allocation failed.");
+                "HCCL_BUFFSIZE.";
+            RPT_INPUT_ERR(true, "EI0009", std::vector<std::string>({"reason"}), std::vector<std::string>({err_str}));
+            HCCL_ERROR("%s", err_str.c_str());
         }
         const std::string  CREATE_LINK_ERR = "[Create][DestLink]Create Dest error! creakLink para:rank[" + \
             std::to_string(rank_) + "]-localUserrank[" + std::to_string(paraVector_[rank_].worldRank) + \
@@ -787,6 +787,19 @@ HcclResult CommBase::SetMachinePara(MachineType machineType, const std::string &
     }
     machinePara.linkAttribute = 0x03; /* 0x03同时支持目的端和源端发起 */
     machinePara.tag = tag_;
+
+    // MoE算子优化，MC2 多机场景使用普通QP模式
+    const std::string &suffix = HCCL_MC2_MULTISERVER_SUFFIX;
+    if (tag_.size() > suffix.size() &&
+        tag_.compare(tag_.size() - suffix.size(), suffix.size(), suffix) == 0) {
+        bool isSupportNormalQP{false};
+        CHK_RET(IsSupportAicpuNormalQP(paraVector_[rank_].devicePhyId, isSupportNormalQP));
+        if (isSupportNormalQP) {
+            HCCL_INFO("[Set][MachinePara] Set machinePara.qpMode to [NORMAL]");
+            machinePara.qpMode = QPMode::NORMAL;
+        }
+    }
+
     // 把原来的两层vector变成一层, 方便后继调用
     for (u32 i = 0; i < socketList.size(); i++) {
         machinePara.sockets.push_back(socketList[i]);
@@ -1037,7 +1050,6 @@ HcclResult CommBase::GetRankIPInfo(bool isInterServer, bool isInterHccs, bool &i
         socketManager.reset(new (std::nothrow) HcclSocketManager(nicDeployInner_, deviceLogicId_,
             devicePhyId_, userRank_));
         CHK_PTR_NULL(socketManager);
-        CHK_RET(socketManager->Init());
     } else if (isInterServer && isInterHccs) {
         // 超节点间Hccs模式
         CHK_RET(GetSuperNodeIntraRankIPInfo(rankRole, localIP, dstServerMap, dstClientMap));

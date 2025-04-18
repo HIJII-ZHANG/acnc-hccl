@@ -28,9 +28,8 @@ HcclResult CollReduceScatterVExecutor::Orchestrate(OpParam& param, AlgResourceRe
     HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
 
     u64 count = static_cast<u64*>(param.VDataDes.counts)[topoAttr_.userRank];
-    HcclDataType dataType = param.VDataDes.dataType;
 
-    HCCL_PROFILER_ADD_OPDATA_OP(param.tag, count, param.inputPtr, param.outputPtr, dataType, \
+    HCCL_PROFILER_ADD_OPDATA_OP(param.tag, count, param.inputPtr, param.outputPtr, param.VDataDes.dataType, \
         INVALID_VALUE_RANKID, algoAttr_.identifier, param.reduceType);
     
     HCCL_PROFILER_ADD_GROUPRANK(algoAttr_.identifier, topoAttr_.userRankSize, topoAttr_.userRank);
@@ -48,7 +47,7 @@ HcclResult CollReduceScatterVExecutor::Orchestrate(OpParam& param, AlgResourceRe
         execMem.scratchMem = algRes.scratchMem;
         ret = KernelRun(param, execMem);
     } else {
-            ret = RunLoop(param, algRes); 
+        ret = RunLoop(param, algRes);
     }
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollReduceScatterVExecutor][Orchestrate]errNo[0x%016llx]excutor kernel run failed",
@@ -104,7 +103,14 @@ HcclResult CollReduceScatterVExecutor::RunLoop(OpParam &param, AlgResourceRespon
     u8 *curInputPtr = static_cast<u8 *>(param.inputPtr);
     u8 *curOutputPtr = static_cast<u8 *>(param.outputPtr);
     CHK_PTR_NULL(curInputPtr);
-    CHK_PTR_NULL(curOutputPtr);
+
+    if (UNLIKELY(countsLeft[topoAttr_.userRank] == 0 && curOutputPtr == nullptr)) {
+        // 若本rank的output count为0，此时允许curOutputPtr传入空指针，为保证后续流程正常执行，赋值为cclout的地址
+        curOutputPtr = static_cast<u8 *>(algRes.cclOutputMem.ptr());
+        HCCL_DEBUG("Since the output count is 0, set curOutputPtr to ccl output[%p]", curOutputPtr);
+    } else {
+        CHK_PTR_NULL(curOutputPtr);
+    }
 
     ReduceType reduceType = ((param.reduceType != HCCL_REDUCE_PROD) &&
         (dataType != HCCL_DATA_TYPE_INT64)) ?
@@ -183,7 +189,7 @@ HcclResult CollReduceScatterVExecutor::RunLoopInner(OpParam &param, const Reduce
 
     if (!is310P3Common_) {
         /* 设置子图复用标志 */
-        auto autoSelectedAlgTypeLevel1 = static_cast<u32>(algType_) >> HCCL_LEVEL_ALGO_WIDTH;
+        auto autoSelectedAlgTypeLevel1 = static_cast<u32>(algType_.algoLevel1);
         bool hugeData = IsHugeData(curSize);
         bool isDeterministic = topoMatcher_->GetExternalInputHcclDeterministic();
         auto opMeta = HcclOpMetaInfo::GetOneForReduceScatterV(autoSelectedAlgTypeLevel1,

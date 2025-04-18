@@ -40,13 +40,13 @@ private:
     HcclResult SimpleCheck(const u32 rank, const u32 rankSize, const std::vector<LINK> &links);
     HcclResult CheckSlices(const std::vector<Slice> &checkSlices, const u32 rankSize);
 
-    HcclResult RunSrcReducerNB(const u32 step, const u32 nSlices,
+    HcclResult RunSrcReducerNB(const u32 step, const u32 nSlices, const u32 sliceSize,
                                u32 txSliceIdx, const u32 deltaSliceIndex,
                                const LINK linkRight, const u32 rank,
                                const u32 rankSize, const std::vector<Slice> &inputSlices,
                                const std::vector<Slice> &outputSlices);
 
-    HcclResult RunDestReducerNB(const u32 step, const u32 nSteps,
+    HcclResult RunDestReducerNB(const u32 step, const u32 nSteps, const u32 sliceSize,
                                 const u32 nSlices, u32 rxSliceIdx,
                                 const u32 deltaSliceIndex, const LINK linkLeft,
                                 const u32 rank, const u32 rankSize,

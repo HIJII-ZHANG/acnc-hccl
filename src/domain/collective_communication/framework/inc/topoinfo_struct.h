@@ -18,9 +18,9 @@
 #include "base.h"
 #include "hccl_common.h"
 #include "adapter_pub.h"
+#include "externalinput_pub.h"
 
 namespace hccl {
-constexpr u32 HCCL_INVALIED_PORT = 65536;
 using NetworkInfo_t = struct tagNetworkInfo {
     std::string ethName;          // [DEPRECATED]网卡名, 用于获取PCIe总线信息, 网卡在device侧时无效
     HcclIpAddress ipAddr;         // [DEPRECATED]空字符串则表示没有配ip, 不得参与节点间通信
@@ -45,7 +45,9 @@ using DeviceInfo_t = struct tagDeviceInfo {
     std::vector<HcclIpAddress> deviceIp; // device 对应的网卡ip
     std::vector<HcclIpAddress> backupDeviceIp; // 同一卡另一个device的网卡ip，应用于重执行借轨场景
     HcclIpAddress refIp;                 // [DEPRECATED]device 对应的ref ip
-    u32 port { HCCL_INVALIED_PORT };
+    u32 port { HCCL_INVALID_PORT };
+    u32 vnicPort { HCCL_INVALID_PORT };
+    u32 backupPort { HCCL_INVALID_PORT };
 };
 
 using TransportInfo_t = struct tagTransportInfo {
@@ -62,7 +64,7 @@ using RankInfo_t = struct tagRankInfo {
     std::string superPodId;             // 超节点标识
     u32 superPodIdx = INVALID_UINT;     // SuperPod在ranktable中的自然顺序（用户指定）
     HcclIpAddress hostIp;               // 本server的host ip，用于host rdma通信
-    u32 hostPort = INVALID_UINT;        // 本rank进行host socket通信使用的端口
+    u32 hostPort = HCCL_INVALID_PORT;   // 本rank进行host socket通信使用的端口
     u32 nodeId = INVALID_UINT;          // 离线编译逻辑ranktable 和NumaConfig中的node id相同
     s32 itemId = INVALID_UINT;          // 离线编译逻辑ranktable 和NumaConfig中的item id相同
     std::string groupName;              // [DEPRECATED]group名称
@@ -96,7 +98,7 @@ using RoleTableNodeInfo = struct RoleTableNodeInfoTag {
     u32 port;
     u32 rankId;
     HcclIpAddress hostIp;
-    u32 hostPort;
+    u32 hostPort{HCCL_INVALID_PORT};
     s32 devicePhyId;
     RoleTableNodeInfoTag()
         : id(INVALID_UINT), port(INVALID_UINT), rankId(INVALID_UINT), hostPort(INVALID_UINT), devicePhyId(INVALID_INT)
@@ -129,6 +131,9 @@ const std::string PROP_SERVER_LIST = "server_list";
 const std::string PROP_DEV_ID = "device_id";
 const std::string PROP_DEV_TYPE = "device_type";
 const std::string PROP_DEV_IP = "device_ip";
+const std::string PROP_DEV_NIC_PORT = "device_port";
+const std::string PROP_DEV_VNIC_PORT = "device_vnic_port";
+const std::string PROP_BACKUP_DEV_PORT = "backup_device_port";
 const std::string PROP_BACKUP_DEV_IP = "backup_device_ip";
 const std::string PROP_HOST_IP = "host_ip";
 const std::string PROP_DEPLOY_MODE = "deploy_mode";

@@ -21,8 +21,10 @@ BroadCastOperator::BroadCastOperator(AlgConfigurator* algConfigurator, CCLBuffer
     : CollAlgOperator(algConfigurator, cclBufferManager, dispatcher, topoMatcher, HcclCMDType::HCCL_CMD_BROADCAST)
 {
     // 由于bcast暂不支持server间ring，需继续使用HD或NHR
-    if (!UseInterServerNHRAlgo(algType_) && !UseInterServerNHRV1Algo(algType_) && !UseInterServerNBAlgo(algType_)) {
-        SetInterServerHDAlgo(algType_);
+    if (!(algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) &&
+        !(algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) &&
+        !(algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB)) {
+        algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_HD;
         HCCL_WARNING("[BroadCastOperator][BroadCastOperator] do not support ring in AlgoLevel1 yet, reset algType=HD.");
     }
 }
@@ -55,7 +57,7 @@ HcclResult BroadCastOperator::SelectAlg(const std::string& tag, const OpParam& p
 
     if (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
         newTag = tag;
-    } else if (UseInterServerHDAlgo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_HD) {
         newTag = tag;
         u32 part1Size = 2 * (moduleNum_ - (1 << static_cast<u32>(log2(moduleNum_))));
         u32 rootId = param.root / deviceNumPerAggregation_;
@@ -67,7 +69,7 @@ HcclResult BroadCastOperator::SelectAlg(const std::string& tag, const OpParam& p
     } else if (Is310P3Common(isHaveCpuRank_, deviceType_)) {
         newTag = tag + algName;
     } else {
-        AlgTypeLevel1 algType1 = GetLevel1AlgType(algType_);
+        AlgTypeLevel1 algType1 = algType_.algoLevel1;
         auto level1Iter = HCCL_ALGO_LEVEL1_NAME_MAP.find(algType1);
         CHK_PRT_RET(level1Iter == HCCL_ALGO_LEVEL1_NAME_MAP.end(), HCCL_ERROR("level1: algType1[%u] is invalid.",
             algType1), HCCL_E_INTERNAL);
@@ -80,22 +82,18 @@ HcclResult BroadCastOperator::SelectAlg(const std::string& tag, const OpParam& p
 
 HcclResult BroadCastOperator::SelectAlgforMix(const OpParam& param, std::string& algName)
 {
-    HcclResult ret;
 
     if (gcdDeviceNumPerAggregation_ > 1) {
-        ret = SetInterServerNHRAlgo(algType_);
+        algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_NHR;
         HCCL_WARNING("[BroadCastOperator][SelectAlgforMix] only support NHR in AlgoLevel1 yet, "\
             "default is algType=NHR.");
         algName = "BroadCastMixExecutor";
     } else {
-        ret = SetInterServerRingAlgo(algType_);
+        algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_RING;
         HCCL_WARNING("[BroadCastOperator][SelectAlgforMix] only support ring in AlgoComm yet, "\
             "default is algType=ring.");
         algName = "BroadCastComm";
     }
-    CHK_PRT_RET(ret != HCCL_SUCCESS,
-        HCCL_ERROR("[BroadCastOperator][SelectAlgforMix]errNo[0x%016llx] tag[%s], BroadCast set inter server "\
-            "failed", HCCL_ERROR_CODE(ret), param.tag.c_str()), ret);
 
     HCCL_INFO("[SelectAlgforMix] broadcast SelectAlgforMix is algName [%s]", algName.c_str());
     return HCCL_SUCCESS;
@@ -155,10 +153,20 @@ HcclResult BroadCastOperator::SelectAlgfor910B(const OpParam& param, std::string
 HcclResult BroadCastOperator::SelectAlgfor91093(const OpParam& param, std::string& algName)
 {
     // level 1重定向为NHR, 因scatter && broadcast只支持nhr/nb
-    if (!UseInterServerNHRAlgo(algType_) && !UseInterServerNBAlgo(algType_)) {
-        CHK_RET(SetInterServerNHRAlgo(algType_));
+    if (!(algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) &&
+        !(algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB)) {
+        algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_NHR;
         HCCL_WARNING("[BroadCastOperator][BroadCastOperator] do not support ring in AlgoLevel1 yet, reset algType=NHR.");
     }
+
+    u32 unitSize = SIZE_TABLE[param.DataDes.dataType];
+    u64 dataSize = param.DataDes.count * unitSize; // 单位：字节
+    if (dataSize >= cclBufferManager_.GetInCCLbufferSize()) {
+        HCCL_WARNING("The current inCCLbufferSize is [%llu] bytes, change the HCCL_BUFFSIZE environment variable"\
+            "to be greater than the current data volume[%llu] bytes to improve the performance of the 91093 environment.",
+            cclBufferManager_.GetInCCLbufferSize(), dataSize);
+    }
+
     bool smallCountOptimSingleServer =
         (serverNum_ == 1) &&
         ((workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) ||
@@ -171,7 +179,7 @@ HcclResult BroadCastOperator::SelectAlgfor91093(const OpParam& param, std::strin
     if (multiModuleDiffDeviceNumMode_ || multiSuperPodDiffServerNumMode_ || smallCountOptimMultiServer) {
         algName = "BroadCastComm";
         if (smallCountOptimMultiServer) {
-            CHK_RET(SetInterServerNHRAlgo(algType_));
+            algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_NHR;
         }
     } else if (smallCountOptimSingleServer) {
         algName = "BroadCastSmallCountExecutor";

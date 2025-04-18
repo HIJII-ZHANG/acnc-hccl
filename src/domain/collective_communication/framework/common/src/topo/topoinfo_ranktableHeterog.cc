@@ -252,7 +252,7 @@ HcclResult TopoinfoRanktableHeterog::CheckHeterogSubVersion(std::string &subVers
 
 HcclResult TopoinfoRanktableHeterog::GetHostPort(const u32 &localRank, u32 &hostPort)
 {
-    u32 basePort = (GetExternalInputHcclIfBasePort() == HCCL_INVALIED_IF_BASE_PORT) ?
+    u32 basePort = (GetExternalInputHcclIfBasePort() == HCCL_INVALID_PORT) ?
         HOST_PARA_BASE_PORT : GetExternalInputHcclIfBasePort();
     hostPort = basePort + localRank;
     CHK_PRT_RET(hostPort > MAX_PORT_ID, HCCL_ERROR("[Get][HostPort]invalid port id[%u]", hostPort), HCCL_E_INTERNAL);
@@ -292,7 +292,7 @@ HcclResult TopoinfoRanktableHeterog::GetRanks(const nlohmann::json &NodeListObj,
 
     // 重新分配host port
     for (auto &rankInfo : clusterInfo.rankList) {
-        if (rankInfo.hostPort == HCCL_INVALIED_IF_BASE_PORT) {
+        if (rankInfo.hostPort == HCCL_INVALID_PORT) {
             CHK_RET(GetHostPort(rankInfo.localRank, rankInfo.hostPort));
         }
         HCCL_DEBUG("rank id: %u localRank:%u host port: %u", rankInfo.rankId, rankInfo.localRank, rankInfo.hostPort);
@@ -341,7 +341,7 @@ HcclResult TopoinfoRanktableHeterog::GetSingleRank91093(const nlohmann::json &ra
     CHK_RET(GetJsonArrayMemberProperty(ranksObj, objIndex, "device_id", devPhyIdStr, false));
     CHK_RET(SalStrToInt(devPhyIdStr, HCCL_BASE_DECIMAL, devicePhyId));
  
-    s32 port = 0;
+    s32 port = HCCL_INVALID_PORT;
     std::string portStr;
     CHK_RET(GetJsonArrayMemberProperty(ranksObj, objIndex, "port", portStr, false));
     CHK_RET(SalStrToInt(portStr, HCCL_BASE_DECIMAL, port));
@@ -393,7 +393,7 @@ HcclResult TopoinfoRanktableHeterog::GetSingleRank91093(const nlohmann::json &ra
     rankInfo.podName = "";  // podname在新场景下置空
     // ranktable中port无效，设置为环境变量HCCL_IF_BASE_PORT+该rank的local_rank_id,否则按照配置的port使用
     if (port == 0) {
-        rankInfo.hostPort = HCCL_INVALIED_IF_BASE_PORT;
+        rankInfo.hostPort = HCCL_INVALID_PORT;
     } else {
         rankInfo.hostPort = port;
         hostPortMap_[rankInfo.hostPort] = HOST_PORT_USED;
@@ -421,10 +421,10 @@ HcclResult TopoinfoRanktableHeterog::GetSingleRank(const nlohmann::json &ranksOb
         CHK_RET(SalStrToInt(devPhyIdStr, HCCL_BASE_DECIMAL, devicePhyId));
     }
 
-    s32 port = 0;
+    s32 port = HCCL_INVALID_PORT;
     std::string portStr;
     if (GetJsonArrayMemberProperty(ranksObj, objIndex, "port", portStr, true) == HCCL_E_NOT_FOUND) {
-        port = 0;
+        port = HCCL_INVALID_PORT;
     } else {
         CHK_RET(SalStrToInt(portStr, HCCL_BASE_DECIMAL, port));
     }
@@ -462,7 +462,7 @@ HcclResult TopoinfoRanktableHeterog::GetSingleRank(const nlohmann::json &ranksOb
     rankInfo.podName = "";  // podname在新场景下置空
     // ranktable中port无效，设置为环境变量HCCL_IF_BASE_PORT+该rank的local_rank_id,否则按照配置的port使用
     if (port == 0) {
-        rankInfo.hostPort = HCCL_INVALIED_IF_BASE_PORT;
+        rankInfo.hostPort = HCCL_INVALID_PORT;
     } else {
         rankInfo.hostPort = port;
         hostPortMap_[rankInfo.hostPort] = HOST_PORT_USED;

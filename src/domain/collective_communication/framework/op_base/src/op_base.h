@@ -81,7 +81,7 @@ HcclResult CheckScatterInputPara(uint64_t recvCount, HcclComm comm, void *recvBu
 HcclResult HcclMc2ComResourceByTiling(HcclComm comm, uint32_t *pVersion, void *mc2Tiling, rtStream_t &aicpuStream);
 
 HcclResult HcclCreateComResourceByComm(HcclComm comm, u32 streamMode, bool isOpbaseMode,
-    void** commContext);
+    void** commContext, bool isMC2 = false);
 
 HcclResult HcclDeviceRefresh(void);
 

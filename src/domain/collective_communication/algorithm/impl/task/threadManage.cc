@@ -18,6 +18,7 @@
 #include "threadManage.h"
 #include "coll_executor_base.h"
 #include "sal_pub.h"
+#include "profiler_base_pub.h"
 
 namespace hccl {
 ThreadManage::ThreadManage(s32 deviceLogicId, u32 userRank, const HcclDispatcher dispatcher)
@@ -209,7 +210,8 @@ HcclResult ThreadManage::Prepare(DeviceMem &inputMem, DeviceMem &outputMem, Devi
     tag_.assign(tag.begin(), tag.end());
     slices_.assign(slices.begin(), slices.end());
     nicRankList_.assign(nicRankList.begin(), nicRankList.end());
-    HCCL_PROFILER_ADD_STREAM_BY_STREAMID(stream.id(), tag_, 0, AlgType::ALG_RESERVED);
+
+    HCCL_PROFILER_ADD_STREAM_BY_STREAMID(stream.id(), tag_, 0, AlgType::Reserved());
     return HCCL_SUCCESS;
 }
 

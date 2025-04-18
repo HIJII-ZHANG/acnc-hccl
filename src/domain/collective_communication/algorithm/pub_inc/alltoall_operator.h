@@ -28,6 +28,7 @@ public:
     HcclResult GetAlltoAllvcSendRecvInfo(const void *sendCountMatrix, HcclDataType sendType, HcclDataType recvType);
     void UpdateAlltoAllCopyMode(std::vector<SendRecvInfo> &allMeshAggregationSendRecvInfo, std::string& copyMode);
     HcclResult SelectAlgforAlltoAll(const OpParam& param, std::string& algName, std::string& copyMode);
+    HcclResult SelectAlgforAiv(const OpParam& param, std::string& algName);
     HcclResult SelectAlg(const std::string& tag, const OpParam& param, std::string& algName, std::string& newTag);
 
     HcclResult GetAlltoAllvAllAddrInfo(u64 *sendLength, u64 *sendOffset, u64 *recvLength, u64 *recvOffset,
@@ -46,9 +47,11 @@ public:
     void SetVirtualDispatcher(const HcclDispatcher vDispatcher);
     void SetParallelTaskLoader(ParallelTaskLoader* parallelTaskLoader);
     bool IsSatisfyAlltoAllAivCondition(const OpParam& param);
+    bool IsSatisfy91093OffloadCondition();
 
 private:
     bool IsSatisfyAlltoallPipelineCondition();
+    bool IsBufferSatisfyAlltoAllAivCondition(const OpParam& param);
     HcclResult RunAlltoAllVTwoLevelPipeline(DeviceMem &sendBuf, DeviceMem &recvBuf,
         std::vector<SendRecvInfo> &allMeshAggregationSendRecvInfo, Stream &stream, const std::string &tag);
     HcclResult RunAlltoAllVFullMesh(DeviceMem &sendBuf, HcclDataType sendType, DeviceMem &recvBuf,

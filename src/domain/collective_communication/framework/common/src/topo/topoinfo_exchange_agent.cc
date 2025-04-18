@@ -125,9 +125,20 @@ HcclResult TopoInfoExchangeAgent::SetServerIdx(RankTable_t &clusterInfo) const
 HcclResult TopoInfoExchangeAgent::SetSuperPodIdx(RankTable_t &clusterInfo) const
 {
     std::map<std::string, u32> spodIdToIdx;
+    bool isDiffDeviceType = false;
+    DevType standardDevType = DevType::DEV_TYPE_NOSOC;
+    if (clusterInfo.rankList.size() > 0) {
+        standardDevType = clusterInfo.rankList[0].deviceInfo.deviceType;
+    }
     for (u32 i = 0; i < clusterInfo.rankList.size(); ++i) {
         RankInfo_t& rankInfo = clusterInfo.rankList[i];
-        if (spodIdToIdx.find(rankInfo.superPodId) == spodIdToIdx.end()) {
+        if (rankInfo.deviceInfo.deviceType != standardDevType) {
+            isDiffDeviceType = true;
+        }
+
+        if (isDiffDeviceType) {
+            rankInfo.superPodIdx = spodIdToIdx.size(); 
+        } else if (spodIdToIdx.find(rankInfo.superPodId) == spodIdToIdx.end()) {
             rankInfo.superPodIdx = spodIdToIdx.size();
             spodIdToIdx.insert({rankInfo.superPodId, rankInfo.superPodIdx});
         } else if (spodIdToIdx[rankInfo.superPodId] + 1 == spodIdToIdx.size()) {
@@ -303,10 +314,14 @@ HcclResult TopoInfoExchangeAgent::ConstructRankTableMsg(RankTable_t &clusterInfo
     RankInfo_t myRankInfo;
     myRankInfo.rankId = localRankInfo_.rank;
     myRankInfo.hostIp = localRankInfo_.hostIP;
+    myRankInfo.hostPort = localRankInfo_.hostPort;
     myRankInfo.deviceInfo.devicePhyId = localRankInfo_.devicePhysicID;
     myRankInfo.deviceInfo.deviceIp = localRankInfo_.deviceIP;
     myRankInfo.deviceInfo.deviceType = localRankInfo_.deviceType;
     myRankInfo.deviceInfo.backupDeviceIp = localRankInfo_.backupDeviceIP;
+    myRankInfo.deviceInfo.port = localRankInfo_.deviceNicPort;
+    myRankInfo.deviceInfo.vnicPort = localRankInfo_.deviceVnicPort;
+    myRankInfo.deviceInfo.backupPort = localRankInfo_.backupDevicePort;
     myRankInfo.superPodId = localRankInfo_.superPodId;
     myRankInfo.superDeviceId = localRankInfo_.superDeviceId;
     ConstructRankTableServerId(myRankInfo.serverId);

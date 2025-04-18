@@ -96,7 +96,7 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::CalcLevel2CommInfo(Transpo
     std::vector<LevelNSubCommTransport>& opTransport)
 {
     CommParaInfo commParaLevel2(COMM_LEVEL2, CommType::COMM_TAG_MAX);
-    if (UseLevel2RingAlgo(algType_)) {
+    if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_RING) {
         commParaLevel2.commType = CommType::COMM_TAG_RING_INNER;
     } else {
         commParaLevel2.commType = CommType::COMM_TAG_HALVING_DOUBLING;
@@ -121,7 +121,7 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
         HCCL_E_PARA);
     std::vector<Slice> dataSegsSlice; // 数据分成ranksize份，每份的起始偏移和大小
     std::vector<std::vector<Slice> > multi2RingsSlice; // 数据基于该rank上环0的偏移
-    std::vector<std::pair<bool, std::vector<Slice>>> multi4RingsSlice;
+    std::vector<std::pair<bool, std::vector<Slice>>> multi4RingsSlice; // 基于2环数据切分2环SDMA+2环ROH bool = true表示SDMA
     u32 ringNum = LEVEL0_PLANE_NUM_IN_NPRING_DOUBLE;
     CHK_RET(CheckCommSize(COMM_LEVEL0_ANYPATH_SDMA, ringNum));
     SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0_ANYPATH_SDMA, COMM_INDEX_0);
@@ -236,7 +236,7 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
             u64 SliceCount = dmaSlice.size / perDataSize;
             u64 reduceAttr = GetReduceAttr(allreduceInput, allreduceOutput, param.DataDes.dataType, param.reduceType);
             std::unique_ptr<AlgTemplateBase> level1TempAlg;
-            if (UseInterServerNBAlgo(algType_)) {
+            if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
                 level1TempAlg.reset(new (std::nothrow) AllReduceNB(dispatcher_, reduceAttr));
                 HCCL_INFO("allreduce ring: using nonuniform-bruck algo inter-server.");
             } else {
@@ -304,7 +304,7 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
         u64 reduceAttr = GetReduceAttr(reducescatterInput, reducescatterOutput,
             param.DataDes.dataType, param.reduceType);
         std::unique_ptr<AlgTemplateBase> level1RSTempAlg;
-        if (UseInterServerRingAlgo(algType_)) {
+        if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
             level1RSTempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
             CHK_SMART_PTR_NULL(level1RSTempAlg);
             CHK_RET(level1RSTempAlg->Prepare(
@@ -346,7 +346,7 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
         reduceAttr = GetReduceAttr(allreduceInput, allreduceOutput, param.DataDes.dataType, param.reduceType);
 
         std::unique_ptr<AlgTemplateBase> level2ARTempAlg;
-        if (UseLevel2RingAlgo(algType_)) {
+        if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_RING) {
             level2ARTempAlg.reset(new (std::nothrow) AllReduceRing(dispatcher_, reduceAttr));
             HCCL_INFO("reducescatter ring: using ring algo inter-server.");
         } else {
@@ -367,7 +367,7 @@ HcclResult CollAllReduceDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
         std::unique_ptr<AlgTemplateBase> level1AGTempAlg;
         DeviceMem allgatherInput = execMem.outputMem.range(dataSegsSlice[segmentIdx].offset, arSize);
         DeviceMem allgatherOutput = execMem.outputMem.range(dataSegsSlice[segmentIdx].offset, arSize*sliceNum);
-        if (UseInterServerRingAlgo(algType_)) {
+        if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
             level1AGTempAlg.reset(new (std::nothrow) AllGatherRing(dispatcher_));
         } else {
             level1AGTempAlg.reset(new (std::nothrow) AllGatherRecursiveHalvingDoubling(dispatcher_));

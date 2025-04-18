@@ -75,9 +75,9 @@ public:
     std::vector<u32> GetNicList();
 
     std::vector<RankInfo> GetRankInfoList();
-    std::vector<HbRankInfo> GethbRankInfoList();
     std::vector<HcclIpAddress> GetDevIpAddr();
     std::vector<HcclIpAddress> GetDevBackupIpAddr();
+    u32 GetBackupDevPort();
     u32 GetDevicePhyId();
     HcclIpAddress GetHostIp();
     u32 GetHostPort();
@@ -94,7 +94,10 @@ public:
     u32 GetMeshAggregationRankSize();
     bool GetUsedRdmaLevel0();
     bool GetInlineReduceSwitchOn();
-  
+    u32 GetHostPort(s32 devicePhyId);
+    u32 GetLocalNicPort(NicType nicType);
+    void SetNeedInitNicFlag(const bool isNeedInitNic);
+
 private:
     HcclResult CheckDeviceType(const DevType deviceType) const;
     HcclResult GetNicInfo(const NICDeployment &nicDeploy, const u32 curRankIndex,
@@ -134,6 +137,7 @@ private:
     HcclResult UpdateNicList();
     HcclResult SetLocalRankInfo();
     HcclResult SetLocalRankInfoSubGroup(const std::vector<RankInfo> &rankList);
+    HcclResult SetRanksPort(const std::vector<RankInfo_t> &rankList);
     HcclResult InitRankInfo(const RankTable_t &rankTable);
 
     u32 CalMeshAggRankSize(int halfDevNum) const;
@@ -141,8 +145,13 @@ private:
     HcclResult InitRankInfoSubGroup(const std::vector<RankInfo> &rankList, WorldGroupInfo &groupCommonData);
     HcclResult GetPairDeviceLinkType(const RankTable_t &rankTable, u32 i,
         bool &isConnectedWithHCCS, LinkTypeInServer &linkType);
+    HcclResult GetMixInnerLinkInfo(std::unordered_map<u32, u32> &pairLinkCounter,
+        std::unordered_map<u32, std::unordered_map<int, std::vector<int>>> &pairLinkInfo);
     bool IsUsedRdmaLevel0AndIpInvalid();
     bool IsSupportEnableRoce();
+    HcclResult SetWorldGroupInfo(
+        std::unordered_map<std::string, std::map<u32, HcclIpAddress>> &phyIdNicInfoMap,
+        std::vector<RankInfo> &worldRankInfoList, std::vector<u32> &ranksPort, std::vector<u32> &vnicRanksPort);
 
     u32 deviceNumPerServer_{0};
     u32 userRank_{INVALID_VALUE_RANKID};
@@ -179,24 +188,33 @@ private:
     std::string collectiveId_{};
     u32 deviceNumPerAggregation_{INVALID_UINT};
     std::vector<RankInfo> rankInfoList_{};
-    std::vector<HbRankInfo> hbRankInfoList_{};
     std::unordered_map<u32, std::unordered_map<int, std::vector<int>>> pairLinkInfo_{};
     std::vector<u32> nicList_{};
     std::unordered_map<u32, u32> pairLinkCounter_{};
 
     // related attrs
-    std::unique_ptr<TopoInfoParse> topoInfoParse_{nullptr}; 
+    std::unique_ptr<TopoInfoParse> topoInfoParse_{nullptr};
     ServRankInfo servRankInfo_{};
     std::string serverId_{};
     u32 superDeviceId_ {INVALID_UINT};
     bool interServer_{false};
     std::vector<HcclIpAddress> devIpAddr_{};
     std::vector<HcclIpAddress> devBackupIpAddr_;
+    u32 devBackupPort_{HCCL_INVALID_PORT};
     // transiemt attrs
-    std::string superPodId_{}; 
-    u32 hostPort_{INVALID_UINT};
+    std::string superPodId_{};
+    u32 hostPort_{HCCL_INVALID_PORT};
     u32 localRank_{INVALID_VALUE_RANKID};
     HcclIpAddress hostIp_{};
+    bool isNeedInitNic_{ false };
+    bool isHostUseDevNic_{ false };
+    bool isUseRankPort_{ false };
+    std::vector<u32> nicRanksPort_;
+    std::vector<u32> groupNicRanksPort_;
+    std::vector<u32> vnicRanksPort_;
+    std::vector<u32> groupVnicRanksPort_;
+    std::vector<RankInfo> worldRankInfoList_;
+    std::unordered_map<std::string, std::map<u32, HcclIpAddress>> rankDevicePhyIdNicInfoMap_;
 };
 }  // end namespace hccl
-#endif  
+#endif

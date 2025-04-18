@@ -402,17 +402,11 @@ HcclResult CollRunAlltoAllVStaged::KernelRun(const OpParam &param, ExecMem &exec
         // 添加从流profiling, 用于维护planID
         CHK_RET(AddSubStreamToProfiling());
         std::unique_ptr<AlltoAllVMeshReadOnly> alltoallReadOnly = nullptr;
-        if (GetExternalInputHcclEnableFfts()) {
-            alltoallReadOnly.reset(new (std::nothrow) AlltoAllVMeshReadOnly(dispatcher_,
-                const_cast<Stream&>(param.stream), algResResp_->slaveStreams, algResResp_->notifiesMain,
-                algResResp_->notifiesAux, topoAttr_.userRank, topoAttr_.meshAggregationRankSize,
-                level0CommInfo.links, allMeshAggregationSendRecvInfo_));
-        } else {
-            alltoallReadOnly.reset(new (std::nothrow) AlltoAllVMeshReadOnly(dispatcher_,
-                const_cast<Stream&>(param.stream), algResResp_->slaveStreams, algResResp_->notifiesMain,
-                algResResp_->notifiesAux, topoAttr_.userRank, topoAttr_.meshAggregationRankSize,
-                level0CommInfo.links, allMeshAggregationSendRecvInfo_));
-        }
+        // FFTS 与 STARS 场景 合并逻辑
+        alltoallReadOnly.reset(new (std::nothrow) AlltoAllVMeshReadOnly(dispatcher_,
+            const_cast<Stream&>(param.stream), algResResp_->slaveStreams, algResResp_->notifiesMain,
+            algResResp_->notifiesAux, topoAttr_.userRank, topoAttr_.meshAggregationRankSize,
+            level0CommInfo.links, allMeshAggregationSendRecvInfo_));
 
         if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
             CHK_RET(alltoallReadOnly->Prepare(algResResp_->paramInputMem, (topoAttr_.isSingleMeshAggregation ?

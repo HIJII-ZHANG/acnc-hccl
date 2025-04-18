@@ -24,6 +24,7 @@
 namespace hccl {
 
 constexpr u64 ALLTOALL_PIPELINE_MIN_CCL_SIZE = 80 * 1024 * 1024;
+constexpr u64 MAX_RMDA_RANK_SIZE = 8;
 
 AlltoAllOperator::AlltoAllOperator(AlgConfigurator* algConfigurator, CCLBufferManager &cclBufferManager,
     HcclDispatcher dispatcher, std::unique_ptr<TopoMatcher> &topoMatcher)
@@ -201,11 +202,25 @@ HcclResult AlltoAllOperator::GetAlltoAllvSendRecvInfo(const OpParam& param, cons
     return HCCL_SUCCESS;
 }
 
+HcclResult AlltoAllOperator::SelectAlgforAiv(const OpParam& param, std::string& algName)
+{
+    if (deviceType_ == DevType::DEV_TYPE_910B && param.opType == HcclCMDType::HCCL_CMD_ALLTOALL &&
+        !isSingleMeshAggregation_) {
+        // aiv模式下910A2多server场景 alltoall算子
+        algName = "AlltoAllStagedAIVRdmaExecutor";
+    } else if (deviceType_ == DevType::DEV_TYPE_910_93 && serverNum_ > 1) {
+        algName = "AlltoAllMeshAivFor91093Executor";
+    } else {
+        algName = "AlltoAllMeshAivExecutor";
+    }
+    HCCL_INFO("[SelectAlgforAlltoAll] all_to_all algName is [%s]", algName.c_str());
+    return HCCL_SUCCESS;
+}
+
 HcclResult AlltoAllOperator::SelectAlgforAlltoAll(const OpParam& param, std::string& algName, std::string& copyMode)
 {
     if (IsSatisfyAlltoAllAivCondition(param)) {
-        algName = "AlltoAllMeshAivExecutor";
-        HCCL_INFO("[SelectAlgforAlltoAll] all_to_all algName is [%s]", algName.c_str());
+        CHK_RET(SelectAlgforAiv(param, algName));
         return HCCL_SUCCESS; // alltoall aiv不需要后面操作，直接返回
     }
 
@@ -417,8 +432,8 @@ bool AlltoAllOperator::IsSatisfyAlltoallPipelineCondition()
     bool multiRankPerServer = meshAggregationRankSize_ > 1;
     bool isMultiServer = ((userRankSize_ > meshAggregationRankSize_) &&
         (userRankSize_ % meshAggregationRankSize_) == 0);
-    const u32 algLevel1 = static_cast<u32>(algType_) >> HCCL_LEVEL_ALGO_WIDTH;
-    bool satisfyAlgType = (static_cast<AlgTypeLevel1>(algLevel1) == AlgTypeLevel1::ALG_LEVEL1_PIPELINE) &&
+    auto autoAlgTypeLevel1 = static_cast<u32>(algType_.algoLevel1);
+    bool satisfyAlgType = (static_cast<AlgTypeLevel1>(autoAlgTypeLevel1) == AlgTypeLevel1::ALG_LEVEL1_PIPELINE) &&
         CalcContextNumForPipeline(HcclCMDType::HCCL_CMD_ALLTOALL) <= HCCL_FFTS_CAPACITY;
     HCCL_DEBUG("[AlltoAllOperator][IsSatisfyAlltoallPipelineCondition]multiRankPerServer %u, "
         "isMultiServer %u, satisfyAlgType, %u, multiModuleDiffDeviceNumMode_ %u", multiRankPerServer,
@@ -433,26 +448,73 @@ bool AlltoAllOperator::IsSatisfyAlltoallPipelineCondition()
     return res;
 }
 
+bool AlltoAllOperator::IsSatisfy91093OffloadCondition()
+{
+    bool isOffload = GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB;
+    bool isDeviceType = deviceType_ == DevType::DEV_TYPE_910_93;
+    bool isAicpuUnfoldMode = topoMatcher_->GetAicpuUnfoldConfig();
+    return isAicpuUnfoldMode && isDeviceType && isOffload;
+}
+
 bool AlltoAllOperator::IsSatisfyAlltoAllAivCondition(const OpParam& param)
 {
     bool isOpbase = GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE;
     bool isBufferEnough = !isOpbase ||
         cclBufferManager_.GetInCCLbufferSize() >= AIV_ALL_TO_ALL_BIG_SIZE * MAX_RANK_SIZE;
-    bool isSupportAiv = GetExternalInputHcclAivMode() && IsSupportAIVCopy(param.All2AllDataDes.sendType) &&
+    bool isSupportAiv = topoMatcher_->GetAivModeConfig() && IsSupportAIVCopy(param.All2AllDataDes.sendType) &&
         userRankSize_ > 1 && isBufferEnough;
     if (deviceType_ == DevType::DEV_TYPE_910B) {
+        bool isModuleSatisfy = false;
+        if (param.opType == HcclCMDType::HCCL_CMD_ALLTOALL) {
+            // alltoall算子支持单机和多机场景
+            if (isSingleMeshAggregation_) {
+                isModuleSatisfy = true;
+            } else {
+                bool isOpbase = (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
+                // 多机场景下当前不支持module间卡数不一致场景，集群中总的服务器数需要满足条件，cclbuffer大小需要满足
+                isModuleSatisfy = isOpbase && !multiModuleDiffDeviceNumMode_ && (moduleNum_ <= MAX_RMDA_RANK_SIZE) &&
+                                IsBufferSatisfyAlltoAllAivCondition(param);
+            }
+        } else {
+            // 其他算子只有单机场景支持aiv
+            isModuleSatisfy = isSingleMeshAggregation_;
+        }
         bool isMeshTopo = topoType_ == TopoType::TOPO_TYPE_NP_MESH || topoType_ == TopoType::TOPO_TYPE_4P_MESH ||
             topoType_ == TopoType::TOPO_TYPE_2P_MESH || topoType_ == TopoType::TOPO_TYPE_1P_MESH;
-        return isSupportAiv && isSingleMeshAggregation_ && isMeshTopo;
+        return isSupportAiv && isModuleSatisfy && isMeshTopo;
     } else if (deviceType_ == DevType::DEV_TYPE_910_93) {
+        bool isSupportInterHccs = (superPodNum_ == 1 && serverNum_ > 1 && !GetExternalInputInterHccsDisable());
         if (param.opType == HcclCMDType::HCCL_CMD_ALLTOALL) {
             u64 dataSize = param.All2AllDataDes.sendCount * SIZE_TABLE[param.All2AllDataDes.sendType];
-            return isSupportAiv && serverNum_ == 1 && dataSize <= AIV_ALL_TO_ALL_A3_ENTRY_SIZE;
+            return isSupportAiv && ((serverNum_ == 1 && dataSize <= AIV_ALL_TO_ALL_A3_ENTRY_SIZE) ||
+                isSupportInterHccs);
         } else {
-            return isSupportAiv && serverNum_ == 1;
+            return isSupportAiv && (serverNum_ == 1 || isSupportInterHccs);
         }
     }
     return false;
+}
+
+bool AlltoAllOperator::IsBufferSatisfyAlltoAllAivCondition(const OpParam& param)
+{
+    u64 sendCount = *(static_cast<const u64 *>(param.All2AllDataDes.sendCountMatrix));
+    u64 dataSize = SIZE_TABLE[param.All2AllDataDes.sendType];
+    u64 scratchMemSize = sendCount * dataSize * userRankSize_;
+
+    // 每个rank的数据需要满足小于190K
+    if (!(sendCount * dataSize <= HCCL_SMALL_COUNT_190_KB)) {
+        HCCL_WARNING("[AlltoAllOperator]dataSize[%u] > [%u], doesn't meet the aiv condition, select default algorithm",
+            sendCount * dataSize, HCCL_SMALL_COUNT_190_KB);
+        return false;
+    }
+
+    // cclbuffer是否足够存储每个rank的中转数据
+    if (!(scratchMemSize <= cclBufferManager_.GetInCCLbufferSize())) {
+        HCCL_WARNING("[AlltoAllOperator]cclbuffer[%u] < scratchMemSize[%u]+32K, don't meet the aiv condition, "
+            "please set HCCL_BUFFSIZE to increase cclbuffer", cclBufferManager_.GetInCCLbufferSize(), scratchMemSize);
+        return false;
+    }
+    return true;
 }
 
 HcclResult AlltoAllOperator::GetAlltoAllStagedWorkSpaceMemSize(const OpParam& param, u64 &memSize)

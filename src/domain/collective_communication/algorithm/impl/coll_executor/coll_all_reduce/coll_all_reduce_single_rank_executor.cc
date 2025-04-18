@@ -24,7 +24,7 @@ HcclResult CollAllReduceSingleRankExecutor::KernelRun(const OpParam &param, Exec
     ReduceType reduceType =
         ((param.reduceType != HCCL_REDUCE_PROD) && (param.DataDes.dataType != HCCL_DATA_TYPE_INT64)) ?
         ReduceType::INLINE_REDUCE : ReduceType::TBE_REDUCE;
-    auto originalAlgTypeLevel1 = static_cast<u32>(algType_) >> HCCL_LEVEL_ALGO_WIDTH;
+    auto originalAlgTypeLevel1 = static_cast<u32>(algType_.algoLevel1);
     bool hugeData = totalSize > SDMA_SEND_MAX_SIZE;
     if (execMem.inputPtr == execMem.outputPtr) {
         auto opMeta = HcclOpMetaInfo::GetOneForAllReduce(originalAlgTypeLevel1, param.DataDes.dataType, reduceType,

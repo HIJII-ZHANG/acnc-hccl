@@ -8,7 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-#ifndef ALL_GATHER_STAGE_PUB_H
+#ifndef ALL_GATHER_HD_STAGE_PUB_H
 #define ALL_GATHER_HD_STAGE_PUB_H
 
 #include "alg_template_base_pub.h"
@@ -16,15 +16,16 @@
 #include "mem_device_pub.h"
 #include "stream_pub.h"
 #include "comm_base_pub.h"
+#include "alg_template_register.h"
+
 namespace hccl {
 class AllGatherHDStage : public AlgTemplateBase {
 public:
-    explicit AllGatherHDStage(const HcclDispatcher dispatcher, 
-        std::vector<Stream> &meshStreams, std::vector<std::shared_ptr<LocalNotify>> &meshSignal,
-        std::vector<std::shared_ptr<LocalNotify>> &meshSignalAux, u32 userRank, const HcomCollOpInfo *opInfo);
+    explicit AllGatherHDStage(const HcclDispatcher dispatcher);
     ~AllGatherHDStage() override;
 
     HcclResult RunAsync(const u32 rank, const u32 rankSize, const std::vector<LINK> &links) override;
+    HcclResult Prepare(PrepareData &param) override;
 
 protected:
 private:
@@ -52,8 +53,8 @@ private:
     const u32 base = 2;
     u32 userRank_;
     std::vector<Stream> meshStreams_;                                /* * 多steam* */
-    const std::vector<std::shared_ptr<LocalNotify>> &meshSignal_;    /* 每个ring创建一个signal */
-    const std::vector<std::shared_ptr<LocalNotify>> &meshSignalAux_; /* 从stream wait，主steam record */
+    const std::vector<std::shared_ptr<LocalNotify>>* meshSignalPtr_;    /* 每个ring创建一个signal */
+    const std::vector<std::shared_ptr<LocalNotify>>* meshSignalAuxPtr_; /* 从stream wait，主steam record */
     const HcomCollOpInfo *opInfo_;
     std::vector<Slice> sliceNoPower_;
     std::vector<Slice> slicePower_;
@@ -65,4 +66,4 @@ private:
     u32 totalSize_ = 0;
 };
 }  // namespace hccl
-#endif /* ALL_GATHER_HD_STAGE_H */
+#endif /* ALL_GATHER_HD_STAGE_PUB_H */

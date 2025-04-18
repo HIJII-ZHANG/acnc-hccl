@@ -9,6 +9,7 @@
  */
 
 #include "coll_all_reduce_mesh_opbase_big_count_aiv_executor.h"
+#include "alg_profiling.h"
 
 namespace hccl {
 
@@ -21,7 +22,7 @@ CollAllReduceMeshOpbaseBigCountAivExecutor::CollAllReduceMeshOpbaseBigCountAivEx
 HcclResult CollAllReduceMeshOpbaseBigCountAivExecutor::CalcStreamNum(u32& streamNum)
 {
     streamNum = 0; // AIV通信不需要申请从流
-    HCCL_INFO("[CollAllReduceMeshOpbaseBigCountAivExecutor][CalcStreamNum] tag[%s] streamNum[%u]",
+    HCCL_INFO("[CollAllReduceMeshOpbaseBigCountAivExecutor][CalcStreamNum] tag[%s] streamNum[%u].",
         tag_.c_str(), streamNum);
     return HCCL_SUCCESS;
 }
@@ -59,6 +60,7 @@ HcclResult CollAllReduceMeshOpbaseBigCountAivExecutor::CalcLevel0CommInfo(Transp
     std::vector<LevelNSubCommTransport>& opTransport)
 {
     CommParaInfo commParaLevel0(COMM_LEVEL0, CommType::COMM_TAG_MESH);
+    commParaLevel0.meshSinglePlane = true;
     CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel0, opTransport[COMM_LEVEL0], inputType, outputType));
     return HCCL_SUCCESS;
 }
@@ -92,7 +94,7 @@ HcclResult CollAllReduceMeshOpbaseBigCountAivExecutor::Orchestrate(OpParam& para
 
 HcclResult CollAllReduceMeshOpbaseBigCountAivExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollAllReduceMeshOpbaseBigCountAivExecutor][KernelRun]allreduce aiv enter");
+    HCCL_INFO("[CollAllReduceMeshOpbaseBigCountAivExecutor][KernelRun]allreduce aiv enter.");
 
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
     SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
@@ -102,7 +104,7 @@ HcclResult CollAllReduceMeshOpbaseBigCountAivExecutor::KernelRun(const OpParam &
 
     u32 localRank = level0CommInfo.localRank;
     u32 localRankSize = level0CommInfo.localRankSize;
-    HCCL_DEBUG("[CollAllReduceMeshOpbaseBigCountAivExecutor][KernelRun] userRank [%u] localRank [%u]",
+    HCCL_DEBUG("[CollAllReduceMeshOpbaseBigCountAivExecutor][KernelRun] userRank [%u] localRank [%u].",
         topoAttr_.userRank, localRank);
 
     for (u32 i = 0; i < localRankSize; i++) {
@@ -116,14 +118,36 @@ HcclResult CollAllReduceMeshOpbaseBigCountAivExecutor::KernelRun(const OpParam &
     }
 
     bool isOpbase = (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
-    HcclResult ret = ExecuteKernelLaunch(HcclCMDType::HCCL_CMD_ALLREDUCE, execMem.inputPtr, execMem.outputPtr,
-        execMem.count, param.DataDes.dataType, param.reduceType, localRank, localRankSize, 0,
-        buffersIn, buffersOut, param.tag, param.stream.ptr(), isOpbase, execMem.inputMem.size());
+    AivOpArgs opArgs {
+        HcclCMDType::HCCL_CMD_ALLREDUCE, execMem.inputPtr, execMem.outputPtr, execMem.count,
+        param.DataDes.dataType, param.reduceType, 0, isOpbase
+    };
+    AivTopoArgs topoArgs { localRank, localRankSize };
+    AivResourceArgs resourceArgs { param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size() };
+    AivAlgArgs algArgs {};
+    struct AivProfilingInfo aivProfilingInfo;
+    
+    if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
+        HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
+        HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
+    }
+
+    HcclResult ret = ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, aivProfilingInfo);
+
+    TaskAivProfiler(opArgs.cmdType, aivProfilingInfo.tag, opArgs.count * sizeof(opArgs.dataType),
+        aivProfilingInfo.blockDim, topoArgs.rankSize, resourceArgs.buffersOut[topoArgs.rank], resourceArgs.stream,
+        algArgs.step, aivProfilingInfo.beginTime);
+
+    if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){ 
+        HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());
+        HCCL_PROFILER_DEL_TAG(param.tag);
+    }
+    blockDim_ = aivProfilingInfo.blockDim;
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAllReduceMeshOpbaseBigCountAivExecutor][KernelRun]allreduce aiv failed, return[%d]", ret),
         ret);
 
-    HCCL_INFO("[CollAllReduceMeshOpbaseBigCountAivExecutor][KernelRun]allreduce aiv run success");
+    HCCL_INFO("[CollAllReduceMeshOpbaseBigCountAivExecutor][KernelRun]allreduce aiv run success.");
     return HCCL_SUCCESS;
 }
 

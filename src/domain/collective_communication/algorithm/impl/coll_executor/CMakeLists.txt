@@ -2,6 +2,7 @@ set(src_list
     ${CMAKE_CURRENT_SOURCE_DIR}/coll_executor_base.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/coll_native_executor_base.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/coll_comm_executor.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/alg_profiling.cc
 )
 
 target_sources(hccl_alg PRIVATE

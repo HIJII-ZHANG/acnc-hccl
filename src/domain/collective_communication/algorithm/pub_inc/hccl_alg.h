@@ -19,7 +19,7 @@
 #include "ccl_buffer_manager.h"
 #include "workspace_resource.h"
 #include "hccl_impl_pub.h"
-#include "hccl_opbase_atrace_info_pub.h"
+#include "hccl_trace_info.h"
 #include "queue_notify_manager.h"
 #include "topo_matcher.h"
 #include "coll_alg_operator.h"
@@ -81,10 +81,15 @@ public:
 
     u8 GetDeterministicConfig() const;  // 获取确定性计算配置
     HcclResult SetDeterministicConfig(const u8 deterministic); // 设置确定性计算配置
+    HcclResult SetAivModeConfig(const bool aivMode); // 设置aiv模式配置
+    HcclResult SetAicpuUnfoldConfig(const bool aicpuUnfold); // 设置aicpu配置
+    bool GetAicpuUnfoldConfig() const;
     HcclResult GetIsBridgeVector(std::vector<bool> &isBridgeVector);
     HcclResult GetRankVecInfo(std::vector<std::vector<std::vector<u32>>> &serverAndsuperPodToRank);
     HcclResult GetCommPlaneRanks(std::vector<std::vector<std::vector<u32>>> &CommPlaneRanks);
     HcclResult GetIsUsedRdmaMap(std::unordered_map<u32, bool> &isUsedRdmaMap);
+    HcclResult GetCommPlaneSubGroupVector(std::vector<std::vector<std::vector<std::vector<u32>>>> &GetCommPlaneSubGroupVector);
+    HcclResult GetAHCAlgOption(std::map<std::string, std::string> &ahcAlgOption);
     std::unique_ptr<CollAlgOperator> GetAlgOperator(const HcclCMDType &opType);
     HcclResult GetTopoType(TopoType &topoType);
 private:

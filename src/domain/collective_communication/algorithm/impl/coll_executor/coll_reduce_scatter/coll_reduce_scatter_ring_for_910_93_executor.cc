@@ -117,7 +117,16 @@ HcclResult CollReduceScatterRingFor91093Executor::CalcLevel2CommInfo(TransportMe
     std::vector<LevelNSubCommTransport>& opTransport)
 {
     CommParaInfo commParaLevel2(COMM_LEVEL2, CommType::COMM_TAG_MAX);
-    commParaLevel2.commType = CommType::COMM_TAG_RING_INNER;
+    if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NHR) {
+        commParaLevel2.commType = CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING;
+        HCCL_INFO("[%s]Calc NHRCommInfo", __func__);
+    } else if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NB) {
+        commParaLevel2.commType = CommType::COMM_TAG_NONUNIFORM_BRUCK;
+        HCCL_INFO("[%s]Calc NBCommInfo", __func__);
+    } else {
+        commParaLevel2.commType = CommType::COMM_TAG_RING_INNER;
+        HCCL_INFO("[%s]Calc RingCommInfo", __func__);
+    }
     CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel2, opTransport[COMM_LEVEL2], inputType, outputType));
     return HCCL_SUCCESS;
 }
@@ -132,6 +141,7 @@ u64 CollReduceScatterRingFor91093Executor::CalcLoopMaxCount(const u32 unitSize)
 
 bool CollReduceScatterRingFor91093Executor::IsHugeData(const u64 curSize, OpParam *param)
 {
+    // 多QP哈希散列开启且RDMA通信下，强制刷新子图
     // 这里如果CheckCommSize返回ERROR，相当于HugeData true，防止GetSubCommInfo越界
     CHK_RET(CheckCommSize(COMM_LEVEL2, COMM_INDEX_0 + 1));
     SubCommInfo level2CommInfo = GetSubCommInfo(COMM_LEVEL2, COMM_INDEX_0);
@@ -354,7 +364,7 @@ HcclResult CollReduceScatterRingFor91093Executor::KernelRun(const OpParam &param
     }
 
     if  (level1RankSize > 1) {
-        // 节点间做reduce scatter（ring/NHR)
+        // 节点间做reduce scatter(ring/NHR/NB)
         u64 reduceAttr = GetReduceAttr(execMem.inputMem, execMem.scratchMem, param.DataDes.dataType, param.reduceType);
         std::unique_ptr<AlgTemplateBase> level1TempAlg;
 
@@ -372,10 +382,10 @@ HcclResult CollReduceScatterRingFor91093Executor::KernelRun(const OpParam &param
                 param.DataDes.dataType, param.reduceType, param.stream, PROF_STAGE_2,
                 level1DataSegsSlice, syncTrans, reduceAttr));
         } else {
-            if (UseInterServerRingAlgo(algType_)) {
+            if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
                 level1TempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
                 HCCL_INFO("reducescatter ring: using ring algo inter-server.");
-            } else if (UseInterServerNBAlgo(algType_)) {
+            } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
                 level1TempAlg.reset(new (std::nothrow) ReduceScatterNB(dispatcher_, reduceAttr));
                 HCCL_INFO("reducescatter ring: using nonuniform-bruck algo inter-server.");
             } else {
@@ -396,7 +406,6 @@ HcclResult CollReduceScatterRingFor91093Executor::KernelRun(const OpParam &param
     if (level2RankSize > 1) {
         /* ****************** 超节点间 reducescatter *******************************/
         u64 reduceAttr = GetReduceAttr(execMem.inputMem, execMem.scratchMem, param.DataDes.dataType, param.reduceType);
-        std::unique_ptr<AlgTemplateBase> level2TempAlg;
 
         // 计算slice
         std::vector<Slice> level2DataSegsSlice;
@@ -410,9 +419,17 @@ HcclResult CollReduceScatterRingFor91093Executor::KernelRun(const OpParam &param
                 topoAttr_.userRank, i, sliceTemp.offset, sliceTemp.size, level2RankSize);
         }
 
-        level2TempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
-        HCCL_INFO("reducescatter ring: using ring algo inter-superPod.");
-
+        std::unique_ptr<AlgTemplateBase> level2TempAlg;
+        if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NB) {
+            level2TempAlg.reset(new (std::nothrow) ReduceScatterNB(dispatcher_, reduceAttr));
+            HCCL_INFO("reducescatter ring: using nonuniform-bruck algo inter-superPod.");
+        } else if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NHR) {
+            level2TempAlg.reset(new (std::nothrow) ReduceScatterNHR(dispatcher_, reduceAttr));
+            HCCL_INFO("reducescatter ring: using nonuniform-hierarchical-ring algo inter-superPod.");
+        } else {
+            level2TempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
+            HCCL_INFO("reducescatter ring: using ring algo inter-superPod.");
+        }
         CHK_SMART_PTR_NULL(level2TempAlg);
 
         CHK_RET(level2TempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, execMem.count,

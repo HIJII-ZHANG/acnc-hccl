@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include "alg_template_base_pub.h"
 #include "calc_hd_transport_req.h"
 
 namespace hccl {
@@ -46,7 +47,7 @@ HcclResult CalcHDTransportReq::CalcTransportRequest(const std::string &tag, Tran
             HCCL_INFO("comm base needn't to create links, rankSize_[%u].", rankSize);
             return HCCL_SUCCESS;
         }
-    
+
         u32 subRoot = INVALID_VALUE_RANKID;
         if (subUserRankRoot != INVALID_VALUE_RANKID) {
             CHK_RET(GetRankByUserRank(subCommPlaneVector_[ringIndex], subUserRankRoot, subRoot));

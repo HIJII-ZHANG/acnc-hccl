@@ -81,7 +81,6 @@ HcclResult CommFactory::Init()
     reusedSocketManager_.reset(new (std::nothrow) HcclSocketManager(nicDeployInner_, deviceLogicId_,
         rankVector_[userRank_].devicePhyId, userRank_));
     CHK_PTR_NULL(reusedSocketManager_);
-    CHK_RET(reusedSocketManager_->Init());
 
     return HCCL_SUCCESS;
 }
@@ -113,9 +112,12 @@ HcclResult CommFactory::CheckCommPara(const std::string &tag, const DeviceMem &i
             break;
         }
         case CommType::COMM_TAG_RING_COMBINED:
-        case CommType::COMM_TAG_MESH_COMBINED:
         case CommType::COMM_TAG_P2P: {
             isSupport = commParaInfo.commPlane == COMM_COMBINE;
+            break;
+        }
+        case CommType::COMM_TAG_MESH_COMBINED: {
+            isSupport = commParaInfo.commPlane == COMM_COMBINE_ORDER;
             break;
         }
         case CommType::COMM_TAG_ASYMMETRIC_HIERARCHICAL_CONCATENATE:
@@ -187,37 +189,8 @@ HcclResult CommFactory::CreateCommPlane(const std::string &tag, const DeviceMem 
             ret = CreateCommStar(tag, inputMem, outputMem, commParaInfo, commPlaneVec, isUsedRdma, commVec);
             break;
         }
-        case CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING: {
-            ret = CreateCommNHR(tag, inputMem, outputMem, commParaInfo, CommPlaneVector_[commParaInfo.commPlane],
-                isUsedRdma, commVec);
-            break;
-        }
-        case CommType::COMM_TAG_WHOLE_NHR: {
-            ret = CreateCommNHR(tag, inputMem, outputMem, commParaInfo, CommPlaneVector_[commParaInfo.commPlane],
-                isUsedRdma, commVec);
-            break;
-        }
-        case CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING_V1: {
-            ret = CreateCommNHRV1(tag, inputMem, outputMem, commParaInfo, CommPlaneVector_[commParaInfo.commPlane],
-                isUsedRdma, commVec);
-            break;
-        }
-        case CommType::COMM_TAG_WHOLE_NHR_V1: {
-            ret = CreateCommNHRV1(tag, inputMem, outputMem, commParaInfo, CommPlaneVector_[commParaInfo.commPlane],
-                isUsedRdma, commVec);
-            break;
-        }
-        case CommType::COMM_TAG_NONUNIFORM_BRUCK: {
-            ret = CreateCommNB(tag, inputMem, outputMem, commParaInfo, CommPlaneVector_[commParaInfo.commPlane],
-                isUsedRdma, commVec);
-            break;
-        }
-        case CommType::COMM_TAG_WHOLE_NB: {
-            ret = CreateCommNB(tag, inputMem, outputMem, commParaInfo, CommPlaneVector_[commParaInfo.commPlane],
-                isUsedRdma, commVec);
-            break;
-        }
-        case CommType::COMM_TAG_MESH: {
+        case CommType::COMM_TAG_MESH:
+        case CommType::COMM_TAG_MESH_COMBINED: {
             if (commParaInfo.meshSinglePlane == true) {
                 // 910B非确定性计算场景，server内MESH组网只需要创建一个commbase平面
                 std::vector<std::vector<RankInfo> > commPlaneVec;
@@ -427,141 +400,6 @@ HcclResult CommFactory::CreateCommStar(const std::string &tag, const DeviceMem &
         }
         if (commVec[ringIndex]->Init() != HCCL_SUCCESS) {
             HCCL_ERROR("[create][CommStar]comm array[%u] star rank[%u] init failed", ringIndex, userRank_);
-            commVec[ringIndex].reset(nullptr);
-            return HCCL_E_PARA;
-        }
-    }
-    return HCCL_SUCCESS;
-}
-
-HcclResult CommFactory::CreateCommNHR(const std::string &tag, const DeviceMem &inputMem, const DeviceMem &outputMem,
-    const CommParaInfo &commParaInfo, const std::vector<std::vector<RankInfo> > &commPlaneVec,
-    bool isUsedRdma, std::vector<std::unique_ptr<CommBase> > &commVec)
-{
-    u32 ringSize = commPlaneVec.size();
-    commVec.resize(ringSize);
-
-    for (u32 ringIndex = 0; ringIndex < ringSize; ++ringIndex) {
-        // 只有在当前环是bridge rank才需要创建comm实例
-        if (commParaInfo.commPlane == COMM_LEVEL1 && !isBridgeVector_[ringIndex]) {
-            continue; // 跳出本次循环
-        }
-
-        u32 rank = GetSubCollectiveRank(commPlaneVec[ringIndex]);
-        if (rank == INVALID_VALUE_RANKID) {
-            continue;
-        }
-
-        IntraExchanger exchangerNetwork {};
-        exchangerNetwork.socketManager = reusedSocketManager_;
-
-        HCCL_INFO("[Create][CommNHR]comm is used %s. userRank = %u, rank = %u",
-            isUsedRdma ? "rdma" : "sdma", userRank_, rank);
-
-        commVec[ringIndex].reset(new (std::nothrow) CommNHR(identifier_, userRank_, userRankSize_,
-            rank, commPlaneVec[ringIndex].size(), topoFlag_, dispatcher_, notifyPool_, netDevCtxMap_, exchangerNetwork,
-            commPlaneVec[ringIndex], inputMem, outputMem, isUsedRdma, transportResourceInfoAddr_,
-            transportResourceInfoSize_, tag, nicDeployInner_));
-
-        CHK_PRT_RET(!commVec[ringIndex], HCCL_ERROR("[Create][CommNHR]comm array[%u] reset failed",
-            ringIndex), HCCL_E_PARA);
-
-        if (JudgmentSetHeterogP2p(rank)) {
-            commVec[ringIndex]->SetHeterogP2PType();
-        }
-        commVec[ringIndex]->SetHDCModeInfo(rankDevicePhyIdNicInfoMap_, ranksPort_, isSetHDCModeInfo_, isUseRankPort_);
-        if (commVec[ringIndex]->Init() != HCCL_SUCCESS) {
-            HCCL_ERROR("[Create][CommNHR]comm array[%u] init failed", ringIndex);
-            commVec[ringIndex].reset(nullptr);
-            return HCCL_E_PARA;
-        }
-    }
-    return HCCL_SUCCESS;
-}
-
-HcclResult CommFactory::CreateCommNHRV1(const std::string &tag, const DeviceMem &inputMem, const DeviceMem &outputMem,
-    const CommParaInfo &commParaInfo, const std::vector<std::vector<RankInfo> > &commPlaneVec,
-    bool isUsedRdma, std::vector<std::unique_ptr<CommBase> > &commVec)
-{
-    u32 ringSize = commPlaneVec.size();
-    commVec.resize(ringSize);
-
-    for (u32 ringIndex = 0; ringIndex < ringSize; ++ringIndex) {
-        // 只有在当前环是bridge rank才需要创建comm实例
-        if (commParaInfo.commPlane == COMM_LEVEL1 && !isBridgeVector_[ringIndex]) {
-            continue; // 跳出本次循环
-        }
-
-        u32 rank = GetSubCollectiveRank(commPlaneVec[ringIndex]);
-        if (rank == INVALID_VALUE_RANKID) {
-            continue;
-        }
-
-        IntraExchanger exchangerNetwork {};
-        exchangerNetwork.socketManager = reusedSocketManager_;
-
-        HCCL_INFO("[Create][CommNHRV1]comm is used %s. userRank = %u, rank = %u",
-            isUsedRdma ? "rdma" : "sdma", userRank_, rank);
-
-        commVec[ringIndex].reset(new (std::nothrow) CommNHRV1(identifier_, userRank_, userRankSize_,
-            rank, commPlaneVec[ringIndex].size(), topoFlag_, dispatcher_, notifyPool_, netDevCtxMap_, exchangerNetwork,
-            commPlaneVec[ringIndex], inputMem, outputMem, isUsedRdma, transportResourceInfoAddr_,
-            transportResourceInfoSize_, tag, nicDeployInner_));
-
-        CHK_PRT_RET(!commVec[ringIndex], HCCL_ERROR("[Create][CommNHRV1]comm array[%u] reset failed",
-            ringIndex), HCCL_E_PARA);
-
-        if (JudgmentSetHeterogP2p(rank)) {
-            commVec[ringIndex]->SetHeterogP2PType();
-        }
-        commVec[ringIndex]->SetHDCModeInfo(rankDevicePhyIdNicInfoMap_, ranksPort_, isSetHDCModeInfo_, isUseRankPort_);
-        if (commVec[ringIndex]->Init() != HCCL_SUCCESS) {
-            HCCL_ERROR("[Create][CommNHRV1]comm array[%u] init failed", ringIndex);
-            commVec[ringIndex].reset(nullptr);
-            return HCCL_E_PARA;
-        }
-    }
-    return HCCL_SUCCESS;
-}
-
-HcclResult CommFactory::CreateCommNB(const std::string &tag, const DeviceMem &inputMem, const DeviceMem &outputMem,
-    const CommParaInfo &commParaInfo, const std::vector<std::vector<RankInfo> > &commPlaneVec,
-    bool isUsedRdma, std::vector<std::unique_ptr<CommBase> > &commVec)
-{
-    u32 ringSize = commPlaneVec.size();
-    commVec.resize(ringSize);
-
-    for (u32 ringIndex = 0; ringIndex < ringSize; ++ringIndex) {
-        // 只有在当前环是bridge rank才需要创建comm实例
-        if (commParaInfo.commPlane == COMM_LEVEL1 && !isBridgeVector_[ringIndex]) {
-            continue; // 跳出本次循环
-        }
-
-        u32 rank = GetSubCollectiveRank(commPlaneVec[ringIndex]);
-        if (rank == INVALID_VALUE_RANKID) {
-            continue;
-        }
-
-        IntraExchanger exchangerNetwork {};
-        exchangerNetwork.socketManager = reusedSocketManager_;
-
-        HCCL_INFO("[Create][CommNB]comm is used %s. userRank = %u, rank = %u",
-            isUsedRdma ? "rdma" : "sdma", userRank_, rank);
-
-        commVec[ringIndex].reset(new (std::nothrow) CommNB(identifier_, userRank_, userRankSize_,
-            rank, commPlaneVec[ringIndex].size(), topoFlag_, dispatcher_, notifyPool_, netDevCtxMap_, exchangerNetwork,
-            commPlaneVec[ringIndex], inputMem, outputMem, isUsedRdma, transportResourceInfoAddr_,
-            transportResourceInfoSize_, tag, nicDeployInner_));
-
-        CHK_PRT_RET(!commVec[ringIndex], HCCL_ERROR("[Create][CommNB]comm array[%u] reset failed",
-            ringIndex), HCCL_E_PARA);
-
-        if (JudgmentSetHeterogP2p(rank)) {
-            commVec[ringIndex]->SetHeterogP2PType();
-        }
-        commVec[ringIndex]->SetHDCModeInfo(rankDevicePhyIdNicInfoMap_, ranksPort_, isSetHDCModeInfo_, isUseRankPort_);
-        if (commVec[ringIndex]->Init() != HCCL_SUCCESS) {
-            HCCL_ERROR("[Create][CommNB]comm array[%u] init failed", ringIndex);
             commVec[ringIndex].reset(nullptr);
             return HCCL_E_PARA;
         }

@@ -385,6 +385,10 @@ extern const char *HcclGetErrorString(HcclResult code);
 */
 extern HcclResult HcclBatchSendRecv(HcclSendRecvItem* sendRecvInfo, uint32_t itemNum, HcclComm comm, aclrtStream stream);
 
+/**
+ * @brief Get a number that represents the capability of comm configuration.
+*/
+extern uint32_t HcclGetCommConfigCapability();
 
 /**
  * @brief Initialize the comm configuration.
@@ -410,9 +414,13 @@ inline void HcclCommConfigInit(HcclCommConfig *config)
     info->version = HCCL_COMM_CONFIG_VERSION;
     info->reserved = 0;
 
-    config->hcclBufferSize = HCCL_COMM_DEFAULT_BUFFSIZE;
-    config->hcclDeterministic = HCCL_COMM_DEFAULT_DETERMINISTIC;
+    config->hcclBufferSize = HCCL_COMM_BUFFSIZE_CONFIG_NOT_SET;
+    config->hcclDeterministic = HCCL_COMM_DETERMINISTIC_CONFIG_NOT_SET;
     config->hcclCommName[0] = '\0';
+    config->hcclUdi[0] = '\0';
+    config->hcclOpExpansionMode = HCCL_COMM_DEFAULT_OP_EXPANSION_MODE;
+    config->hcclRdmaTrafficClass = HCCL_COMM_TRAFFIC_CLASS_CONFIG_NOT_SET;
+    config->hcclRdmaServiceLevel = HCCL_COMM_SERVICE_LEVEL_CONFIG_NOT_SET;
 }
 
 /**
@@ -426,11 +434,6 @@ extern HcclResult HcclCommSuspend(HcclComm comm);
  * @param comm A pointer identifying the communication resource based on.
 */
 extern HcclResult HcclCommResume(HcclComm comm);
-
-/**
- * @brief Get a number that represents the capability of comm configuration.
-*/
-extern uint32_t HcclGetCommConfigCapability();
 
 /**
  * @brief Set the virtual memory range to HCCL communicator

@@ -74,7 +74,16 @@ HcclResult CollAllGatherRingFor91093Executor::CalcLevel2CommInfo(TransportMemTyp
     std::vector<LevelNSubCommTransport>& opTransport)
 {
     CommParaInfo commParaLevel2(COMM_LEVEL2, CommType::COMM_TAG_MAX);
-    commParaLevel2.commType = CommType::COMM_TAG_RING_INNER;
+    if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NHR) {
+        commParaLevel2.commType = CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING;
+        HCCL_INFO("[%s]Calc NHRCommInfo", __func__);
+    } else if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NB) {
+        commParaLevel2.commType = CommType::COMM_TAG_NONUNIFORM_BRUCK;
+        HCCL_INFO("[%s]Calc NBCommInfo", __func__);
+    } else {
+        commParaLevel2.commType = CommType::COMM_TAG_RING_INNER;
+        HCCL_INFO("[%s]Calc RingCommInfo", __func__);
+    }
     CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel2, opTransport[COMM_LEVEL2], inputType, outputType));
     return HCCL_SUCCESS;
 }
@@ -165,8 +174,16 @@ HcclResult CollAllGatherRingFor91093Executor::KernelRun(const OpParam &param, Ex
     }
     if (level2RankSize > 1) {
         std::unique_ptr<AlgTemplateBase> level2AGExecutor;
-        level2AGExecutor.reset(new (std::nothrow) AllGatherRing(dispatcher_));
-        HCCL_INFO("allgather ring: using ring algo inter-server.");
+        if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NB) {
+            level2AGExecutor.reset(new (std::nothrow) AllGatherNB(dispatcher_));
+            HCCL_INFO("allgather ring: using nonuniform-bruck algo inter-superPod.");
+        } else if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NHR) {
+            level2AGExecutor.reset(new (std::nothrow) AllGatherNHR(dispatcher_));
+            HCCL_INFO("allgather ring: using nonuniform-hierarchical-ring algo inter-superPod.");
+        } else {
+            level2AGExecutor.reset(new (std::nothrow) AllGatherRing(dispatcher_));
+            HCCL_INFO("allgather ring: using ring algo inter-superPod.");
+        }
         CHK_SMART_PTR_NULL(level2AGExecutor);
 
         std::vector<Slice> level2DataSegsSlice;
@@ -209,17 +226,17 @@ HcclResult CollAllGatherRingFor91093Executor::KernelRun(const OpParam &param, Ex
                 param.stream, PROF_STAGE_1, level1DataSegsSlice, syncTrans));
         } else {
             std::unique_ptr<AlgTemplateBase> level1AGExecutor;
-            if (UseInterServerRingAlgo(algType_)) {
+            if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
                 level1AGExecutor.reset(new (std::nothrow) AllGatherRing(dispatcher_));
                 HCCL_INFO("allgather ring: using ring algo inter-server.");
-            } else if (UseInterServerNBAlgo(algType_)) {
+            } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
                 level1AGExecutor.reset(new (std::nothrow) AllGatherNB(dispatcher_));
                 HCCL_INFO("allgather ring: using nonuniform-bruck algo inter-server.");
-            } else if (UseInterServerNHRAlgo(algType_)) {
+            } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
                 level1AGExecutor.reset(new (std::nothrow) AllGatherNHR(dispatcher_));
                 HCCL_INFO("allgather ring: using nonuniform-hierarchical-ring algo inter-server.");
             } else {
-                HCCL_ERROR("allgather ring: algType[%u] is not supported.", algType_);
+                HCCL_ERROR("allgather ring: unsupported algtype [%s].", AlgTypeToStr(algType_).c_str());
                 return HCCL_E_NOT_SUPPORT;
             }
             CHK_SMART_PTR_NULL(level1AGExecutor);

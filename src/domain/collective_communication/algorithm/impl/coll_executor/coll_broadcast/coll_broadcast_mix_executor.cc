@@ -165,7 +165,7 @@ HcclResult CollBroadCastMix::KernelRun(const OpParam &param, ExecMem &execMem)
 
     std::unique_ptr<AlgTemplateBase> level1Executor;
     u64 curSize = execMem.count * perDataSize;
-    if (UseInterServerNHRAlgo(algType_)) {
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
         HCCL_DEBUG("[CollBroadCastMix][KernelRun] curSize[%llu] deviceNumPerAggregation[%u] commLevel0Size[%u]",
             curSize, topoAttr_.deviceNumPerAggregation, level0CommInfo.localRankSize);
         if (curSize / topoAttr_.deviceNumPerAggregation <= NHR_BCAST_SMALL_SIZE) {
@@ -175,7 +175,7 @@ HcclResult CollBroadCastMix::KernelRun(const OpParam &param, ExecMem &execMem)
         }
         HCCL_INFO("[CollBroadCastMix][KernelRun]broadcast mix: using nhr algo inter-server.");
     } else {
-        HCCL_ERROR("[CollBroadCastMix][KernelRun]broadcast mix: algType[%u] is not supported.", algType_);
+        HCCL_ERROR("[CollBroadCastMix][KernelRun]broadcast mix: algType[%u] is not supported.", algType_.algoLevel1);
         return HCCL_E_NOT_SUPPORT;
     }
     CHK_SMART_PTR_NULL(level1Executor);

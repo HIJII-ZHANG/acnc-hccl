@@ -23,6 +23,7 @@
 namespace hccl {
 using HcclBasicRankInfo = struct HcclBasicRankInfoDef {
     HcclIpAddress hostIP;
+    u32 hostPort{HCCL_INVALID_PORT};
     u32 rank{0};
     u32 rankSize{0};
     NICDeployment nicDeploy{NICDeployment::NIC_DEPLOYMENT_DEVICE};
@@ -31,6 +32,9 @@ using HcclBasicRankInfo = struct HcclBasicRankInfoDef {
     u32 devicePhysicID{0};
     std::vector<HcclIpAddress> deviceIP;
     std::vector<HcclIpAddress> backupDeviceIP;
+    u32 deviceNicPort{HCCL_INVALID_PORT};
+    u32 deviceVnicPort{HCCL_INVALID_PORT};
+    u32 backupDevicePort{HCCL_INVALID_PORT};
     u32 superDeviceId{INVALID_UINT}; // 超节点内device id，超节点内唯一
     std::string superPodId{""};     // 超节点标识
 };

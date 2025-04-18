@@ -15,88 +15,6 @@
 
 namespace hccl {
 
-const std::map<AlgTypeLevel2, std::string> HCCL_ALGO_LEVEL2_NAME_MAP = {
-    {AlgTypeLevel2::ALG_LEVEL2_HD, "H-D"},
-    {AlgTypeLevel2::ALG_LEVEL2_RING, "ring"},
-    {AlgTypeLevel2::ALG_LEVEL2_RESERVED, "null"},
-};
-
-const std::set<AlgType> HCCL_ALGO_TYPE_MAP = {
-    AlgType::ALG_DEFAULT,
-    AlgType::ALG_8P_RING_PLUS_HD,
-    AlgType::ALG_4P_MESH_PLUS_HD,
-    AlgType::ALG_2P_MESH_PLUS_HD,
-    AlgType::ALG_1P_MESH_PLUS_HD,
-    AlgType::ALG_4P_RING_PLUS_HD,
-    AlgType::ALG_NP_SINGLE_RING_PLUS_HD,
-    AlgType::ALG_8P_RING_PLUS_RING,
-    AlgType::ALG_4P_MESH_PLUS_RING,
-    AlgType::ALG_2P_MESH_PLUS_RING,
-    AlgType::ALG_1P_MESH_PLUS_RING,
-    AlgType::ALG_4P_RING_PLUS_RING,
-    AlgType::ALG_NP_SINGLE_RING_PLUS_RING,
-    AlgType::ALG_NP_MESH_PLUS_RING,
-    AlgType::ALG_NP_MESH_PLUS_HD,
-    AlgType::ALG_8P_RING_PLUS_NHR,
-    AlgType::ALG_4P_MESH_PLUS_NHR,
-    AlgType::ALG_2P_MESH_PLUS_NHR,
-    AlgType::ALG_1P_MESH_PLUS_NHR,
-    AlgType::ALG_4P_RING_PLUS_NHR,
-    AlgType::ALG_NP_SINGLE_RING_PLUS_NHR,
-    AlgType::ALG_NP_MESH_PLUS_NHR,
-    AlgType::ALG_WHOLE_NHR,
-    AlgType::ALG_8P_RING_PLUS_NHR_V1,
-    AlgType::ALG_4P_MESH_PLUS_NHR_V1,
-    AlgType::ALG_2P_MESH_PLUS_NHR_V1,
-    AlgType::ALG_1P_MESH_PLUS_NHR_V1,
-    AlgType::ALG_4P_RING_PLUS_NHR_V1,
-    AlgType::ALG_NP_SINGLE_RING_PLUS_NHR_V1,
-    AlgType::ALG_NP_MESH_PLUS_NHR_V1,
-    AlgType::ALG_WHOLE_NHR_V1,
-    AlgType::ALG_8P_RING_PLUS_AHC,
-    AlgType::ALG_4P_MESH_PLUS_AHC,
-    AlgType::ALG_2P_MESH_PLUS_AHC,
-    AlgType::ALG_1P_MESH_PLUS_AHC,
-    AlgType::ALG_4P_RING_PLUS_AHC,
-    AlgType::ALG_NP_SINGLE_RING_PLUS_AHC,
-    AlgType::ALG_NP_MESH_PLUS_AHC,
-    AlgType::ALG_WHOLE_AHC,
-    AlgType::ALG_8P_RING_PLUS_AHC_BROKE,
-    AlgType::ALG_4P_MESH_PLUS_AHC_BROKE,
-    AlgType::ALG_2P_MESH_PLUS_AHC_BROKE,
-    AlgType::ALG_1P_MESH_PLUS_AHC_BROKE,
-    AlgType::ALG_4P_RING_PLUS_AHC_BROKE,
-    AlgType::ALG_NP_SINGLE_RING_PLUS_AHC_BROKE,
-    AlgType::ALG_NP_MESH_PLUS_AHC_BROKE,
-    AlgType::ALG_WHOLE_AHC_BROKE,
-    AlgType::ALG_8P_RING_PLUS_NB,
-    AlgType::ALG_4P_MESH_PLUS_NB,
-    AlgType::ALG_2P_MESH_PLUS_NB,
-    AlgType::ALG_1P_MESH_PLUS_NB,
-    AlgType::ALG_4P_RING_PLUS_NB,
-    AlgType::ALG_NP_SINGLE_RING_PLUS_NB,
-    AlgType::ALG_NP_DOUBLE_RING_PLUS_NB,
-    AlgType::ALG_NP_MESH_PLUS_NB,
-    AlgType::ALG_WHOLE_NB,
-    AlgType::ALG_NP_STAR,
-    AlgType::ALG_NP_HD,
-    AlgType::ALG_DOUBLE_RING_PLUS_RING,
-    AlgType::ALG_DOUBLE_RING_PLUS_HD,
-    AlgType::ALG_DOUBLE_RING_PLUS_NHR,
-    AlgType::ALG_DOUBLE_RING_PLUS_AHC,
-    AlgType::ALG_DOUBLE_RING_PLUS_AHC_BROKE,
-    AlgType::ALG_WHOLE_RING_PLUS_PIPELINE,
-    AlgType::ALG_8P_RING_PLUS_PIPELINE,
-    AlgType::ALG_4P_MESH_PLUS_PIPELINE,
-    AlgType::ALG_2P_MESH_PLUS_PIPELINE,
-    AlgType::ALG_1P_MESH_PLUS_PIPELINE,
-    AlgType::ALG_4P_RING_PLUS_PIPELINE,
-    AlgType::ALG_NP_SINGLE_RING_PLUS_PIPELINE,
-    AlgType::ALG_NP_DOUBLE_RING_PLUS_PIPELINE,
-    AlgType::ALG_NP_MESH_PLUS_PIPELINE,
-    AlgType::ALG_NP_STAR_PLUS_PIPELINE,
-};
-
 constexpr u32 DEVICE_EIGHT = 8;
 constexpr u32 DEVICE_FOUR = 4;
 constexpr u32 DEVICE_TWO = 2;
@@ -146,31 +64,50 @@ HcclResult AlgConfigurator::SelectCurrOpAlgType(
 
     bool isConfigNULL = GetExternalInputHcclAlgoConfig(opType)[HCCL_ALGO_LEVEL_0] == HcclAlgoType::HCCL_ALGO_TYPE_NULL;
 
-    HCCL_INFO("[Set][AlgType] isConfigAHC[%u] isConfigNULL[%u]", isConfigAHC, isConfigNULL);
+    HCCL_INFO("[Set][AlgType] isConfigAHC[%u] isConfigNULL[%u] multiModuleDiffDeviceNumMode[%u] multiSuperPodDiffServerNumMode[%u]",
+        isConfigAHC, isConfigNULL, topoAttr_.multiModuleDiffDeviceNumMode, topoAttr_.multiSuperPodDiffServerNumMode);
 
     if (Is310P3Common(algoAttr_.isHaveCpuRank, topoAttr_.deviceType)) {
-        algType[opType] = AlgType::ALG_DEFAULT;
+        algType[opType].algoLevel0 = AlgTypeLevel0::ALG_LEVEL0_WHOLE_RING;
+        algType[opType].algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_WHOLE_RING;
+    } else if (!topoAttr_.multiModuleDiffDeviceNumMode && topoAttr_.multiSuperPodDiffServerNumMode &&
+               (opType == HcclCMDType::HCCL_CMD_ALLREDUCE || opType == HcclCMDType::HCCL_CMD_ALL)) {
+        CHK_RET(SetAlgoLevel0(GetExternalInputHcclAlgoConfig(opType)[HCCL_ALGO_LEVEL_0], algType0));
+        CHK_RET(SetAlgoLevel1(HcclAlgoType::HCCL_ALGO_TYPE_AHC, moduleNum, algType1, opType));
+        CHK_RET(SetAlgoLevel2(GetExternalInputHcclAlgoConfig(opType)[HCCL_ALGO_LEVEL_2], algType2));
+        algType[opType].algoLevel0 = algType0;
+        algType[opType].algoLevel1 = algType1;
+        if (!topoAttr_.isStandardCard && deviceType != DevType::DEV_TYPE_910B && !topoAttr_.isDiffDeviceType) {
+            if (topoAttr_.nicList.size() != DEVICE_EIGHT && topoAttr_.deviceNumPerAggregation == DEVICE_EIGHT &&
+                algType0 != AlgTypeLevel0::ALG_LEVEL0_8P_RING) {
+                HCCL_ERROR("[Set][AlgType]nicSize[%zu] error, algType is not 8P ring.", topoAttr_.nicList.size());
+                return HCCL_E_PARA;
+            }
+        }
     } else if ((topoAttr_.multiModuleDiffDeviceNumMode ||
                (topoAttr_.multiSuperPodDiffServerNumMode &&
                !((opType == HcclCMDType::HCCL_CMD_ALLREDUCE || opType == HcclCMDType::HCCL_CMD_ALL)
                && isConfigAHC))) &&
                !isConfigNULL) { // 多server不同卡模式，设置为单层拓扑类型
-        algType[opType] = AlgType::ALG_DEFAULT;
+        algType[opType].algoLevel0 = AlgTypeLevel0::ALG_LEVEL0_WHOLE_RING;
+        algType[opType].algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_WHOLE_RING;
         isAlgoLevel1Default_[opType] = false;
         if (GetExternalInputHcclAlgoConfig(opType)[HCCL_ALGO_LEVEL_0] != HcclAlgoType::HCCL_ALGO_TYPE_DEFAULT ||
             GetExternalInputHcclAlgoConfig(opType)[HCCL_ALGO_LEVEL_1] != HcclAlgoType::HCCL_ALGO_TYPE_DEFAULT) {
             HCCL_WARNING("multiModuleDiffDeviceNumMode[%d], multiSuperPodDiffServerNumMode_[%d], algorithm type [%d] is selected by force.", \
-                         topoAttr_.multiModuleDiffDeviceNumMode, topoAttr_.multiSuperPodDiffServerNumMode, algType[opType]);
+                         topoAttr_.multiModuleDiffDeviceNumMode, topoAttr_.multiSuperPodDiffServerNumMode, algType[opType].algoLevel0);
         }
+        HCCL_INFO("[AlgConfigurator][SelectCurrOpAlgType] multiModuleDiffDeviceNumMode is true, set ahc.");
     } else if (algoAttr_.isHaveCpuRank) {
-        algType[opType] = AlgType::ALG_NP_STAR;
+        algType[opType].algoLevel0 = AlgTypeLevel0::ALG_LEVEL0_NP_STAR;
+        algType[opType].algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_STAR;
     } else {
         CHK_RET(SetAlgoLevel0(GetExternalInputHcclAlgoConfig(opType)[HCCL_ALGO_LEVEL_0], algType0));
         CHK_RET(SetAlgoLevel1(GetExternalInputHcclAlgoConfig(opType)[HCCL_ALGO_LEVEL_1], moduleNum, algType1, opType));
         CHK_RET(SetAlgoLevel2(GetExternalInputHcclAlgoConfig(opType)[HCCL_ALGO_LEVEL_2], algType2));
-
-        algType[opType] = AlgType((static_cast<u32>(algType1) << HCCL_LEVEL_ALGO_WIDTH) + static_cast<u32>(algType0));
-
+        algType[opType].algoLevel0 = algType0;
+        algType[opType].algoLevel1 = algType1;
+        algType[opType].algoLevel2 = algType2;
         if (!topoAttr_.isStandardCard && deviceType != DevType::DEV_TYPE_910B && !topoAttr_.isDiffDeviceType) {
             if (topoAttr_.nicList.size() != DEVICE_EIGHT && topoAttr_.deviceNumPerAggregation == DEVICE_EIGHT &&
                 algType0 != AlgTypeLevel0::ALG_LEVEL0_8P_RING) {
@@ -228,11 +165,6 @@ HcclResult AlgConfigurator::SetAlgoLevel1(HcclAlgoType algoConfig, u32 moduleNum
             HCCL_INFO("server num[%u]: level1:nhr_v1 algo is set.", moduleNum);
             break;
         case HcclAlgoType::HCCL_ALGO_TYPE_AHC:
-            if (GetExternalInputHcclAicpuUnfold() == true) {
-                algoConfigShadow = HcclAlgoType::HCCL_ALGO_TYPE_DEFAULT;
-                HCCL_INFO("server num[%u]: ahc is not support AI_CPU, set default.", moduleNum);
-                break;
-            }
             if (opType == HcclCMDType::HCCL_CMD_ALLREDUCE) {
                 algType = AlgTypeLevel1::ALG_LEVEL1_AHC;
                 HCCL_INFO("server num[%u]: level1:ahc algo is set.", moduleNum);
@@ -246,11 +178,6 @@ HcclResult AlgConfigurator::SetAlgoLevel1(HcclAlgoType algoConfig, u32 moduleNum
                 return HCCL_SUCCESS;
             }
         case HcclAlgoType::HCCL_ALGO_TYPE_AHC_BROKE:
-            if (GetExternalInputHcclAicpuUnfold() == true) {
-                algoConfigShadow = HcclAlgoType::HCCL_ALGO_TYPE_DEFAULT;
-                HCCL_INFO("server num[%u]: ahc broke is not support AI_CPU, set default.", moduleNum);
-                break;
-            }
             if (opType == HcclCMDType::HCCL_CMD_ALLREDUCE) {
                 algType = AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE;
                 HCCL_INFO("server num[%u]: level1:ahc broke algo is set.", moduleNum);
@@ -321,6 +248,12 @@ HcclResult AlgConfigurator::SetAlgoLevel2(HcclAlgoType algoConfig, AlgTypeLevel2
             break;
         case HcclAlgoType::HCCL_ALGO_TYPE_RING:
             algType = AlgTypeLevel2::ALG_LEVEL2_RING;
+            break;
+        case HcclAlgoType::HCCL_ALGO_TYPE_NHR:
+            algType = AlgTypeLevel2::ALG_LEVEL2_NHR;
+            break;
+        case HcclAlgoType::HCCL_ALGO_TYPE_NB:
+            algType = AlgTypeLevel2::ALG_LEVEL2_NB;
             break;
         default: {
             if (superPodNum >=  HCCL_INTER_SERVER_RING_ALGO_MAX_SUPPORT_SERVER_NUM) {
@@ -447,9 +380,8 @@ bool AlgConfigurator::IsHCCSSWNumEqualToTwiceSIONum()
 
 HcclResult AlgConfigurator::CheckAlgType(const AlgType algType)
 {
-    if (HCCL_ALGO_TYPE_MAP.count(algType) == 0) {
-        HCCL_ERROR("[Check][AlgType]errNo[0x%016llx] algType[%s] is not supported", HCCL_ERROR_CODE(HCCL_E_PARA),
-            AlgTypeToStr(algType).c_str());
+    if(algType.algoLevel0 == AlgTypeLevel0::ALG_LEVEL0_WHOLE_RING && algType.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_HD) {
+        HCCL_ERROR("[Check][AlgType]errNo[0x%016llx] algType[%s] is not supported", HCCL_ERROR_CODE(HCCL_E_PARA), AlgTypeToStr(algType).c_str());
         return HCCL_E_PARA;
     }
     return HCCL_SUCCESS;
@@ -457,9 +389,9 @@ HcclResult AlgConfigurator::CheckAlgType(const AlgType algType)
 
 AlgTypeLevel0 AlgConfigurator::GetLevel0AlgType(const AlgType algType) const
 {
-    if (algType != AlgType::ALG_NP_STAR) {
-        const u32 algLevel0 = static_cast<u32>(algType) & ((1 << HCCL_LEVEL_ALGO_WIDTH) - 1);
-        return static_cast<AlgTypeLevel0>(algLevel0);
+    if (algType.algoLevel0 != AlgTypeLevel0::ALG_LEVEL0_NP_STAR &&
+        algType.algoLevel1 != AlgTypeLevel1::ALG_LEVEL1_STAR) {
+        return algType.algoLevel0;
     }
 
     return AlgTypeLevel0::ALG_LEVEL0_NP_STAR;
@@ -469,11 +401,9 @@ HcclResult AlgConfigurator::GetTopoTypeByAlgType(const AlgType &algType, const D
     TopoType &topoType)
 {
     CHK_RET(CheckAlgType(algType));
-
     CHK_RET(CheckDeviceType(deviceType));
 
-    const AlgTypeLevel0 algLevel0 = GetLevel0AlgType(algType);
-    switch (algLevel0) {
+    switch (algType.algoLevel0) {
         case AlgTypeLevel0::ALG_LEVEL0_NP_DOUBLE_RING:
             topoType = TopoType::TOPO_TYPE_NP_DOUBLE_RING;
             break;

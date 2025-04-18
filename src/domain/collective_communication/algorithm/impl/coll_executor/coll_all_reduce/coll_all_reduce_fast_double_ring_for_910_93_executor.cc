@@ -58,7 +58,7 @@ HcclResult CollAllReduceFastDoubleRingFor91093Executor::DoubleRingReduceScatter(
         multRingsSliceZero, reductionOp, LEVEL0_BRIDGE_RANK_ID, baseOffset, disableDMAReduce);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAllReduceFastDoubleRingFor91093Executor][DoubleRingReduceScatter] Double ring "
-                   "reduce scatter failed failed,return[%d]", ret), ret);
+                   "reduce scatter failed,return[%d]", ret), ret);
     u32 ringIndexOp = COMM_INDEX_0;
     u32 rankSize = level0RingCommInfo.localRankSize;
     ret = tempAlg->RegisterProfiler(((ringIndexOp + 1) << PROF_RINGINDEX_OFFSET_OF_PLANEID) +
@@ -66,13 +66,13 @@ HcclResult CollAllReduceFastDoubleRingFor91093Executor::DoubleRingReduceScatter(
         HCCL_EXEC_STEP_NOT_SET, stream);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAllReduceFastDoubleRingFor91093Executor][DoubleRingReduceScatter] Double ring "
-                   "reduce scatter failed failed,return[%d]", ret), ret);
+                   "reduce scatter failed,return[%d]", ret), ret);
 
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     ret = RunTemplate(tempAlg, level0RingCommInfo);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAllReduceFastDoubleRingFor91093Executor][DoubleRingReduceScatter] Double ring "
-                   "reduce scatter failed failed,return[%d]", ret), ret);
+                   "reduce scatter failed,return[%d]", ret), ret);
 
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     return HCCL_SUCCESS;
@@ -127,7 +127,7 @@ HcclResult CollAllReduceFastDoubleRingFor91093Executor::DoubleRingAllGather(
     ret = RunTemplate(tempAlg, level0ZeroCommInfo);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAllReduceFastDoubleRingFor91093Executor][DoubleRingAllGather] Double ring "
-                   "reduce scatter failed failed,return[%d]", ret), ret);
+                   "all gather failed,return[%d]", ret), ret);
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     return HCCL_SUCCESS;
 }

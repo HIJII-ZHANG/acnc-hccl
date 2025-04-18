@@ -56,7 +56,7 @@ HcclResult AllGatherOperator::SelectAlg(const std::string& tag, const OpParam& p
     } else if (deviceType_ == DevType::DEV_TYPE_310P3) {
         newTag = tag + algName;
     } else {
-        AlgTypeLevel1 algType1 = GetLevel1AlgType(algType_);
+        AlgTypeLevel1 algType1 = algType_.algoLevel1;
         auto level1Iter = HCCL_ALGO_LEVEL1_NAME_MAP.find(algType1);
         CHK_PRT_RET(level1Iter == HCCL_ALGO_LEVEL1_NAME_MAP.end(), HCCL_ERROR("level1: algType1[%u] is invalid.",
             algType1), HCCL_E_INTERNAL);
@@ -69,22 +69,18 @@ HcclResult AllGatherOperator::SelectAlg(const std::string& tag, const OpParam& p
 
 HcclResult AllGatherOperator::SelectAlgforMix(const OpParam& param, std::string& algName)
 {
-    HcclResult ret;
 
     if (gcdDeviceNumPerAggregation_ > 1) {
-        ret = SetInterServerNHRAlgo(algType_);
+        algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_NHR;
         HCCL_WARNING("[AllGatherOperator][SelectAlgforMix]only support NHR in AlgoLevel1 yet, "\
             "default is algType=NHR.");
         algName = "AllGatherMixExecutor";
     } else {
-        ret = SetInterServerRingAlgo(algType_);
+        algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_RING;
         HCCL_WARNING("[AllGatherOperator][SelectAlgforMix]only support ring in AlgoComm yet, "\
             "default is algType=ring.");
         algName = "AllGatherComm";
     }
-    CHK_PRT_RET(ret != HCCL_SUCCESS,
-        HCCL_ERROR("[AllGatherOperator][SelectAlgforMix]errNo[0x%016llx] tag[%s], AllGather set inter server "\
-            "failed", HCCL_ERROR_CODE(ret), param.tag.c_str()), ret);
 
     HCCL_INFO("[SelectAlgforMix] all_gather SelectAlgforMix is algName [%s]", algName.c_str());
     return HCCL_SUCCESS;
@@ -120,8 +116,8 @@ HcclResult AllGatherOperator::SelectAlgfor910B(const OpParam& param, std::string
     bool isMeshTopo = topoType_ == TopoType::TOPO_TYPE_NP_MESH || topoType_ == TopoType::TOPO_TYPE_4P_MESH ||
         topoType_ == TopoType::TOPO_TYPE_2P_MESH || topoType_ == TopoType::TOPO_TYPE_1P_MESH;
     bool isRingTopo = topoType_ == TopoType::TOPO_TYPE_NP_SINGLE_RING;
-
-    bool isAivMode = GetExternalInputHcclAivMode() && isSingleMeshAggregation_ &&
+    
+    bool isAivMode = topoMatcher_->GetAivModeConfig() && isSingleMeshAggregation_ &&
         IsSupportAIVCopy(param.DataDes.dataType) && dataSize <= AIV_BIG_SIZE;
     if (isAivMode) {
         if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && dataSize <= AIV_ALL_GATHER_SMALL_SIZE) {
@@ -144,20 +140,40 @@ HcclResult AllGatherOperator::SelectAlgfor910B(const OpParam& param, std::string
     }
 
     // pipeline算法task数量多，如果超出FFTS子图限制，则重定向到HD算法
-    if (GetLevel1AlgType(algType_) == AlgTypeLevel1::ALG_LEVEL1_PIPELINE) {
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_PIPELINE) {
         u32 contextNum = CalcContextNumForPipeline(HcclCMDType::HCCL_CMD_ALLGATHER);
         if (contextNum > HCCL_FFTS_CAPACITY) {
-            CHK_RET(SetInterServerHDAlgo(algType_));
+            algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_HD;;
             HCCL_WARNING("[AllGatherOperator][SelectAlgfor910B] context num[%u] is out of capacityof FFTS+ graph[%u],"
                 "reset algorithm to HD.", contextNum, HCCL_FFTS_CAPACITY);
         }
     }
 
-    if (isMeshTopo) {
+    // 多机场景下aiv支持情况
+    void *commInputPtr = nullptr;
+    void *commOutputPtr = nullptr;
+    u64 commInputSize = 0;
+    u64 commOutputSize = 0;
+
+    CHK_RET(cclBufferManager_.GetInCCLbuffer(commInputPtr, commInputSize));
+    CHK_RET(cclBufferManager_.GetOutCCLbuffer(commOutputPtr, commOutputSize));
+    bool isServNumPowOfTwo = (serverNum_ > 0) && ((serverNum_ & (serverNum_ - 1)) == 0);
+    bool isSupportAivRdmaCount = !isSingleMeshAggregation_ && !multiModuleDiffDeviceNumMode_ &&
+        (isServNumPowOfTwo || dataSize <= HCCL_SMALL_COUNT_128_KB) &&
+        dataSize * userRankSize_ <= HCCL_MID_COUNT_16_MB && dataSize <= HCCL_SMALL_COUNT_256_KB;
+    bool isOpbase = (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
+    // 暂只支持单算子模式
+    bool isCCLBufferGE16M = isOpbase &&
+        (commInputSize >= HCCL_MID_COUNT_16_MB && commOutputSize >= HCCL_MID_COUNT_16_MB);
+    bool isAivRdmaMode = topoMatcher_->GetAivModeConfig() && IsSupportAIVCopy(param.DataDes.dataType) &&
+        isMeshTopo && isCCLBufferGE16M && isSupportAivRdmaCount;
+    if (isAivRdmaMode) {
+        algName = "AllGatherAivRdmaExecutor";
+    } else if (isMeshTopo) {
         if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
             if (isSingleMeshAggregation_) {
                 algName = "AllGatherMeshOpbaseExecutor";
-            } else if (UseInterServerPipelineAlgo(algType_)) {
+            } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_PIPELINE) {
                 algName = "AllGatherMeshOpbasePipelineExecutor";
             }
         }
@@ -196,10 +212,19 @@ HcclResult AllGatherOperator::SelectAlgfor91093(const OpParam& param, std::strin
 {
     u32 unitSize = SIZE_TABLE[param.DataDes.dataType];
     u64 dataSize = param.DataDes.count * unitSize; // 单位：字节
-    bool isAivMode = GetExternalInputHcclAivMode() && IsSupportAIVCopy(param.DataDes.dataType) && serverNum_ == 1 &&
-        dataSize <= AIV_ALL_GATHER_A3_ENTRY_SIZE; // 满足该数据量走AIV
+    if (dataSize >= cclBufferManager_.GetInCCLbufferSize()) {
+        HCCL_WARNING("The current inCCLbufferSize is [%llu] bytes, change the HCCL_BUFFSIZE environment variable"\
+            "to be greater than the current data volume[%llu] bytes to improve the performance of the 91093 environment.",
+            cclBufferManager_.GetInCCLbufferSize(), dataSize);
+    }
+
+    bool isOpbase = workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE;
+    bool isAivMode = topoMatcher_->GetAivModeConfig() && IsSupportAIVCopy(param.DataDes.dataType) && serverNum_ == 1 &&
+        ((isOpbase && dataSize <= AIV_ALL_GATHER_A3_ENTRY_SIZE) ||
+        (!isOpbase && dataSize <= AIV_ALL_GATHER_A3_GRAPH_ENTRY_SIZE));
     if (isAivMode) {
-        if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && dataSize <= AIV_ALL_GATHER_SMALL_SIZE) {
+        if ((isOpbase && dataSize <= AIV_ALL_GATHER_SMALL_SIZE)
+            || (!isOpbase && dataSize <= AIV_A3_ALL_GATHER_GRAPH_GUIYI_SIZE)) {
             algName = "AllGatherMeshAivSmallCountExecutor"; // 目前a3 aivmode下单算子模式正好全走小数据
         } else {
             algName = "AllGatherMeshAivExecutor"; 
@@ -226,31 +251,22 @@ HcclResult AllGatherOperator::SelectAlgfor91093(const OpParam& param, std::strin
         }
     } else if (GetExternalInputEnableRdmaSdmaConcurrent() && topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING &&
         !param.aicpuUnfoldMode && (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE)) {
-        if (!(UseInterServerRingAlgo(algType_) || UseInterServerNBAlgo(algType_))) {
-            HcclResult ret = SetInterServerRingAlgo(algType_);
+        if (!(algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING || algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB)) {
+            algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_RING;
             HCCL_WARNING("[AllGatherOperator][SelectAlgfor91093] concurrent only support ring or NB in AlgoLevel1 "\
                 "yet, default is ring.");
-            CHK_PRT_RET(ret != HCCL_SUCCESS,
-                HCCL_ERROR("[AllGatherOperator][SelectAlgfor91093]errNo[0x%016llx] tag[%s], AllGather concurrent "\
-                    "set inter server ring algo failed", HCCL_ERROR_CODE(ret), param.tag.c_str()), ret);
         }
         algName = "AllGatherDoubleRingConcurrentExecutor";
     } else {
         if (GetExternalInputEnableRdmaSdmaConcurrent()) {
-            if (!(UseInterServerRingAlgo(algType_) || UseInterServerNBAlgo(algType_))) {
-                HcclResult ret = SetInterServerRingAlgo(algType_);
-                CHK_PRT_RET(ret != HCCL_SUCCESS,
-                    HCCL_ERROR("[AllGatherOperator][SelectAlgfor91093]errNo[0x%016llx] tag[%s], AllGather concurrent "\
-                    "set inter server ring algo failed", HCCL_ERROR_CODE(ret), param.tag.c_str()), ret);
+            if (!(algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING || algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB)) {
+                algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_RING;
             }
-        } else if (!(UseInterServerRingAlgo(algType_) || UseInterServerNBAlgo(algType_) ||
-            UseWholeRingAlgo(algType_))) {
-            HcclResult ret = SetInterServerNHRAlgo(algType_);
+        } else if (!(algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING || algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB ||
+            algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_WHOLE_RING)) {
+            algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_NHR;
             HCCL_WARNING("[AllGatherOperator][SelectAlgfor91093] only support ring, NB and NHR in AlgoLevel1 yet, "\
                 "default is algType=NHR.");
-            CHK_PRT_RET(ret != HCCL_SUCCESS,
-                HCCL_ERROR("[AllGatherOperator][SelectAlgfor91093]errNo[0x%016llx] tag[%s], AllGather set inter server "\
-                    "nhr algo failed", HCCL_ERROR_CODE(ret), param.tag.c_str()), ret);
         }
         if (IsSupportUnifiedMarch(param, topoType_, serverNum_, superPodNum_)) {
             algName = "AllGatherSemiRingExecutor";

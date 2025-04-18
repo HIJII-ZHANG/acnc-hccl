@@ -152,7 +152,6 @@ HcclResult CommStar::CreateInterLinks()
             pyhIdResourseSockets_[targetDevicePhyId].reset(
                 new (std::nothrow) HcclSocketManager(nicDeployInner_, deviceLogicId, targetDevicePhyId, userRank_));
             CHK_PTR_NULL(pyhIdResourseSockets_[targetDevicePhyId]);
-            CHK_RET(pyhIdResourseSockets_[targetDevicePhyId]->Init());
             HCCL_DEBUG("[Create][InterLinks] dstInterServerMap size[%u], dstInterClientMap size[%u]",
                 dstInterServerMap_.size(), dstInterClientMap_.size());
 
@@ -174,7 +173,6 @@ HcclResult CommStar::CreateInterLinks()
         interSocketManager_.reset(
             new (std::nothrow) HcclSocketManager(nicDeployInner_, deviceLogicId_, devicePhyId_, userRank_));
         CHK_PTR_NULL(interSocketManager_);
-        CHK_RET(interSocketManager_->Init());
 
         HCCL_INFO("[Create][InterLinks] dstInterServerMap size[%u], dstInterClientMap size[%u]",
             dstInterServerMap_.size(), dstInterClientMap_.size());

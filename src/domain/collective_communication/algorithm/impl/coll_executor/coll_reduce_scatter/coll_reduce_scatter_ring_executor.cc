@@ -57,27 +57,8 @@ HcclResult CollReduceScatterRingExecutor::CalcScratchMemSize(u64& scratchMemSize
 HcclResult CollReduceScatterRingExecutor::CalcStreamNum(u32& streamNum)
 {
     u32 totalStreamNum = 1U;
-    switch (algType_) {
-        case AlgType::ALG_8P_RING_PLUS_HD:
-        case AlgType::ALG_8P_RING_PLUS_RING:
-        case AlgType::ALG_8P_RING_PLUS_NHR:
-        case AlgType::ALG_8P_RING_PLUS_NHR_V1:
-        case AlgType::ALG_8P_RING_PLUS_NB:
-        case AlgType::ALG_8P_RING_PLUS_PIPELINE:
-            totalStreamNum = LEVEL0_PLANE_NUM_IN_8PRING;
-            break;
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_RING:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_HD:
-            if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
-                if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-                    totalStreamNum = LEVEL0_PLANE_NUM_IN_NPRING_SINGLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
-                } else {
-                    totalStreamNum = LEVEL0_PLANE_NUM_IN_NPRING_SINGLE;
-                }
-            }
-            break;
-        default:
-            break;
+    if (algType_.algoLevel0 == AlgTypeLevel0::ALG_LEVEL0_8P_RING) {
+        totalStreamNum = LEVEL0_PLANE_NUM_IN_8PRING;
     }
     streamNum = totalStreamNum - 1;
     HCCL_INFO("[CollReduceScatterRingExecutor][CalcStreamNum] tag[%s] streamNum[%u]", tag_.c_str(), streamNum);
@@ -197,7 +178,7 @@ HcclResult CollReduceScatterRingExecutor::KernelRun(const OpParam &param, ExecMe
                 param.reduceType);
             std::unique_ptr<AlgTemplateBase> level1TempAlg;
 
-            if (UseInterServerRingAlgo(algType_)) {
+            if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
                 level1TempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
                 HCCL_INFO("reducescatter ring: using ring algo inter-server.");
                 CHK_SMART_PTR_NULL(level1TempAlg);
@@ -208,7 +189,7 @@ HcclResult CollReduceScatterRingExecutor::KernelRun(const OpParam &param, ExecMe
                 CHK_RET(level1TempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
                     param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID,
                     std::vector<Slice>(0)));
-            } else if (UseInterServerNHRAlgo(algType_)) {
+            } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
                 level1TempAlg.reset(new (std::nothrow) ReduceScatterNHR(dispatcher_, reduceAttr));
                 HCCL_INFO("reducescatter ring: using nhr algo inter-server.");
                 CHK_SMART_PTR_NULL(level1TempAlg);
@@ -218,7 +199,7 @@ HcclResult CollReduceScatterRingExecutor::KernelRun(const OpParam &param, ExecMe
                 CHK_RET(level1TempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
                     param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID,
                     std::vector<Slice>(0)));
-            } else if (UseInterServerNHRV1Algo(algType_)) {
+            } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
                 level1TempAlg.reset(new (std::nothrow) ReduceScatterNHRV1(dispatcher_, reduceAttr));
                 HCCL_INFO("reducescatter ring: using nhr_v1 algo inter-server.");
                 CHK_SMART_PTR_NULL(level1TempAlg);
@@ -228,7 +209,7 @@ HcclResult CollReduceScatterRingExecutor::KernelRun(const OpParam &param, ExecMe
                 CHK_RET(level1TempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, ringCount,
                     param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID,
                     std::vector<Slice>(0)));
-            } else if (UseInterServerNBAlgo(algType_)) {
+            } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
                 level1TempAlg.reset(new (std::nothrow) ReduceScatterNB(dispatcher_, reduceAttr));
                 HCCL_INFO("reducescatter ring: using nonuniform-bruck algo inter-server.");
                 CHK_SMART_PTR_NULL(level1TempAlg);
@@ -294,7 +275,7 @@ HcclResult CollReduceScatterRingExecutor::KernelRun(const OpParam &param, ExecMe
             HCCL_ERROR("[CollReduceScatterRingExecutor][KernelRun]get rank of "
             "bridgeRank failed, commIdx[%u]", commIndex), HCCL_E_PARA);
         u64 serverSliceOffset = serverSliceSize * serverIndex;
-        if (UseInterServerRingAlgo(algType_)) {
+        if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
             CHK_RET(HcclD2DMemcpyAsync(dispatcher_, execMem.scratchMem, execMem.inputMem,
                 const_cast<Stream&>(param.stream)));
         }

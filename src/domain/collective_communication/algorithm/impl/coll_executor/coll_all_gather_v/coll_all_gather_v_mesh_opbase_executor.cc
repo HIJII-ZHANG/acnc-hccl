@@ -71,6 +71,7 @@ u64 CollAllGatherVMeshOpbaseExecutor::CalcLoopMaxCount(const u64 cclBuffSize, co
 
 bool CollAllGatherVMeshOpbaseExecutor::IsHugeData(const u64 curSize)
 {
+    // 该算法只涉及mesh内，不对RDMA多qp做强制刷新
     bool hugeData = curSize > SDMA_SEND_MAX_SIZE;
     return hugeData;
 }

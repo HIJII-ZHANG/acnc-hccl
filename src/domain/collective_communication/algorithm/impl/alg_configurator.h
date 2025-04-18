@@ -60,22 +60,22 @@ private:
     TopoType topoType_ = TopoType::TOPO_TYPE_COMMON;
 
     std::map<HcclCMDType, AlgType> algType_ = {
-        {HcclCMDType::HCCL_CMD_INVALID, AlgType::ALG_DEFAULT},
-        {HcclCMDType::HCCL_CMD_BROADCAST, AlgType::ALG_DEFAULT},
-        {HcclCMDType::HCCL_CMD_ALLREDUCE, AlgType::ALG_DEFAULT},
-        {HcclCMDType::HCCL_CMD_REDUCE, AlgType::ALG_DEFAULT},
-        {HcclCMDType::HCCL_CMD_SEND, AlgType::ALG_DEFAULT},
-        {HcclCMDType::HCCL_CMD_RECEIVE, AlgType::ALG_DEFAULT},
-        {HcclCMDType::HCCL_CMD_ALLGATHER, AlgType::ALG_DEFAULT},
-        {HcclCMDType::HCCL_CMD_REDUCE_SCATTER, AlgType::ALG_DEFAULT},
-        {HcclCMDType::HCCL_CMD_ALLTOALLV, AlgType::ALG_DEFAULT},
-        {HcclCMDType::HCCL_CMD_ALLTOALLVC, AlgType::ALG_DEFAULT},
-        {HcclCMDType::HCCL_CMD_ALLTOALL, AlgType::ALG_DEFAULT},
-        {HcclCMDType::HCCL_CMD_GATHER, AlgType::ALG_DEFAULT},
-        {HcclCMDType::HCCL_CMD_SCATTER, AlgType::ALG_DEFAULT},
-        {HcclCMDType::HCCL_CMD_BATCH_SEND_RECV, AlgType::ALG_DEFAULT},
-        {HcclCMDType::HCCL_CMD_MAX, AlgType::ALG_DEFAULT},
-        {HcclCMDType::HCCL_CMD_ALL, AlgType::ALG_DEFAULT},
+        {HcclCMDType::HCCL_CMD_INVALID, AlgType()},
+        {HcclCMDType::HCCL_CMD_BROADCAST, AlgType()},
+        {HcclCMDType::HCCL_CMD_ALLREDUCE, AlgType()},
+        {HcclCMDType::HCCL_CMD_REDUCE, AlgType()},
+        {HcclCMDType::HCCL_CMD_SEND, AlgType()},
+        {HcclCMDType::HCCL_CMD_RECEIVE, AlgType()},
+        {HcclCMDType::HCCL_CMD_ALLGATHER, AlgType()},
+        {HcclCMDType::HCCL_CMD_REDUCE_SCATTER, AlgType()},
+        {HcclCMDType::HCCL_CMD_ALLTOALLV, AlgType()},
+        {HcclCMDType::HCCL_CMD_ALLTOALLVC, AlgType()},
+        {HcclCMDType::HCCL_CMD_ALLTOALL, AlgType()},
+        {HcclCMDType::HCCL_CMD_GATHER, AlgType()},
+        {HcclCMDType::HCCL_CMD_SCATTER, AlgType()},
+        {HcclCMDType::HCCL_CMD_BATCH_SEND_RECV, AlgType()},
+        {HcclCMDType::HCCL_CMD_MAX, AlgType()},
+        {HcclCMDType::HCCL_CMD_ALL, AlgType()},
     };      // 算法类型
 
     std::map<HcclCMDType, bool> isAlgoLevel1Default_ = {

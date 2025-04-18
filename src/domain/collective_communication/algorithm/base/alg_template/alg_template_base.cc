@@ -10,6 +10,8 @@
 
 #include "sal_pub.h"
 #include "alg_template_base.h"
+#include "hccl_impl_pub.h"
+#include "topo_matcher.h"
 
 namespace hccl {
 ExecutorBase::ExecutorBase(const HcclDispatcher dispatcher)
@@ -23,6 +25,11 @@ ExecutorBase::ExecutorBase(const HcclDispatcher dispatcher)
 ExecutorBase::~ExecutorBase()
 {
     slices_.clear();
+}
+
+HcclResult ExecutorBase::Prepare(PrepareData &param)
+{
+    return HCCL_SUCCESS;
 }
 
 // prepare函数给需要进行集合通信操作进行参数赋值
@@ -147,6 +154,11 @@ HcclResult ExecutorBase::RegisterProfiler(s32 planeId, s32 stage, s32 step, cons
     profilerInput_.planeID = planeId;
     profilerInput_.stage = stage;
     profilerInput_.step = step;
+    return HCCL_SUCCESS;
+}
+
+HcclResult ExecutorBase::RunAsync()
+{
     return HCCL_SUCCESS;
 }
 

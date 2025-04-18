@@ -16,9 +16,6 @@
 #include "comm_p2p_pub.h"
 #include "comm_star_pub.h"
 #include "comm_halving_doubling_pub.h"
-#include "comm_nonuniform_hierarchical_ring_pub.h"
-#include "comm_nonuniform_hierarchical_ring_v1_pub.h"
-#include "comm_nonuniform_bruck_pub.h"
 
 namespace hccl {
 }

@@ -16,7 +16,7 @@
 #include "parallel_task_loader.h"
 #include "dispatcher.h"
 #include "ccl_buffer_manager.h"
-#include "hccl_opbase_atrace_info_pub.h"
+#include "hccl_trace_info.h"
 #include "device_capacity.h"
 #include "topo_matcher.h"
 
@@ -52,9 +52,11 @@ public:
     void SetLegacyHcclImpl(std::unique_ptr<hcclImpl> &hcclImpl);
     HcclResult SetAlgOpContext(AlgOpContext algOpContext);
     HcclResult SetRetryEnable(bool retryEnable);
+    HcclResult SetAivClearEnable(bool aivClearEnable);
     bool SupportRetryWithInplaceCheck(
         const HcclCMDType &opType, OpParam &param, std::string& algName, u8 &isInplaceStatus,
         InplaceSupportRetryStatus &inPlaceSupportRetryStatus);
+    HcclResult GetBlockDim(u32& blcckDim);
 protected:
     std::string GenerateNewTagByAlgTypeLevel1(std::string tag, std::string algTypeLevel1Tag) const;
     u32 CalcContextNumForPipeline(HcclCMDType hcclCMDType);
@@ -112,6 +114,7 @@ protected:
     std::unique_ptr<TopoMatcher> &topoMatcher_;
     HcclWorkflowMode workflowMode_;
     bool retryEnable_ = false;
+    bool aivClearEnable_ = false;
     AlgOpContext algOpContext_;
 private:
     virtual HcclResult SelectAlgoTypeForReduceScatter(float delay, u64 recvCurSize, float bandWidth,

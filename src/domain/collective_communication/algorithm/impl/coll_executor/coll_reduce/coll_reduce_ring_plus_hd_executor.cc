@@ -22,21 +22,11 @@ CollReduceRingPlusHdExecutor::CollReduceRingPlusHdExecutor(const HcclDispatcher 
 HcclResult CollReduceRingPlusHdExecutor::CalcStreamNum(u32& streamNum)
 {
     u32 totalStreamNum = 1U;
-    switch (algType_) {
-        case AlgType::ALG_8P_RING_PLUS_HD:
-        case AlgType::ALG_8P_RING_PLUS_RING:
-        case AlgType::ALG_8P_RING_PLUS_NHR:
-        case AlgType::ALG_8P_RING_PLUS_NHR_V1:
-        case AlgType::ALG_8P_RING_PLUS_NB:
-        case AlgType::ALG_8P_RING_PLUS_PIPELINE:
-            totalStreamNum = LEVEL0_PLANE_NUM_IN_8PRING;
-            break;
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_RING:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_HD:
-            totalStreamNum = LEVEL0_PLANE_NUM_IN_NPRING_SINGLE;
-            break;
-        default:
-            break;
+
+    if (algType_.algoLevel0 == AlgTypeLevel0::ALG_LEVEL0_8P_RING) {
+        totalStreamNum = LEVEL0_PLANE_NUM_IN_8PRING;
+    } else if (algType_.algoLevel0 == AlgTypeLevel0::ALG_LEVEL0_NP_SINGLE_RING) {
+        totalStreamNum = LEVEL0_PLANE_NUM_IN_NPRING_SINGLE;
     }
     streamNum = totalStreamNum - 1;
     HCCL_INFO("[CollReduceRingPlusHdExecutor][CalcStreamNum] tag[%s] streamNum[%u]",
@@ -135,7 +125,7 @@ HcclResult CollReduceRingPlusHdExecutor::KernelRun(const OpParam &param, ExecMem
     u64 reduceAttr = GetReduceAttr(reduceInput, reduceOutput, param.DataDes.dataType, param.reduceType);
 
     std::unique_ptr<AlgTemplateBase> level1TempAlg;
-    if (UseInterServerRingAlgo(algType_)) {
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
         level1TempAlg.reset(new (std::nothrow) ReduceRing(dispatcher_, reduceAttr));
     } else {
         level1TempAlg.reset(new (std::nothrow) ReduceRecursiveHalvingDoubling(dispatcher_, reduceAttr));

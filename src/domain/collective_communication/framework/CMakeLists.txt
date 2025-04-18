@@ -11,9 +11,11 @@ add_library(hccl  SHARED)
 set(hccl_include_list
     ${HCCL_BASE_DIR}/algorithm/base/inc
     ${HCCL_BASE_DIR}/algorithm/pub_inc
+    ${HCCL_BASE_DIR}/algorithm/alg_research/aiv
     ${HCCL_BASE_DIR}/pub_inc
     ${HCCL_BASE_DIR}/pub_inc/hccl
     ${HCCL_BASE_DIR}/algorithm/base/alg_template
+    ${HCCL_BASE_DIR}/algorithm/base/mc2_handler
     ${HCCL_BASE_DIR}/algorithm/base/alg_template/component/inc
     ${HCCL_BASE_DIR}/algorithm/base/communicator
     ${HCCL_BASE_DIR}/algorithm/base/communicator/legacy
@@ -23,8 +25,12 @@ set(hccl_include_list
     ${HCCL_BASE_DIR}/algorithm/impl/task
     ${HCCL_BASE_DIR}/algorithm/impl/resource_manager
     ${HCCL_BASE_DIR}/algorithm/impl/coll_executor
+    ${HCCL_BASE_DIR}/common/debug/profiling/inc
 
+    ${HCCL_BASE_DIR}/framework/cluster_maintenance/health/heartbeat/
+    ${HCCL_BASE_DIR}/framework/cluster_maintenance/recovery/operator_retry/
     ${HCCL_BASE_DIR}/framework/common/src/
+    ${HCCL_BASE_DIR}/framework/common/src/config
     ${HCCL_BASE_DIR}/framework/common/src/topo
     ${HCCL_BASE_DIR}/framework/common/src/task
     ${HCCL_BASE_DIR}/framework/common/src/exception
@@ -53,7 +59,7 @@ if(BUILD_OPEN_PROJECT)
         ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/metadef/common/util/error_manager/
         ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/msprof/
         ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/runtime/
-        ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/slog/toolchain
+        ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/slog/toolchain/
         ${ASCEND_CANN_PACKAGE_PATH}/include/ascendc/highlevel_api/
         ${THIRD_PARTY_NLOHMANN_PATH}
     )
@@ -65,6 +71,7 @@ else()
     target_include_directories(hccl PRIVATE
         ${TOP_DIR}/ace/comop/inc/external/hccl/             # ${ASCEND_CANN_PACKAGE_PATH}/include
         ${TOP_DIR}/ace/comop/inc/hccl/                      # ${ASCEND_CANN_PACKAGE_PATH}/include
+        ${TOP_DIR}/ace/comop/hccl/whole/hccl/algorithm/alg_research/pub_inc
         ${TOP_DIR}/abl/msprof/inc                           # experiment/msprof/
         ${TOP_DIR}/ace/npuruntime/inc                       # experiment/runtime/
         ${TOP_DIR}/inc/driver                               # experiment/ascend_hal/driver/
@@ -73,6 +80,7 @@ else()
         ${TOP_DIR}/metadef/inc/external/
         ${TOP_DIR}/open_source/json/include
         ${TOP_DIR}/abl/slog/inc/toolchain                   # experiment/slog/
+        ${TOP_DIR}/abl/atrace/inc/utrace
     )
 endif()
 
@@ -134,6 +142,7 @@ add_subdirectory(common)
 add_subdirectory(communicator)
 add_subdirectory(hcom)
 add_subdirectory(op_base)
+add_subdirectory(cluster_maintenance)
 
 install(TARGETS hccl
     LIBRARY DESTINATION ${INSTALL_LIBRARY_DIR} OPTIONAL

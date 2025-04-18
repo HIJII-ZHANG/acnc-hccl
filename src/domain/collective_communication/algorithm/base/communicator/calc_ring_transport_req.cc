@@ -10,6 +10,8 @@
 
 #include "calc_ring_transport_req.h"
 
+constexpr u32 HCCL_RANK_OFFSET = 1;
+
 namespace hccl {
 CalcRingTransportReq::CalcRingTransportReq(std::vector<std::vector<u32>> &subCommPlaneVector,
     std::vector<bool> &isBridgeVector, u32 userRank)

@@ -12,6 +12,11 @@
 #define COLL_ALLGATHERV_FOR_310P_RING_EXECUTOR_H
 #include "coll_all_gather_v_executor.h"
 namespace hccl {
+
+// 数据量大于4M使用多流AllGatherRingConcurrentDirect，
+// 否则使用单流AllGatherRingConcurrentDirect
+constexpr u64 ALLGATHERV_SMALL_SIZE = 4 * 1024 * 1024;
+
 class CollAllGatherVFor310PExecutor : public CollAllGatherVExecutor {
 
 public:
@@ -29,6 +34,8 @@ private:
     /* *************** 算法编排 *************** */
     HcclResult CalcCurCountsAndCurDispls(const u64 maxTotalCount, std::vector<u64> &countsLeft,
         std::vector<u64> &displs, std::vector<u64> &curCounts, std::vector<u64> &curDispls, bool &finished) override;
+    u64 CalcLoopMaxCount(const u64 cclBuffSize, const u32 unitSize) override;
+    bool IsHugeData(const u64 curSize) override;
     HcclResult KernelRun(const OpParam &param, ExecMem &execMem) override;
 };
 } // namespace hccl

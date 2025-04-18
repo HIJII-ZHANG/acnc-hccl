@@ -33,8 +33,6 @@ public:
         Stream &mainStream, std::vector<Stream> &subStream,
         std::vector<std::shared_ptr<LocalNotify>> &notifyMain, std::vector<std::shared_ptr<LocalNotify>> &notifySub);
 
-    HcclResult RunAsync();
-
 private:
     virtual HcclResult DeviceMemMapping();
     virtual HcclResult PreProcess();

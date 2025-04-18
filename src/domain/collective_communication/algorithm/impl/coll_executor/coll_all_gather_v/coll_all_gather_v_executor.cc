@@ -24,25 +24,23 @@ HcclResult CollAllGatherVExecutor::Orchestrate(OpParam& param, AlgResourceRespon
     algResResp_ = &algRes;
 
     u64 count = static_cast<u64*>(param.VDataDes.counts)[topoAttr_.userRank];
-    HcclDataType dataType = param.VDataDes.dataType;
 
     HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
     HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
     CHK_RET(AddSubStreamToProfiling());
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && !is310P3Common_) {
         HCCL_PROFILER_ADD_OPDATA_OP(param.tag, count, param.inputPtr, param.outputPtr,
-            dataType, INVALID_VALUE_RANKID, algoAttr_.identifier, HcclReduceOp::HCCL_REDUCE_RESERVED);
+            param.VDataDes.dataType, INVALID_VALUE_RANKID, algoAttr_.identifier, HcclReduceOp::HCCL_REDUCE_RESERVED);
         HCCL_PROFILER_ADD_GROUPRANK(algoAttr_.identifier, topoAttr_.userRankSize, topoAttr_.userRank);
     }
 
     HcclResult ret = HCCL_SUCCESS;
     // 图模式场景下不需要Loop
     if (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-        u64 totalSize = count * SIZE_TABLE[dataType];
         ExecMem execMem;
         execMem.count = count;
-        execMem.inputMem = DeviceMem::create(algRes.paramInputMem.ptr(), totalSize);
-        execMem.outputMem = DeviceMem::create(algRes.paramOutputMem.ptr(), totalSize * topoAttr_.userRankSize);
+        execMem.inputMem = algRes.paramInputMem;
+        execMem.outputMem = algRes.paramOutputMem;
         execMem.scratchMem = algRes.scratchMem;
         execMem.inputPtr = param.inputPtr;
         execMem.outputPtr = param.outputPtr;
@@ -109,7 +107,15 @@ HcclResult CollAllGatherVExecutor::RunLoop(OpParam &param, AlgResourceResponse &
     u8 *curOutputPtr = static_cast<u8 *>(param.outputPtr);
     u8 *commInputPtr = static_cast<u8 *>(algRes.cclInputMem.ptr());
     u8 *commOutputPtr = static_cast<u8 *>(algRes.cclOutputMem.ptr());
-    CHK_PTR_NULL(curInputPtr);
+
+    if (UNLIKELY(countsLeft[topoAttr_.userRank] == 0 && curInputPtr == nullptr)) {
+        // 若本rank的input count为0，此时允许curInputPtr传入空指针，为保证后续流程正常执行，赋值为cclin的地址
+        curInputPtr = commInputPtr;
+        HCCL_DEBUG("Since the input count is 0, set curInputPtr to ccl input[%p]", curInputPtr);
+    } else {
+        CHK_PTR_NULL(curInputPtr);
+    }
+
     CHK_PTR_NULL(curOutputPtr);
     CHK_PTR_NULL(commInputPtr);
     CHK_PTR_NULL(commOutputPtr);
@@ -127,7 +133,7 @@ HcclResult CollAllGatherVExecutor::RunLoop(OpParam &param, AlgResourceResponse &
         auto curCounts = std::vector<u64>();
         auto curDispls = std::vector<u64>();
         CHK_RET(CalcCurCountsAndCurDispls(maxCountPerLoop, countsLeft, displs, curCounts, curDispls, finished));
-    
+
         // 打印调测信息
         PrintCurCountAndCurDispls(curCounts, curDispls);
 
@@ -143,7 +149,7 @@ HcclResult CollAllGatherVExecutor::RunLoop(OpParam &param, AlgResourceResponse &
 
         if (!is310P3Common_) {
             /* 设置子图复用标志 */
-            auto autoSelectedAlgTypeLevel1 = static_cast<u32>(algType_) >> HCCL_LEVEL_ALGO_WIDTH;
+            auto autoSelectedAlgTypeLevel1 = static_cast<u32>(algType_.algoLevel1);
             bool hugeData = IsHugeData(InputSize);    // override
             auto opMeta = HcclOpMetaInfo::GetOneForAllGatherV(autoSelectedAlgTypeLevel1, hugeData, false,
                 CopyPattern::BCOPY, false);
@@ -151,9 +157,17 @@ HcclResult CollAllGatherVExecutor::RunLoop(OpParam &param, AlgResourceResponse &
         }
 
         // 执行
+        if (!DMAReduceFlag_) {
+            // 如果使用in CCL buffer，需要将user buffer in中的结果拷贝到CCL buffer in
+            DeviceMem srcMem = DeviceMem::create(curInputPtr, InputSize);
+            DeviceMem dstMem = DeviceMem::create(commInputPtr, InputSize);
+            CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dstMem, srcMem, param.stream));
+            HCCL_DEBUG("[CollAllGatherVExecutor][RunLoop]copy from user in to ccl in.");
+        }
+
         // 使用当前Loop偏移到的地址作为当前的inputPtr和outputPtr
         ExecMem execMem;
-        execMem.count = curCounts[topoAttr_.userRank];
+        execMem.count = curCount;
         execMem.inputMem = DeviceMem::create(commInputPtr, InputSize);
         execMem.outputMem = DeviceMem::create(commOutputPtr, OutputSize);
         execMem.scratchMem = algRes.scratchMem;
@@ -171,6 +185,18 @@ HcclResult CollAllGatherVExecutor::RunLoop(OpParam &param, AlgResourceResponse &
             HCCL_ERROR_CODE(ret), param.tag.c_str(), commInputPtr, commOutputPtr,
             curCount, dataType),
             ret);
+        
+        if (!DMAReduceFlag_) {
+            u64 offSetCount = 0;
+            // 如果使用CCL buffer，需要将CCL buffer out中的结果拷贝到user buffer out
+            for (u32 i = 0; i < topoAttr_.userRankSize; i++) {
+                // 拷贝中转output上每个slice的数据到output内存，目的端中每个slice的size固定为output的size
+                DeviceMem dstMem = DeviceMem::create(curOutputPtr + curDispls[i] * unitSize, curCounts[i] * unitSize);
+                DeviceMem srcMem = DeviceMem::create(commOutputPtr + offSetCount * unitSize, curCounts[i] * unitSize);
+                offSetCount += curCounts[i];
+                CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dstMem, srcMem, param.stream));
+            }
+        }
 
         if (!is310P3Common_) {
             CHK_RET(LaunchTaskExtend(dispatcher_, param.stream, algResResp_->slaveStreams));

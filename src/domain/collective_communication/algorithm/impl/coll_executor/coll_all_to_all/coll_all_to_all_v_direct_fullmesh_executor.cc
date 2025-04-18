@@ -80,7 +80,7 @@ HcclResult CollRunAlltoAllDirectFullmesh::CalcStreamNum(u32& streamNum)
 
     // 单超节点场景需要的从流数量
     streamNum = (devNumInlocalPod > ALLTOALLV_DIRECT_FULLMESH_SDMA_CONCURRENT_SIZE) ?
-        (ALLTOALLV_DIRECT_FULLMESH_SDMA_CONCURRENT_SIZE) : (devNumInlocalPod);
+        (ALLTOALLV_DIRECT_FULLMESH_SDMA_CONCURRENT_SIZE * RANK_SET_COMPUTE_CONST) : (devNumInlocalPod * RANK_SET_COMPUTE_CONST);
 
     // 多超节点场景下，RDMA会设置独立的并发度
     if ((topoAttr_.userRankSize - devNumInlocalPod) > 0) {
@@ -273,16 +273,33 @@ HcclResult CollRunAlltoAllDirectFullmesh::KernelRun(const OpParam &param, ExecMe
     }
 
     // 执行
-    std::unique_ptr<AlltoAllVDirectFullMesh> tempAlg = nullptr;
-    tempAlg.reset(new (std::nothrow) AlltoAllVDirectFullMesh(dispatcher_, const_cast<Stream&>(param.stream),
-        topoAttr_.userRank, topoAttr_.userRankSize, level0CommInfo.links, localSendRecvInfo_,
-        devNumInlocalPod, rankIdxInPod));
+    std::unique_ptr<AlgTemplateBase> tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_ALL_2_ALL_V_DIRECT_FULL_MESH, dispatcher_);
 
     CHK_SMART_PTR_NULL(tempAlg);
 
-    CHK_RET(tempAlg->Prepare(algResResp_->paramInputMem, algResResp_->paramOutputMem, execMem.inputMem,
-        execMem.outputMem, workflowMode_,algResResp_->slaveStreams, algResResp_->notifiesMain,
-        algResResp_->notifiesAux, isSuPodAsym));
+    PrepareData prepareData;
+    prepareData.stream = param.stream;
+    prepareData.userRank = topoAttr_.userRank;
+    prepareData.userRankSize = topoAttr_.userRankSize;
+    prepareData.linksPtr = &level0CommInfo.links;
+    prepareData.localSendRecvInfoPtr = &localSendRecvInfo_;
+    prepareData.devNumInlocalPod = devNumInlocalPod;
+    prepareData.rankIdxInPod = rankIdxInPod;
+
+    prepareData.inputMem = algResResp_->paramInputMem;
+    prepareData.outputMem = algResResp_->paramOutputMem;
+    prepareData.cclInMem = execMem.inputMem;
+    prepareData.cclOutMem = execMem.outputMem;
+    prepareData.workMode = workflowMode_;
+    prepareData.subStreamsPtr = &algResResp_->slaveStreams;
+    prepareData.signalPtr = &algResResp_->notifiesMain;
+    prepareData.signalAuxPtr = &algResResp_->notifiesAux;
+    prepareData.isSuPodAsym = isSuPodAsym;
+    prepareData.opType = param.opType;
+    prepareData.algOpContext = algOpContext_;
+
+    CHK_RET(tempAlg->Prepare(prepareData));
 
     CHK_RET(tempAlg->RunAsync());
 

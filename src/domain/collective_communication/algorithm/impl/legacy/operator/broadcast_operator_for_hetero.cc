@@ -14,6 +14,7 @@
 #include "executor_impl.h"
 #include "stream_active_manager.h"
 #include "coll_alg_op_registry.h"
+#include "profiler_base_pub.h"
 
 namespace hccl {
 BroadCastOperatorForHetero::BroadCastOperatorForHetero(AlgConfigurator* algConfigurator,
@@ -21,8 +22,10 @@ BroadCastOperatorForHetero::BroadCastOperatorForHetero(AlgConfigurator* algConfi
     : CollAlgOperator(algConfigurator, cclBufferManager, dispatcher, topoMatcher, HcclCMDType::HCCL_CMD_BROADCAST)
 {
     // 由于bcast/allgather/reducescatter/reduce/send/recv暂不支持server间ring，需继续使用HD或NHR
-    if (!UseInterServerNHRAlgo(algType_) && !UseInterServerNHRV1Algo(algType_) && !UseInterServerNBAlgo(algType_)) {
-        SetInterServerHDAlgo(algType_);
+    if (!(algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) &&
+        !(algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) &&
+        !(algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB)) {
+        algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_HD;
         HCCL_WARNING("[BroadCastOperatorForHetero][BroadCastOperatorForHetero] do not support ring in AlgoLevel1 yet, "
             "reset algType=HD.");
     }
@@ -41,7 +44,8 @@ HcclResult BroadCastOperatorForHetero::Broadcast(const std::string &tag, void *p
     DeviceMem devMem(const_cast<void *>(ptr), count * perDataSize);
 
     if (isHaveCpuRank_) {
-        algType_ = AlgType::ALG_NP_STAR;
+        algType_.algoLevel0 = AlgTypeLevel0::ALG_LEVEL0_NP_STAR;
+        algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_STAR;
     }
 
     CHK_RET(hcclImpl_->PrepareCommRes(tag, devMem, devMem, algType_, stream, root, false, isHaveCpuRank_));

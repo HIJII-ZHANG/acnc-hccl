@@ -9,6 +9,7 @@
  */
  
 #include "coll_reduce_scatter_mesh_aiv_smallcount_executor.h"
+#include "alg_profiling.h"
  
 namespace hccl {
 CollReduceScatterMeshAivSmallCountExecutor::CollReduceScatterMeshAivSmallCountExecutor(const HcclDispatcher dispatcher,
@@ -59,6 +60,7 @@ HcclResult CollReduceScatterMeshAivSmallCountExecutor::CalcLevel0CommInfo(Transp
     std::vector<LevelNSubCommTransport>& opTransport)
 {
     CommParaInfo commParaLevel0(COMM_LEVEL0, CommType::COMM_TAG_MESH);
+    commParaLevel0.meshSinglePlane = true;
     CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel0, opTransport[COMM_LEVEL0], inputType, outputType));
     return HCCL_SUCCESS;
 }
@@ -114,11 +116,38 @@ HcclResult CollReduceScatterMeshAivSmallCountExecutor::KernelRun(const OpParam &
             buffersOut[i] = execMem.outputMem.ptr();
         }
     }
- 
+     
+    if (aivClearEnable_) {
+        ClearAivSyncBuf(buffersOut, localRank, localRankSize, param.stream.ptr());
+    }
+
     bool isOpbase = (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
-    HcclResult ret = ExecuteKernelLaunch(HcclCMDType::HCCL_CMD_REDUCE_SCATTER, execMem.inputPtr, execMem.outputPtr,
-        execMem.count, param.DataDes.dataType, param.reduceType, localRank, localRankSize, 0,
-        buffersIn, buffersOut, param.tag, param.stream.ptr(), isOpbase, execMem.inputMem.size());
+
+    AivOpArgs opArgs {
+            HcclCMDType::HCCL_CMD_REDUCE_SCATTER, execMem.inputPtr, execMem.outputPtr, execMem.count,
+            param.DataDes.dataType, param.reduceType, 0, isOpbase
+    };
+    AivTopoArgs topoArgs { localRank, localRankSize, MAX_RANK_SIZE, 0, 1, topoAttr_.deviceType};
+    AivResourceArgs resourceArgs { param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size() };
+    AivAlgArgs algArgs {};
+    struct AivProfilingInfo aivProfilingInfo;
+
+    if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
+        HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
+        HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
+    }
+
+    HcclResult ret = ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, aivProfilingInfo);
+    
+    TaskAivProfiler(opArgs.cmdType, aivProfilingInfo.tag, opArgs.count * sizeof(opArgs.dataType),
+        aivProfilingInfo.blockDim, topoArgs.rankSize, resourceArgs.buffersOut[topoArgs.rank], resourceArgs.stream,
+        algArgs.step, aivProfilingInfo.beginTime);
+
+    if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){ 
+        HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());
+        HCCL_PROFILER_DEL_TAG(param.tag);
+    }
+    blockDim_ = aivProfilingInfo.blockDim;
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollReduceScatterMeshAivSmallCountExecutor][KernelRun]allreduce aiv failed, return[%d]", ret),
         ret);

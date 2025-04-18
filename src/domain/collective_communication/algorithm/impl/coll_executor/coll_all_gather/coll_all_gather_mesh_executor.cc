@@ -133,17 +133,17 @@ HcclResult CollAllGatherMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
     u64 hdCount = hdSize / perDataSize;
 
     std::unique_ptr<AlgTemplateBase> level1TempAlg;
-    if (UseInterServerRingAlgo(algType_) || (topoAttr_.isDiffDeviceModule && topoAttr_.serverNum == 1)) {
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING || (topoAttr_.isDiffDeviceModule && topoAttr_.serverNum == 1)) {
         // 1-单server-SDMA
         level1TempAlg.reset(new (std::nothrow) AllGatherRing(dispatcher_));
         HCCL_INFO("allgather mesh: using ring algo inter-server.");
-    } else if (UseInterServerNHRAlgo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
         level1TempAlg.reset(new (std::nothrow) AllGatherNHR(dispatcher_));
         HCCL_INFO("allgather mesh: using nhr algo inter-server.");
-    } else if (UseInterServerNHRV1Algo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
         level1TempAlg.reset(new (std::nothrow) AllGatherNHRV1(dispatcher_));
         HCCL_INFO("allgather mesh: using nhr_v1 algo inter-server.");
-    } else if (UseInterServerNBAlgo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
         level1TempAlg.reset(new (std::nothrow) AllGatherNB(dispatcher_));
         HCCL_INFO("allgather mesh: using nonuniform-bruck algo inter-server.");
     } else {

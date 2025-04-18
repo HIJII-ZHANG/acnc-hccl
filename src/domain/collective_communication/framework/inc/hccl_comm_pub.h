@@ -88,6 +88,8 @@ public:
         HcclDataType dataType, rtStream_t stream);
     HcclResult AllGatherVOutPlace(const std::string &tag, void *inputPtr, void *outputPtr, 
         u64 inputCount, const void *outputCounts, const void *outputDispls, HcclDataType dataType, HcclRtStream stream);
+    HcclResult AllGatherV(const std::string &tag, const void *sendBuf, u64 sendCount, const void *recvBuf,
+        const void *recvCounts, const void *rdispls, HcclDataType dataType, HcclRtStream stream);
 
     /* *********************************************************************
      功能描述  : all reduce功能实现
@@ -171,6 +173,9 @@ public:
         HcclDataType dataType, HcclReduceOp op, rtStream_t stream);
     HcclResult ReduceScatterOutPlace(const std::string &tag, void *inputPtr, void *outputPtr, u64 recvCount,
         HcclDataType dataType, HcclReduceOp op, rtStream_t stream);
+    HcclResult ReduceScatterV(const std::string &tag, void *inputPtr,
+        const void *inputCounts, const void *inputDispls, void *outputPtr, u64 outputCount,
+        HcclDataType dataType, HcclReduceOp op, HcclRtStream stream);
     HcclResult ReduceScatterVOutPlace(const std::string &tag, void *inputPtr, void *outputPtr, 
         const void *inputCounts, const void *inputDispls, u64 outputCount, 
         HcclDataType dataType, HcclReduceOp op, HcclRtStream stream);
@@ -248,6 +253,7 @@ public:
         u64 &memSize) const;
     // 目前支持按tag对资源释放、解绑定
     HcclResult ClearOpResource(const std::string &tag);
+    HcclResult ClearAivSyncBuf(bool aivClearEnable);
     HcclResult Isend(void *buffer, s32 count, HcclDataType dataType, u32 peerRank, s32 tag, HcclRequest &request,
         HcclUserRequire &userRequire) const;
     HcclResult Improbe(u32 peerRank, s32 tag, s32 &flag, HcclMessage &msgHandle, HcclStatus &status) const;
@@ -277,7 +283,7 @@ public:
     bool IsNeedResetDevice();
     HcclResult ResetDeviceEnable();
     HcclResult CommCheckErrorCqe(HcclResult &result);
-    HcclResult SaveOpbaseKeyTraceInfo(std::string &logInfo);
+    HcclResult SaveTraceInfo(std::string &logInfo);
     HcclResult AllocComResourceByTiling(const std::string &algConfig, const std::string &tag, 
         uint32_t opType, uint32_t reduceType, rtStream_t stream);
     HcclResult CreateCommResource(const std::string &tag, rtStream_t aiCpuStream, bool isOpbaseMode,
@@ -294,11 +300,15 @@ public:
     HcclResult GetTopoDesc(HcclTopoDescs *topoDescs, uint32_t topoSize);
     HcclResult ReStartVnic(const HcclCommParams &params, const RankTable_t &rankTable);
     HcclResult SetDeterministicConfig(const u8 deterministic);  // 设置确定性计算配置
+    HcclResult SetAivModeConfig(const bool aivMode);  // 设置aiv模式配置
+    HcclResult SetAicpuUnfoldConfig(const bool aicpuUnfold);  // 设置aicpu配置
     u64 GetConfigInCCLbufferSize();     // 获取通信域配置的输入buffer大小
     u64 GetConfigOutCCLbufferSize();    // 获取通信域配置的输出buffer大小
     u32 GetRankTableCrc();
+    u32 GetServerNum();
     HcclResult GetCommParams(HcclCommParams &params);       // 逆向解析获取HcclCommParams参数
     HcclResult GetCommRankTable(RankTable_t &rankTable);    // 逆向解析获取RankTable_t参数
+    HcclResult SetQpQosAttr(u32 trafficClass, u32 serviceLevel); // 设置TC/SL配置
 
     void* barrierSendBuf;
     void* barrierRecvBuf;
@@ -311,6 +321,7 @@ public:
     HcclResult UnsetMemoryRange(void *baseVirPtr);
     HcclResult ActivateCommMemory(void *virPtr, size_t size, size_t offset, void* handle, uint64_t flags);
     HcclResult DeactivateCommMemory(void *virPtr);
+    HcclResult GetBlockDim(u32& blockDim);
 
 protected:
     /* * 禁止用户对API类的实体做拷贝构造或拷贝赋值的操作，内部有指针成员变量 */

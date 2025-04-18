@@ -13,7 +13,6 @@
 
 #include "comm_base_pub.h"
 #include "threadManage.h"
-#include "heartbeat_pub.h"
 
 namespace hccl {
 constexpr u32 LEVEL0_BRIDGE_RANK_ID = 0;
@@ -83,7 +82,7 @@ using HcclAlgoAttr = struct HcclAlgoAttrDef {
     {}
 };
 
-using HcclTopoAttr = struct HcclTopoAttrDef {
+struct HcclTopoAttr {
     u32 serverNum;                   // 集群中总的服务器数
     u32 superPodNum;                 // 集群中总的超节点数
     u32 moduleNum;                   // 集群中的总的module数
@@ -104,7 +103,6 @@ using HcclTopoAttr = struct HcclTopoAttrDef {
     u32 realUserRank;
     u32 userRankSize;                // 通信域的 Rank数量
     std::vector<RankInfo> rankInfoList; // world group内rank的信息, 按照rank id递增依次排列
-    std::vector<HbRankInfo> hbRankInfoList;  // world group内rank的信息, 按照rank id递增依次排列, 心跳模块使用
 
     u32 devicePhyId;
     s32 deviceLogicId;
@@ -120,8 +118,10 @@ using HcclTopoAttr = struct HcclTopoAttrDef {
     std::unordered_map<u32, u32> pairLinkCounter; // server内所有device间的链路类型计数
     std::unordered_map<u32, std::unordered_map<int, std::vector<int>>> pairLinkInfo; // server内所有device间的链路类型
     bool isSupportRdmaLite;           // 是否支持rdma lite
+    u32 localNicPort;
+    bool isNeedInitNic;      // 是否需要初始化Nic，心跳使用
 
-    HcclTopoAttrDef()
+    HcclTopoAttr()
         : serverNum(0),
         superPodNum(0),
         moduleNum(0),
@@ -150,10 +150,26 @@ using HcclTopoAttr = struct HcclTopoAttrDef {
         nicList(0),
         pairLinkCounter(0),
         pairLinkInfo(0),
-        isSupportRdmaLite(false)
+        isSupportRdmaLite(false),
+        localNicPort(0),
+        isNeedInitNic(false)
     {}
 };
 
+using RegisterToHeartBeatCallBack =
+    HcclResult (*)(s32 deviceLogicID, u32 userRank, DevType devType, std::vector<RankInfo> &rankInfoList,
+        const u32 port, const bool isNeedNic, u32 peerRankId, const std::string &commIdentifier, const std::string &tag,
+        bool useSuperPodMode, bool isUsedRdmaLevel0);
+using UnRegisterToHeartBeatCallBack =
+    void (*)(s32 deviceLogicID, DevType devType, const std::string &commIdentifier, const std::string &tag);
+using SetRankPortInfoCallBack =
+    HcclResult (*)(s32 deviceLogicID, bool isUseRankPort, std::vector<u32> &ranksPort);
+#ifdef __cplusplus
+extern "C" {
+#endif // __cplusplus
+void RegisterHeartBeatCallBack(RegisterToHeartBeatCallBack, UnRegisterToHeartBeatCallBack, SetRankPortInfoCallBack);
+#ifdef __cplusplus
+}
+#endif // __cplusplus
 }  // namespace hccl
-
 #endif /** HCCL_IMPL_PUB_H */

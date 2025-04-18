@@ -21,7 +21,7 @@
 #include <arpa/inet.h>
 
 #include "log.h"
-#include "externalinput_pub.h"
+#include "env_config.h"
 #include "hccl_comm_pub.h"
 #include "config.h"
 #include "workflow_pub.h"
@@ -30,6 +30,10 @@
 using namespace std;
 using namespace hccl;
 
+constexpr u32 MAX_PORT_NUMBER = 65535;
+constexpr u32 HCCL_SOCKET_PORT_RANGE_AUTO = 0;
+constexpr u32 HCCL_DEVICE_PORT_DEFAULT = 16666;
+constexpr u32 HCCL_BACKUP_DEVICE_PORT_DEFAULT = 16667;
 
 TopoinfoRanktableConcise::TopoinfoRanktableConcise(const std::string &rankTableM, const std::string &identify)
     : TopoInfoRanktableParser(rankTableM, identify)
@@ -38,7 +42,7 @@ TopoinfoRanktableConcise::TopoinfoRanktableConcise(const std::string &rankTableM
 
 TopoinfoRanktableConcise::~TopoinfoRanktableConcise()
 {
-    devIp2PhyIdMap_.clear();
+    devIp2ObjIndex_.clear();
 }
 
 HcclResult TopoinfoRanktableConcise::Init()
@@ -69,6 +73,7 @@ HcclResult TopoinfoRanktableConcise::GetSelfClusterInfo(HcclCommParams &params)
     params.logicDevId = params_.logicDevId;
     params.totalRanks = params_.totalRanks;
     params.serverId = params_.serverId;
+    params.commPortConfig.devPortSwitchOn = params_.commPortConfig.devPortSwitchOn;
     return HCCL_SUCCESS;
 }
 
@@ -242,7 +247,7 @@ HcclResult TopoinfoRanktableConcise::GetServerList(const nlohmann::json &obj, Ra
     }
 
     for (u32 index = 0; index < clusterInfo.rankList.size(); index++) {
-        CHK_RET(VerifyBackupDeviceIp(clusterInfo.rankList[index], index));
+        CHK_RET(VerifyBackupDeviceIpAndPort(clusterInfo.rankList, index));
     }
     // 获取device
     return HCCL_SUCCESS;
@@ -278,8 +283,27 @@ HcclResult TopoinfoRanktableConcise::GetSingleServer(const nlohmann::json &serve
         CHK_RET(ConvertIpAddress(hostNicIp, hostIp));
     }
 
+    std::string hostPortStr;
+    u32 hostPort = HCCL_INVALID_PORT;
+    ret = GetJsonArrayMemberProperty(serverListObj, objIndex, "host_port", hostPortStr, true);
+    CHK_PRT_RET(ret != HCCL_SUCCESS && ret != HCCL_E_NOT_FOUND,
+        HCCL_ERROR("[Get][SingleServer]get host port error, serverIndex[%u]", serverIdx), ret);
+    HCCL_DEBUG("[%s.json] -> host_port: [%s]. ret[%u]", fileName_.c_str(), hostPortStr.c_str(), ret);
+    if (ret != HCCL_E_NOT_FOUND) {
+        CHK_RET(SalStrToULong(hostPortStr, HCCL_BASE_DECIMAL, hostPort));
+        CHK_PRT_RET(hostPort == HCCL_SOCKET_PORT_RANGE_AUTO,
+            HCCL_ERROR("[Get][SingleServer] serverIndex[%u], please do not use the reserved port number[%u]",
+            objIndex, HCCL_SOCKET_PORT_RANGE_AUTO), HCCL_E_PARA);
+        CHK_PRT_RET(hostPort > MAX_PORT_NUMBER,
+            HCCL_ERROR("[Get][SingleServer] serverIndex[%u], port number[%u] exceed max port number[%u]",
+            objIndex, hostPort, MAX_PORT_NUMBER), HCCL_E_PARA);
+    } else {
+        HCCL_INFO("[Get][SingleServer] serverIndex[%u], 'host_port' in ranktable is not set. "
+            "Multi-process may not be supported for op retry.", objIndex);
+    }
+
     // 处理ranklist
-    ret = GetDeviceList(serverListObj, objIndex, clusterInfo, serverId, serverIdx, hostIp);
+    ret = GetDeviceList(serverListObj, objIndex, clusterInfo, serverId, serverIdx, hostIp, hostPort);
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[Get][SingleServer]get dev list error:serverId[%s]",
         serverId.c_str()), ret);
 
@@ -287,7 +311,7 @@ HcclResult TopoinfoRanktableConcise::GetSingleServer(const nlohmann::json &serve
 }
 
 HcclResult TopoinfoRanktableConcise::GetDeviceList(const nlohmann::json &serverListObj, u32 objIndex,
-    RankTable_t &clusterInfo, std::string &serverId, u32 &serverIdx, HcclIpAddress &hostIp)
+    RankTable_t &clusterInfo, std::string &serverId, u32 &serverIdx, HcclIpAddress &hostIp, u32 hostPort)
 {
     HCCL_DEBUG("Get GetDeviceList[%u]: serverId[%s]", objIndex, serverId.c_str());
 
@@ -300,7 +324,7 @@ HcclResult TopoinfoRanktableConcise::GetDeviceList(const nlohmann::json &serverL
 
     for (u32 index = 0; index < deviceList.size(); index++) {
         // get single server info
-        CHK_RET(GetSingleDevice(deviceList, index, clusterInfo, serverId, serverIdx, hostIp));
+        CHK_RET(GetSingleDevice(deviceList, index, clusterInfo, serverId, serverIdx, hostIp, hostPort));
     }
 
     // 检查devip的数目是否一致
@@ -323,7 +347,7 @@ HcclResult TopoinfoRanktableConcise::GetDeviceList(const nlohmann::json &serverL
 }
 
 HcclResult TopoinfoRanktableConcise::GetSingleDevice(const nlohmann::json &deviceListObj, u32 objIndex,
-    RankTable_t &clusterInfo, std::string &serverId, u32 &serverIdx, HcclIpAddress &hostIp)
+    RankTable_t &clusterInfo, std::string &serverId, u32 &serverIdx, HcclIpAddress &hostIp, u32 hostPort)
 {
     // 获取rank_id
     std::string rankId;
@@ -360,9 +384,11 @@ HcclResult TopoinfoRanktableConcise::GetSingleDevice(const nlohmann::json &devic
     rankinfo.serverId = serverId;
     rankinfo.serverIdx = serverIdx;
     rankinfo.hostIp = hostIp;
+    rankinfo.hostPort = hostPort;
     rankinfo.deviceInfo.devicePhyId = devicePhyId;
 
     CHK_RET(GetSingleDeviceIp(deviceListObj, objIndex, clusterInfo, rankinfo, rankinfo.hostIp.IsInvalid()));
+    CHK_RET(GetSingleDevicePort(deviceListObj, objIndex, rankinfo));
     CHK_RET(GetSingleBackupDeviceIp(deviceListObj, objIndex, rankinfo));
 
     if (SalStrToULong(rankId, HCCL_BASE_DECIMAL, rankinfo.rankId) != HCCL_SUCCESS) {
@@ -447,13 +473,14 @@ HcclResult TopoinfoRanktableConcise::GetSingleDeviceIp(const nlohmann::json &dev
             HcclIpAddress ipAddr;
             CHK_RET(ConvertIpAddress(strDeviceIp[index], ipAddr));
             rankinfo.deviceInfo.deviceIp.push_back(ipAddr);
-            devIp2PhyIdMap_.emplace(ipAddr.GetReadableIP(), rankinfo.deviceInfo.devicePhyId);
+            devIp2ObjIndex_.emplace(ipAddr.GetReadableIP(), objIndex);
         }
     } else {
         HcclIpAddress invalidAddr;
         rankinfo.deviceInfo.deviceIp.push_back(invalidAddr);
         HCCL_WARNING("objIndex[%u],'device_ip' is not set", objIndex);
     }
+
     return HCCL_SUCCESS;
 }
 
@@ -494,6 +521,7 @@ HcclResult TopoinfoRanktableConcise::GetSingleBackupDeviceIp(const nlohmann::jso
             CHK_RET(ConvertIpAddress(strBackupDeviceIp[index], ipAddr));
             rankinfo.deviceInfo.backupDeviceIp.push_back(ipAddr);
         }
+        CHK_RET(GetSingleBackupDevicePort(deviceListObj, objIndex, rankinfo));
         HCCL_INFO("[TopoinfoRanktableConcise][GetSingleBackupDeviceIp]devicePhyId[%u], backupDeviceIp[0]:[%s].",
             rankinfo.deviceInfo.devicePhyId, rankinfo.deviceInfo.backupDeviceIp[0].GetReadableIP());
     } else {
@@ -504,12 +532,98 @@ HcclResult TopoinfoRanktableConcise::GetSingleBackupDeviceIp(const nlohmann::jso
     return HCCL_SUCCESS;
 }
 
-HcclResult TopoinfoRanktableConcise::VerifyBackupDeviceIp(RankInfo_t &rankInfo, u32 devIndex)
+HcclResult TopoinfoRanktableConcise::GetSingleDevicePort(const nlohmann::json &deviceListObj, u32 objIndex,
+    RankInfo_t &rankinfo)
+{
+    // 获取device指定的port；如果用户未配置，则置为缺省值
+    std::string strDevPort;
+    HcclResult ret = GetJsonArrayMemberProperty(deviceListObj, objIndex, "device_port", strDevPort, true);
+    CHK_PRT_RET(ret != HCCL_SUCCESS && ret != HCCL_E_NOT_FOUND,
+        HCCL_ERROR("[Get][SingleDevicePort]Get json array member property error."), ret);
+    if (ret == HCCL_E_NOT_FOUND) {
+        rankinfo.deviceInfo.port = HCCL_INVALID_PORT;
+        HCCL_INFO("[Get][SingleDevicePort]deviceIndex[%u], devicePhyId[%u], 'device_port' in ranktable is not set. "
+            "Multi-process may not be supported for device nic.", objIndex, rankinfo.deviceInfo.devicePhyId);
+        return HCCL_SUCCESS;
+        params_.commPortConfig.devPortSwitchOn = false; // 不启用用户指定的port作为device网卡通信的port
+    } else {
+        CHK_RET(SalStrToULong(strDevPort, HCCL_BASE_DECIMAL, rankinfo.deviceInfo.port));
+        CHK_PRT_RET(rankinfo.deviceInfo.port == HCCL_SOCKET_PORT_RANGE_AUTO,
+            HCCL_ERROR("[Get][SingleDevicePort] deviceIndex[%u], devicePhyId[%u], "
+            "please do not use the reserved port number [%u]. ",
+            objIndex, rankinfo.deviceInfo.devicePhyId, HCCL_SOCKET_PORT_RANGE_AUTO), HCCL_E_PARA);
+        CHK_PRT_RET(rankinfo.deviceInfo.port > MAX_PORT_NUMBER,
+            HCCL_ERROR("[Get][SingleDevicePort] deviceIndex[%u], devicePhyId[%u], "
+            "port number[%u] exceed max port number[%u]",
+            objIndex, rankinfo.deviceInfo.devicePhyId, rankinfo.deviceInfo.port, MAX_PORT_NUMBER), HCCL_E_PARA);
+        params_.commPortConfig.devPortSwitchOn = true; // 启用用户指定的port作为device网卡通信的port
+    }
+
+    // 获取device指定的vnic port；如果未配置，则与device_port相同（仅用于MasterInfo协商解析Ranktable）
+    std::string strVnicPort;
+    ret = GetJsonArrayMemberProperty(deviceListObj, objIndex, "device_vnic_port", strVnicPort, true);
+    CHK_PRT_RET(ret != HCCL_SUCCESS && ret != HCCL_E_NOT_FOUND,
+        HCCL_ERROR("[Get][SingleDevicePort]Get json array member property vnic error."), ret);
+    if (ret == HCCL_E_NOT_FOUND) {
+        rankinfo.deviceInfo.vnicPort = rankinfo.deviceInfo.port;
+        HCCL_INFO("[Get][SingleDevicePort]deviceIndex[%u], devicePhyId[%u], "
+            "'device_vnic_port' in ranktable is not set. ", objIndex, rankinfo.deviceInfo.devicePhyId);
+    } else {
+        CHK_RET(SalStrToULong(strVnicPort, HCCL_BASE_DECIMAL, rankinfo.deviceInfo.vnicPort));
+        CHK_PRT_RET(rankinfo.deviceInfo.vnicPort == HCCL_SOCKET_PORT_RANGE_AUTO,
+            HCCL_ERROR("[Get][SingleDevicePort] deviceIndex[%u], devicePhyId[%u], "
+            "please do not use the reserved port number [%u] as vnic port number. ",
+            objIndex, rankinfo.deviceInfo.devicePhyId, HCCL_SOCKET_PORT_RANGE_AUTO), HCCL_E_PARA);
+        CHK_PRT_RET(rankinfo.deviceInfo.vnicPort > MAX_PORT_NUMBER,
+            HCCL_ERROR("[Get][SingleDevicePort] deviceIndex[%u], devicePhyId[%u], "
+            "vnic port number[%u] exceed max port number[%u]",
+            objIndex, rankinfo.deviceInfo.devicePhyId, rankinfo.deviceInfo.vnicPort, MAX_PORT_NUMBER), HCCL_E_PARA);
+    }
+
+    HCCL_INFO("[TopoinfoRanktableConcise][GetSingleDevicePort] deviceIndex[%u], devicePhyId[%u], get device port[%u], "
+        "device vnic port[%u].",
+        objIndex, rankinfo.deviceInfo.devicePhyId, rankinfo.deviceInfo.port, rankinfo.deviceInfo.vnicPort);
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoinfoRanktableConcise::GetSingleBackupDevicePort(const nlohmann::json &deviceListObj, u32 objIndex,
+    RankInfo_t &rankinfo)
+{
+    // 获取device指定的backup port；如果用户未配置，则置为缺省值
+    std::string strBackupPort;
+    HcclResult ret = GetJsonArrayMemberProperty(deviceListObj, objIndex, "backup_device_port", strBackupPort, true);
+    CHK_PRT_RET(ret != HCCL_SUCCESS && ret != HCCL_E_NOT_FOUND,
+        HCCL_ERROR("[Get][SingleBackupDevicePort]Get json array member property error."), ret);
+    if (ret == HCCL_E_NOT_FOUND) {
+        rankinfo.deviceInfo.backupPort = HCCL_INVALID_PORT;
+        HCCL_INFO("[Get][SingleBackupDevicePort]deviceIndex[%u], devicePhyId[%u], "
+            "'backup_device_port' in ranktable is not set. Multi-process may not be supported for backup nic.",
+            objIndex, rankinfo.deviceInfo.devicePhyId);
+        return HCCL_SUCCESS;
+    }
+
+    CHK_RET(SalStrToULong(strBackupPort, HCCL_BASE_DECIMAL, rankinfo.deviceInfo.backupPort));
+    CHK_PRT_RET(rankinfo.deviceInfo.backupPort == HCCL_SOCKET_PORT_RANGE_AUTO,
+        HCCL_ERROR("[Get][SingleBackupDevicePort] deviceIndex[%u], devicePhyId[%u], "
+        "please do not use the reserved port number [%u]. ",
+        objIndex, rankinfo.deviceInfo.devicePhyId, HCCL_SOCKET_PORT_RANGE_AUTO), HCCL_E_PARA);
+    CHK_PRT_RET(rankinfo.deviceInfo.backupPort > MAX_PORT_NUMBER,
+        HCCL_ERROR("[Get][SingleBackupDevicePort] deviceIndex[%u], devicePhyId[%u], "
+        "port number[%u] exceed max port number[%u]",
+        objIndex, rankinfo.deviceInfo.devicePhyId, rankinfo.deviceInfo.backupPort, MAX_PORT_NUMBER), HCCL_E_PARA);
+
+    HCCL_INFO("[TopoinfoRanktableConcise][GetSingleBackupDevicePort] deviceIndex[%u], devicePhyId[%u], "
+        "get backup device port[%u].", objIndex, rankinfo.deviceInfo.devicePhyId, rankinfo.deviceInfo.backupPort);
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoinfoRanktableConcise::VerifyBackupDeviceIpAndPort(std::vector<RankInfo_t> &rankList, u32 devIndex)
 {
     if (params_.deviceType != DevType::DEV_TYPE_910_93 || !GetExternalInputHcclAicpuUnfold()
         || !GetExternalInputInterSuperPodRetryEnable()) {
         return HCCL_SUCCESS;
     }
+    RankInfo_t &rankInfo = rankList[devIndex];
 
     for (auto &backupDevIp : rankInfo.deviceInfo.backupDeviceIp) {
         if (backupDevIp.IsInvalid()) {
@@ -517,7 +631,7 @@ HcclResult TopoinfoRanktableConcise::VerifyBackupDeviceIp(RankInfo_t &rankInfo, 
             continue;
         }
         string backupDevIpStr = backupDevIp.GetReadableIP();
-        if (devIp2PhyIdMap_.find(backupDevIpStr) == devIp2PhyIdMap_.end()) {
+        if (devIp2ObjIndex_.find(backupDevIpStr) == devIp2ObjIndex_.end()) {
             HCCL_RUN_WARNING("[Verify][BackupDeviceIp]"
                 "Backup devIp[%s] for devicePhyId[%d] is not in this comm. "
                 "The validation of this backup ip could not be verified! "
@@ -526,7 +640,9 @@ HcclResult TopoinfoRanktableConcise::VerifyBackupDeviceIp(RankInfo_t &rankInfo, 
             continue;
         }
 
-        s32 backupDevPhyId = devIp2PhyIdMap_[backupDevIpStr];
+        RankInfo_t &backupRankInfo = rankList[devIp2ObjIndex_[backupDevIpStr]];
+
+        s32 backupDevPhyId = backupRankInfo.deviceInfo.devicePhyId;
         CHK_PRT_RET(backupDevPhyId == rankInfo.deviceInfo.devicePhyId,
             HCCL_ERROR("[Verify][BackupDeviceIp]"
                 "PhyId[%d] for backup devIp[%s] is the same with self device[%u] phyId[%d]. "
@@ -542,6 +658,15 @@ HcclResult TopoinfoRanktableConcise::VerifyBackupDeviceIp(RankInfo_t &rankInfo, 
                 "Please check backup ip validation and whether it is on a pair device!",
                 HCOM_ERROR_CODE(HCCL_E_PARA), devIndex, rankInfo.deviceInfo.devicePhyId,
                 backupDevPhyId, backupDevIpStr.c_str()), HCCL_E_PARA);
+
+        // 用于备用网卡的端口不可和用于主网卡的端口冲突
+        CHK_PRT_RET(rankInfo.deviceInfo.backupPort != HCCL_INVALID_PORT
+            && backupRankInfo.deviceInfo.port != HCCL_INVALID_PORT
+            && rankInfo.deviceInfo.backupPort == backupRankInfo.deviceInfo.port,
+            HCCL_ERROR("[Verify][BackupDevicePort] deviceIndex[%u], "
+            "backup device port[%u] on devPhyId[%u] should not be the same with device port[%u] on devPhyId[%u].",
+            devIndex, rankInfo.deviceInfo.backupPort, rankInfo.deviceInfo.devicePhyId, backupRankInfo.deviceInfo.port,
+            backupRankInfo.deviceInfo.devicePhyId), HCCL_E_PARA);
     }
     return HCCL_SUCCESS;
 }

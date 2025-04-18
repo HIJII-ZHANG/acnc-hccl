@@ -85,23 +85,34 @@ HcclResult CollAllGatherSmallCountExecutor::CalcCombinedCommInfo(TransportMemTyp
 HcclResult CollAllGatherSmallCountExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
     CommPlane commPlane = COMM_COMBINE_ORDER;
-    
+
     CHK_RET(CheckCommSize(commPlane, COMM_INDEX_0 + 1));
     SubCommInfo combinedCommInfo = GetSubCommInfo(commPlane, COMM_INDEX_0);
 
     // 构造ring algorithm对应的all_gather实例
-    std::unique_ptr<AlgTemplateBase> executor;
+    std::unique_ptr<AlgTemplateBase> algTemplate = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_ALL_GATHER_HD_STAGE, dispatcher_);
     CHK_RET(ActiveSlaveStreams(param.stream));
     HcomCollOpInfo opInfo = {"", execMem.inputPtr, execMem.outputPtr, param.DataDes.count, param.DataDes.dataType,
         param.root, param.reduceType};
-    executor.reset(new (std::nothrow) AllGatherHDStage(dispatcher_, algResResp_->slaveStreams,
-        algResResp_->notifiesMain, algResResp_->notifiesAux, topoAttr_.userRank, &opInfo));
-    CHK_SMART_PTR_NULL(executor);
+    CHK_SMART_PTR_NULL(algTemplate);
 
-    CHK_RET(executor->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
-        param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, INVALID_VALUE_RANKID));
+    PrepareData prepareData;
+    prepareData.userRank = topoAttr_.userRank;
+    prepareData.opInfo = &opInfo;
+    prepareData.inputMem = execMem.inputMem;
+    prepareData.outputMem = execMem.outputMem;
+    prepareData.scratchMem = execMem.outputMem;
+    prepareData.count = execMem.count;
+    prepareData.dataType = param.DataDes.dataType;
+    prepareData.stream = param.stream;
+    prepareData.subStreamsPtr = &algResResp_->slaveStreams;
+    prepareData.signalPtr = &algResResp_->notifiesMain;
+    prepareData.signalAuxPtr = &algResResp_->notifiesAux;
 
-    CHK_RET(RunTemplate(executor, combinedCommInfo));
+    CHK_RET(algTemplate->Prepare(prepareData));
+
+    CHK_RET(RunTemplate(algTemplate, combinedCommInfo));
 
     return HCCL_SUCCESS;
 }

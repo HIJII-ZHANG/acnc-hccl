@@ -50,11 +50,11 @@ HcclResult CollAllGatherCommExecutor::CalcCombinedCommInfo(TransportMemType inpu
     }
 
     CommParaInfo commParaInfo(commPlane, CommType::COMM_TAG_MAX);
-    if (UseInterServerNHRAlgo(algType_)) {
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
         commParaInfo.commType = CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING;
-    } else if (UseInterServerNHRV1Algo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
         commParaInfo.commType = CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING_V1;
-    } else if (UseInterServerNBAlgo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
         commParaInfo.commType = CommType::COMM_TAG_NONUNIFORM_BRUCK;
     } else {
         commParaInfo.commType = CommType::COMM_TAG_RING_INNER;
@@ -76,13 +76,13 @@ HcclResult CollAllGatherCommExecutor::KernelRun(const OpParam &param, ExecMem &e
 
     // 构造ring algorithm对应的all_gather实例
     std::unique_ptr<AlgTemplateBase> tempAlg;
-    if (UseInterServerNHRAlgo(algType_)) {
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
         tempAlg.reset(new (std::nothrow) AllGatherNHR(dispatcher_));
         HCCL_INFO("algather comm: using nhr algo inter-server.");
-    } else if (UseInterServerNHRV1Algo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
         tempAlg.reset(new (std::nothrow) AllGatherNHRV1(dispatcher_));
         HCCL_INFO("algather comm: using nhr_v1 algo inter-server.");
-    } else if (UseInterServerNBAlgo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
         tempAlg.reset(new (std::nothrow) AllGatherNB(dispatcher_));
         HCCL_INFO("algather comm: using nonuniform-bruck algo inter-server.");
     } else {

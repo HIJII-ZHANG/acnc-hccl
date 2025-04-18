@@ -14,7 +14,6 @@
 #include <condition_variable>
 #include "threadManage.h"
 #include "dispatcher.h"
-#include "comm_base_pub.h"
 #include "workflow_pub.h"
 #include "externalinput_pub.h"
 #include "common.h"

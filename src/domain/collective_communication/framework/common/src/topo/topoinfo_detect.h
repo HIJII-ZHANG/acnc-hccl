@@ -17,7 +17,7 @@
 #include "hccl_comm_pub.h"
 #include "topoinfo_exchange_server.h"
 #include "topoinfo_exchange_agent.h"
-#include "externalinput_pub.h"
+#include "env_config.h"
 #include "hccl_socket.h"
 #include "hccl_network_pub.h"
 #include "hashtable/universal_concurrent_map.h"
@@ -37,8 +37,9 @@ public:
     HcclResult GetLocalRankInfo(HcclBasicRankInfo &rankInfo);
     HcclResult GetRankId(u32 &rankId);
     HcclResult TransformRankTableStr(const RankTable_t &clusterInfo, std::string &ranktableStr);
-    HcclResult GetAgentConnection(std::shared_ptr<HcclSocket> &connectSocket);
     HcclResult GetServerConnections(std::map<u32, std::shared_ptr<HcclSocket>> &connectSockets);
+    HcclResult GetAgentConnection(std::shared_ptr<HcclSocket> &connectSocket);
+    HcclResult GetAgentListenSocket(HcclSocketPortConfig &commPortConfig);
     HcclResult GenerateRootInfo(const HcclIpAddress &hostIP, u32 hostPort, u32 devicePhysicID, HcclRootHandle &rootInfo);
 
 protected:
@@ -49,7 +50,7 @@ private:
     HcclResult GetRootHostIP(const std::vector<HcclIpAddress> &whitelist, HcclIpAddress &ip, u32 devPhyId);
     HcclResult StartNetwork(HcclIpAddress &hostIP, bool bInitDevNic);
     HcclResult StopNetwork(HcclIpAddress &hostIP, bool bInitDevNic);
-    HcclResult StartRootNetwork(const std::vector<HcclIpAddress> &whitelist, const HcclIpAddress &hostIP, u32 usePort);
+    HcclResult StartRootNetwork(const std::vector<HcclIpAddress> &whitelist, const HcclIpAddress &hostIP, u32 &usePort);
     HcclResult AddSocketWhiteList(u32 port,
         const std::vector<HcclIpAddress> &whitelist) const;
     HcclResult GenerateLocalRankInfo(u32 rankSize, u32 rankID, HcclBasicRankInfo &localRankInfo);
@@ -69,6 +70,12 @@ private:
     HcclIpAddress GetBootstrapHostIP() const;
     HcclResult FilterDevIPs(std::vector<HcclIpAddress> &sourceDeviceIPs,
         std::vector<HcclIpAddress> &targetDeviceIPs) const;
+    HcclResult PreemptDeviceNicPort(const u32 devPhyId, const s32 devLogicId, const HcclIpAddress &deviceIp,
+        u32 &usePort);
+    HcclResult PreemptBackupDeviceNicPort(const u32 devPhyId, const s32 devLogicId, const HcclIpAddress &deviceIp,
+        const HcclIpAddress &backupDeviceIp, u32 &usePort);
+    HcclResult PreemptDeviceVnicPort(HcclBasicRankInfo &localRankInfo);
+    HcclResult GetDeviceBackupNicInfo(HcclBasicRankInfo &localRankInfo);
     s32 deviceLogicID_;
     HcclBasicRankInfo localRankInfo_;
     RankTable_t clusterTopoInfo_;
@@ -80,6 +87,7 @@ private:
     HcclNetDevCtx devNicCtx_{nullptr};
     u32 devicePhysicID_{INVALID_UINT};
     std::shared_ptr<HcclSocket> listenSocket_{nullptr};
+    HcclSocketPortConfig commPortConfig_;
     HcclRootHandle rootInfo_;
     std::shared_ptr<hccl::TopoInfoExchangeAgent> pTopoExchangeAgent_{nullptr};
     std::shared_ptr<TopoInfoExchangeServer> pTopoExchangeServer_{nullptr};

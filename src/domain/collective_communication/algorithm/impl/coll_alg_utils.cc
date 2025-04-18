@@ -13,280 +13,7 @@
 #include "workflow_pub.h"
 
 namespace hccl {
-
-AlgTypeLevel0 GetLevel0AlgType(const AlgType algType)
-{
-    if (algType != AlgType::ALG_NP_STAR) {
-        const u32 algLevel0 = static_cast<u32>(algType) & ((1 << HCCL_LEVEL_ALGO_WIDTH) - 1);
-        return static_cast<AlgTypeLevel0>(algLevel0);
-    }
-
-    return AlgTypeLevel0::ALG_LEVEL0_NP_STAR;
-}
-
-AlgTypeLevel1 GetLevel1AlgType(const AlgType algType)
-{
-    const u32 algLevel1 = (static_cast<u32>(algType) >> HCCL_LEVEL_ALGO_WIDTH) & ((1 << HCCL_LEVEL_ALGO_WIDTH) - 1);
-    return static_cast<AlgTypeLevel1>(algLevel1);
-}
-
-AlgTypeLevel2 GetLevel2AlgType(const AlgType algType)
-{
-    const u32 algLevel2 = static_cast<u32>(algType) >> (HCCL_LEVEL_ALGO_WIDTH * 2);
-    return static_cast<AlgTypeLevel2>(algLevel2);
-}
-
-bool UseInterServerRingAlgo(AlgType algType)
-{
-    return GetLevel1AlgType(algType) == AlgTypeLevel1::ALG_LEVEL1_RING;
-}
-
-bool UseInterServerHDAlgo(AlgType algType)
-{
-    return GetLevel1AlgType(algType) == AlgTypeLevel1::ALG_LEVEL1_HD;
-}
-
-bool UseInterServerNHRAlgo(AlgType algType)
-{
-    return GetLevel1AlgType(algType) == AlgTypeLevel1::ALG_LEVEL1_NHR;
-}
-
-bool UseInterServerNHRV1Algo(AlgType algType)
-{
-    return GetLevel1AlgType(algType) == AlgTypeLevel1::ALG_LEVEL1_NHR_V1;
-}
-
-bool UseInterServerAHCAlgo(AlgType algType)
-{
-    return GetLevel1AlgType(algType) == AlgTypeLevel1::ALG_LEVEL1_AHC;
-}
-
-bool UseInterServerAHCBrokeAlgo(AlgType algType)
-{
-    return GetLevel1AlgType(algType) == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE;
-}
-
-bool UseInterServerNBAlgo(AlgType algType)
-{
-    return GetLevel1AlgType(algType) == AlgTypeLevel1::ALG_LEVEL1_NB;
-}
-
-bool UseWholeRingAlgo(AlgType algType)
-{
-    return GetLevel0AlgType(algType) == AlgTypeLevel0::ALG_LEVEL0_WHOLE_RING &&
-           GetLevel1AlgType(algType) == AlgTypeLevel1::ALG_LEVEL1_WHOLE_RING;
-}
-
-bool UseInterServerPipelineAlgo(AlgType algType)
-{
-    return GetLevel1AlgType(algType) == AlgTypeLevel1::ALG_LEVEL1_PIPELINE;
-}
-
-bool UseLevel2RingAlgo(AlgType algType)
-{
-    return GetLevel2AlgType(algType) == AlgTypeLevel2::ALG_LEVEL2_RING;
-}
-
-HcclResult SetInterServerNHRAlgo(AlgType &algType)
-{
-    switch (algType) {
-        case AlgType::ALG_8P_RING_PLUS_PIPELINE:
-        case AlgType::ALG_8P_RING_PLUS_HD:
-        case AlgType::ALG_8P_RING_PLUS_NHR_V1:
-        case AlgType::ALG_8P_RING_PLUS_RING:
-        case AlgType::ALG_8P_RING_PLUS_NB:
-            algType = AlgType::ALG_8P_RING_PLUS_NHR;
-            break;
-        case AlgType::ALG_4P_MESH_PLUS_PIPELINE:
-        case AlgType::ALG_4P_MESH_PLUS_HD:
-        case AlgType::ALG_4P_MESH_PLUS_NHR_V1:
-        case AlgType::ALG_4P_MESH_PLUS_RING:
-        case AlgType::ALG_4P_MESH_PLUS_NB:
-            algType = AlgType::ALG_4P_MESH_PLUS_NHR;
-            break;
-        case AlgType::ALG_2P_MESH_PLUS_PIPELINE:
-        case AlgType::ALG_2P_MESH_PLUS_HD:
-        case AlgType::ALG_2P_MESH_PLUS_NHR_V1:
-        case AlgType::ALG_2P_MESH_PLUS_RING:
-        case AlgType::ALG_2P_MESH_PLUS_NB:
-            algType = AlgType::ALG_2P_MESH_PLUS_NHR;
-            break;
-        case AlgType::ALG_1P_MESH_PLUS_PIPELINE:
-        case AlgType::ALG_1P_MESH_PLUS_HD:
-        case AlgType::ALG_1P_MESH_PLUS_NHR_V1:
-        case AlgType::ALG_1P_MESH_PLUS_RING:
-        case AlgType::ALG_1P_MESH_PLUS_NB:
-            algType = AlgType::ALG_1P_MESH_PLUS_NHR;
-            break;
-        case AlgType::ALG_4P_RING_PLUS_PIPELINE:
-        case AlgType::ALG_4P_RING_PLUS_HD:
-        case AlgType::ALG_4P_RING_PLUS_NHR_V1:
-        case AlgType::ALG_4P_RING_PLUS_RING:
-        case AlgType::ALG_4P_RING_PLUS_NB:
-            algType = AlgType::ALG_4P_RING_PLUS_NHR;
-            break;
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_PIPELINE:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_HD:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_NHR_V1:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_RING:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_NB:
-            algType = AlgType::ALG_NP_SINGLE_RING_PLUS_NHR;
-            break;
-        case AlgType::ALG_NP_DOUBLE_RING_PLUS_PIPELINE:
-        case AlgType::ALG_DOUBLE_RING_PLUS_HD:
-        case AlgType::ALG_DOUBLE_RING_PLUS_RING:
-        case AlgType::ALG_NP_DOUBLE_RING_PLUS_NHR_V1:
-        case AlgType::ALG_NP_DOUBLE_RING_PLUS_NB:
-            algType = AlgType::ALG_DOUBLE_RING_PLUS_NHR;
-            break;
-        case AlgType::ALG_NP_MESH_PLUS_PIPELINE:
-        case AlgType::ALG_NP_MESH_PLUS_HD:
-        case AlgType::ALG_NP_MESH_PLUS_NHR_V1:
-        case AlgType::ALG_NP_MESH_PLUS_RING:
-        case AlgType::ALG_NP_MESH_PLUS_NB:
-            algType = AlgType::ALG_NP_MESH_PLUS_NHR;
-            break;
-        default:
-            break;
-    }
-    return HCCL_SUCCESS;
-}
-
-HcclResult SetInterServerHDAlgo(AlgType &algType)
-{
-    switch (algType) {
-        case AlgType::ALG_8P_RING_PLUS_PIPELINE:
-        case AlgType::ALG_8P_RING_PLUS_RING:
-        case AlgType::ALG_8P_RING_PLUS_NHR:
-        case AlgType::ALG_8P_RING_PLUS_NHR_V1:
-        case AlgType::ALG_8P_RING_PLUS_NB:
-            algType = AlgType::ALG_8P_RING_PLUS_HD;
-            break;
-
-        case AlgType::ALG_4P_MESH_PLUS_PIPELINE:
-        case AlgType::ALG_4P_MESH_PLUS_RING:
-        case AlgType::ALG_4P_MESH_PLUS_NHR:
-        case AlgType::ALG_4P_MESH_PLUS_NHR_V1:
-        case AlgType::ALG_4P_MESH_PLUS_NB:
-            algType = AlgType::ALG_4P_MESH_PLUS_HD;
-            break;
-
-        case AlgType::ALG_2P_MESH_PLUS_PIPELINE:
-        case AlgType::ALG_2P_MESH_PLUS_RING:
-        case AlgType::ALG_2P_MESH_PLUS_NHR:
-        case AlgType::ALG_2P_MESH_PLUS_NHR_V1:
-        case AlgType::ALG_2P_MESH_PLUS_NB:
-            algType = AlgType::ALG_2P_MESH_PLUS_HD;
-            break;
-
-        case AlgType::ALG_1P_MESH_PLUS_PIPELINE:
-        case AlgType::ALG_1P_MESH_PLUS_RING:
-        case AlgType::ALG_1P_MESH_PLUS_NHR:
-        case AlgType::ALG_1P_MESH_PLUS_NHR_V1:
-        case AlgType::ALG_1P_MESH_PLUS_NB:
-            algType = AlgType::ALG_1P_MESH_PLUS_HD;
-            break;
-
-        case AlgType::ALG_4P_RING_PLUS_PIPELINE:
-        case AlgType::ALG_4P_RING_PLUS_RING:
-        case AlgType::ALG_4P_RING_PLUS_NHR:
-        case AlgType::ALG_4P_RING_PLUS_NHR_V1:
-        case AlgType::ALG_4P_RING_PLUS_NB:
-            algType = AlgType::ALG_4P_RING_PLUS_HD;
-            break;
-
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_PIPELINE:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_RING:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_NHR:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_NHR_V1:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_NB:
-            algType = AlgType::ALG_NP_SINGLE_RING_PLUS_HD;
-            break;
-
-        case AlgType::ALG_NP_MESH_PLUS_PIPELINE:
-        case AlgType::ALG_NP_MESH_PLUS_RING:
-        case AlgType::ALG_NP_MESH_PLUS_NHR:
-        case AlgType::ALG_NP_MESH_PLUS_NHR_V1:
-        case AlgType::ALG_NP_MESH_PLUS_NB:
-            algType = AlgType::ALG_NP_MESH_PLUS_HD;
-            break;
-
-        case AlgType::ALG_NP_DOUBLE_RING_PLUS_PIPELINE:
-        case AlgType::ALG_DOUBLE_RING_PLUS_RING:
-        case AlgType::ALG_NP_DOUBLE_RING_PLUS_NB:
-            algType = AlgType::ALG_DOUBLE_RING_PLUS_HD;
-            break;
-        default:
-            break;
-    }
-    return HCCL_SUCCESS;
-}
-
-HcclResult SetInterServerRingAlgo(AlgType &algType)
-{
-    switch (algType) {
-        case AlgType::ALG_8P_RING_PLUS_PIPELINE:
-        case AlgType::ALG_8P_RING_PLUS_HD:
-        case AlgType::ALG_8P_RING_PLUS_NHR:
-        case AlgType::ALG_8P_RING_PLUS_NHR_V1:
-        case AlgType::ALG_8P_RING_PLUS_NB:
-            algType = AlgType::ALG_8P_RING_PLUS_RING;
-            break;
-        case AlgType::ALG_4P_MESH_PLUS_PIPELINE:
-        case AlgType::ALG_4P_MESH_PLUS_HD:
-        case AlgType::ALG_4P_MESH_PLUS_NHR:
-        case AlgType::ALG_4P_MESH_PLUS_NHR_V1:
-        case AlgType::ALG_4P_MESH_PLUS_NB:
-            algType = AlgType::ALG_4P_MESH_PLUS_RING;
-            break;
-        case AlgType::ALG_2P_MESH_PLUS_PIPELINE:
-        case AlgType::ALG_2P_MESH_PLUS_HD:
-        case AlgType::ALG_2P_MESH_PLUS_NHR:
-        case AlgType::ALG_2P_MESH_PLUS_NHR_V1:
-        case AlgType::ALG_2P_MESH_PLUS_NB:
-            algType = AlgType::ALG_2P_MESH_PLUS_RING;
-            break;
-        case AlgType::ALG_1P_MESH_PLUS_PIPELINE:
-        case AlgType::ALG_1P_MESH_PLUS_HD:
-        case AlgType::ALG_1P_MESH_PLUS_NHR:
-        case AlgType::ALG_1P_MESH_PLUS_NHR_V1:
-        case AlgType::ALG_1P_MESH_PLUS_NB:
-            algType = AlgType::ALG_1P_MESH_PLUS_RING;
-            break;
-        case AlgType::ALG_4P_RING_PLUS_PIPELINE:
-        case AlgType::ALG_4P_RING_PLUS_HD:
-        case AlgType::ALG_4P_RING_PLUS_NHR:
-        case AlgType::ALG_4P_RING_PLUS_NHR_V1:
-        case AlgType::ALG_4P_RING_PLUS_NB:
-            algType = AlgType::ALG_4P_RING_PLUS_RING;
-            break;
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_PIPELINE:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_HD:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_NHR:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_NHR_V1:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_NB:
-            algType = AlgType::ALG_NP_SINGLE_RING_PLUS_RING;
-            break;
-        case AlgType::ALG_NP_MESH_PLUS_PIPELINE:
-        case AlgType::ALG_NP_MESH_PLUS_HD:
-        case AlgType::ALG_NP_MESH_PLUS_NHR:
-        case AlgType::ALG_NP_MESH_PLUS_NHR_V1:
-        case AlgType::ALG_NP_MESH_PLUS_NB:
-            algType = AlgType::ALG_NP_MESH_PLUS_RING;
-            break;
-        case AlgType::ALG_NP_DOUBLE_RING_PLUS_PIPELINE:
-        case AlgType::ALG_DOUBLE_RING_PLUS_HD:
-        case AlgType::ALG_DOUBLE_RING_PLUS_NHR:
-        case AlgType::ALG_NP_DOUBLE_RING_PLUS_NHR_V1:
-        case AlgType::ALG_NP_DOUBLE_RING_PLUS_NB:
-            algType = AlgType::ALG_DOUBLE_RING_PLUS_RING;
-            break;
-        default:
-            break;
-    }
-    return HCCL_SUCCESS;
-}
-
+    
 bool IsAlgTypeLevel0Mesh(AlgTypeLevel0 &originalAlgTypeLevel0)
 {
     return originalAlgTypeLevel0 == AlgTypeLevel0::ALG_LEVEL0_NP_MESH ||
@@ -379,26 +106,26 @@ bool FullmeshPairwiseSatisfyHighPerfAlltoallMeshCondition(DevType deviceType, u3
     return (isDevice91093 && twoLevelIntraUseMesh && rankSizeSupport && isHCCS);
 }
 
+template<typename keyType>
+std::string GetAlgoString(const std::map<keyType, std::string>& levelMap, keyType key) {
+    auto iter = levelMap.find(key);
+    if (iter == levelMap.end()) {
+        return "invalid algo type";
+    } else {
+        return iter->second;
+    }
+}
+
 std::string AlgTypeToStr(const AlgType algType)
 {
-    AlgTypeLevel1 algTypeLevel1 = AlgTypeLevel1(floor(static_cast<u32>(algType) >> HCCL_LEVEL_ALGO_WIDTH));
-    AlgTypeLevel0 algTypeLevel0 = AlgTypeLevel0(static_cast<u32>(algType) -
-        (static_cast<u32>(algTypeLevel1) << HCCL_LEVEL_ALGO_WIDTH));
-    auto level0Iter = HCCL_ALGO_LEVEL0_NAME_MAP.find(algTypeLevel0);
-    auto level1Iter = HCCL_ALGO_LEVEL1_NAME_MAP.find(algTypeLevel1);
-    std::string algStrLevel0;
-    std::string algStrLevel1;
-    if (level0Iter == HCCL_ALGO_LEVEL0_NAME_MAP.end()) {
-        algStrLevel0 = "invalid algo type";
-    } else {
-        algStrLevel0 = level0Iter->second;
-    }
-    if (level1Iter == HCCL_ALGO_LEVEL1_NAME_MAP.end()) {
-        algStrLevel1 = "invalid algo type";
-    } else {
-        algStrLevel1 = level1Iter->second;
-    }
-    std::string algStr = "level0:" + algStrLevel0 + ",level1:" + algStrLevel1;
+    AlgTypeLevel0 algTypeLevel0 = algType.algoLevel0;
+    AlgTypeLevel1 algTypeLevel1 = algType.algoLevel1;
+    AlgTypeLevel2 algTypeLevel2 = algType.algoLevel2;
+    std::string algStrLevel0 = GetAlgoString(HCCL_ALGO_LEVEL0_NAME_MAP, algTypeLevel0);
+    std::string algStrLevel1 = GetAlgoString(HCCL_ALGO_LEVEL1_NAME_MAP, algTypeLevel1);
+    std::string algStrLevel2 = GetAlgoString(HCCL_ALGO_LEVEL2_NAME_MAP, algTypeLevel2);
+    std::string algStr;
+    algStr.append("level0:").append(algStrLevel0).append(",level1:").append(algStrLevel1).append(",level2:").append(algStrLevel2);
     return algStr;
 }
 
@@ -412,20 +139,10 @@ u64 CalculatePiplineSliceNum(HcclCMDType opType, u64 dataSize, AlgType algType, 
 {
     u64 piplineSliceNum = 0;
     bool isInterRing = false;
-    switch (algType) {
-        case AlgType::ALG_DOUBLE_RING_PLUS_RING:
-        case AlgType::ALG_8P_RING_PLUS_RING:
-        case AlgType::ALG_4P_MESH_PLUS_RING:
-        case AlgType::ALG_2P_MESH_PLUS_RING:
-        case AlgType::ALG_1P_MESH_PLUS_RING:
-        case AlgType::ALG_4P_RING_PLUS_RING:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_RING:
-        case AlgType::ALG_NP_MESH_PLUS_RING:
-            isInterRing = true;
-            break;
-        default:
-            isInterRing = false;
-            break;
+    if (algType.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
+        isInterRing = true;
+    } else {
+        isInterRing = false;
     }
 
     do {

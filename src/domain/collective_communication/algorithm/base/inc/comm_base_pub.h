@@ -24,9 +24,7 @@
 #include "workflow_pub.h"
 #include "common.h"
 
-
 namespace hccl {
-constexpr u32 HCCL_RANK_SIZE_EQ_ONE = 1;
 constexpr u32 HCCL_RANK_SIZE_EQ_TWO = 2;
 constexpr u32 HCCL_RANK_ZERO = 0;
 constexpr u32 HCCL_RANK_OFFSET = 1;
@@ -205,7 +203,7 @@ protected:
     std::map<u32, HcclRankLinkInfo> dstInterServerMap_;
     // 当前rank作为server端, 需要连接的节点间client端的集合
     std::map<u32, HcclRankLinkInfo> dstInterClientMap_;
-    
+
     // 当前rank作为client端，需要连接的节点内server端的集合
     std::vector<u32> dstIntraServerVec_;
     // 当前rank作为server端，需要连接的节点内client端的集合

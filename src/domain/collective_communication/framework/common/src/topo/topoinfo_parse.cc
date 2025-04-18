@@ -91,6 +91,13 @@ HcclResult TopoInfoParse::Init(const std::vector<RankInfo> &rankList, const std:
     CHK_RET(GetSuperPodNum(rankList, superPodNum_));
     multiServerDiffDeviceNumMode_ = (serverNum_ * deviceNumPerServer_) == deviceNum_ ? false : true;
     CHK_RET(hrtGetDeviceType(deviceType_));
+
+    DevType curDevType = rankList.begin()->deviceType;
+    for (auto rankInfo : rankList) {
+        if (curDevType != rankInfo.deviceType) {
+            isDiffDeviceType_ = true;
+        }
+    }
     return HCCL_SUCCESS;
 }
 

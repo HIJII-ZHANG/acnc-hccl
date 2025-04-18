@@ -16,7 +16,6 @@
 #include <atomic>
 #include <fstream>
 #include "base.h"
-#include "coll_alg_param.h"
 #include "hccl_socket_manager.h"
 #include "dispatcher.h"
 #include "mem_device_pub.h"
@@ -27,7 +26,7 @@
 #include "thread/threads_guard.h"
 #include "hccl_hash_utils.h"
 #include "workflow_pub.h"
-#include "common.h"
+#include "comm_base_pub.h"
 
 namespace hccl {
 
@@ -161,7 +160,8 @@ public:
         size_t transportResourceInfoSize,
         bool isUseRankPort,
         bool isUsedRdmaLevel0,
-        const std::vector<u32> &ranksPort,
+        const std::vector<u32> &nicRanksPort,
+        const std::vector<u32> &vnicRanksPort,
         bool useSuperPodMode,
         const std::vector<HcclIpAddress> &devIpAddr,
         const HcclIpAddress &hostIp,
@@ -185,17 +185,20 @@ public:
     TransportManager(TransportManager&&) = delete;                      // Move construct
     TransportManager& operator=(TransportManager const&) = delete;      // Copy assign
     TransportManager& operator=(TransportManager &&) = delete;          // Move assign
+    void SetQpQosAttr(u32 trafficClass, u32 serviceLevel); // 设置TC/SL配置
 
     HcclResult SetStopFlag(bool value);
     bool GetStopFlag();
+
+    void SetPortConfig(bool devPortSwitchOn);
 private:
     HcclResult GetIOMem(const TransportIOMem &transMem,
         const TransportMemType inputMemType, const TransportMemType outputMemType,
         DeviceMem &inputMem,  DeviceMem &outputMem, DeviceMem &expMem);
-    u32 GetRemoteNicPort(u32 remoteRank);
+    u32 GetHostPort(s32 devicePhyId);
+    u32 GetRemoteNicPort(s32 devicePhyId, u32 dstUserRank, bool isInterRdma);
     bool IsSupportInterHccs(const u32 dstRank);
     void UpdateIsInterRdma(const u32 remoteRank, bool &isInterRdma, bool forceRdma);
-    u32 GetInterRemotePort(s32 devicePhyId, u32 dstUserRank);
     HcclResult MakeRemoteLinkInfo(const u32 remoteRank, bool isInterRdma,
         u32 socketsPerLink, HcclRankLinkInfo &remoteLinkInfo);
     HcclResult CreateDestSockets(const std::string &newTag, RankId remoteRank, u64 taskNum,
@@ -205,7 +208,7 @@ private:
         const bool supportDataReceivedAck, const LinkMode linkMode,
         const std::vector<std::shared_ptr<HcclSocket> > &socketList, const DeviceMem &inputMem,
         const DeviceMem &outputMem, const DeviceMem &expMem, bool isAicpuModeEn, bool isBackup,
-        u32 notifyNum, MachinePara &machinePara);
+        u32 notifyNum, u32 trafficClass, u32 serviceLevel, MachinePara &machinePara);
     TransportType GetTransportType(const u32 dstRank, bool isUsedRdma);
     void SetTransportParam(TransportPara &para, MachinePara &machinePara);
     HcclResult TransportInit(const u32 dstRank, MachinePara &machinePara,
@@ -226,7 +229,7 @@ private:
     HcclResult waitSubCommLinkThreadsComplete(struct SubCommLinkPara &subCommLinkPara);
     HcclResult checkSubCommLinkThreadsStatus(const std::string &tag, struct SubCommLinkPara &subCommLinkPara, bool isBackup);
     HcclResult AllocSubCommLinks(const std::string &tag, const TransportIOMem &transMem,
-        struct SingleSubCommTransport &singleSubCommTransport, bool isAicpuModeEn, bool isBackup);        
+        struct SingleSubCommTransport &singleSubCommTransport, bool isAicpuModeEn, bool isBackup);
 
     std::mutex mutex_;	// 用于控制互斥资源的访问
     CCLBufferManager &cclBufferManager_;
@@ -243,12 +246,14 @@ private:
     size_t transportResourceInfoSize_;
     bool isUseRankPort_{ false };
     bool isUsedRdmaLevel0_{ false };
-    const std::vector<u32> &ranksPort_;
+    const std::vector<u32> &nicRanksPort_;
+    const std::vector<u32> &vnicRanksPort_;
     bool useSuperPodMode_{ false };
     const std::vector<HcclIpAddress> &devIpAddr_;
     const HcclIpAddress &hostIp_;
     const HcclIpAddress &localVnicIp_;
     std::map<HcclIpAddress, HcclNetDevCtx> &netDevCtxMap_;
+    bool devPortSwitchOn_{ false };
 
     std::unordered_map<TransportData, LINK> transportMap_;
     std::vector<u32> enableP2PDevices_;
@@ -262,6 +267,8 @@ private:
     bool isCfgFileRead_{ false };
     std::mutex loadCfgFileMutex_; // 控制文件资源的访问
     u64 rankConsistentDataLength_ = 0;
+    u32 trafficClass_;
+    u32 serviceLevel_;
 };
 }  // namespace hccl
 

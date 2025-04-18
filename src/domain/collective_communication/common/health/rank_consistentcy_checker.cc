@@ -30,7 +30,7 @@ RankConsistentcyChecker& RankConsistentcyChecker::GetInstance(s32 deviceLogicId)
     }
     hrtGetDevice(&deviceLogicId);
     HCCL_INFO("[GetInstance] get deviceLogicId[%d]", deviceLogicId);
-    CHK_PRT_RET((static_cast<u32>(deviceLogicId) >= MAX_MODULE_DEVICE_NUM - 1 || deviceLogicId < 0),
+    CHK_PRT_RET((static_cast<u32>(deviceLogicId) >= MAX_MODULE_DEVICE_NUM || deviceLogicId < 0),
         HCCL_WARNING("[R]deviceLogicId[%d] is invalid", deviceLogicId), instance[0]);
 
     return instance[deviceLogicId];

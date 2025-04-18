@@ -12,6 +12,7 @@
 #define BROADCAST_NHR_V1_PUB_H
 
 #include "nonuniform_hierarchical_ring_v1_base_pub.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 
@@ -21,6 +22,7 @@ public:
     ~BroadcastNHRV1() override;
 
     HcclResult RunAsync(const u32 rank, const u32 rankSize, const std::vector<LINK> &links) override;
+    HcclResult Prepare(PrepareData &param) override;
 
 private:
     DeviceMem scratch_; /* * 临时deviceMem */

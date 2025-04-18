@@ -112,11 +112,10 @@ bool CollAllReduceExecutor::IsDataSplitForRdmaSdmaConcurrent(const u64 curSize)
 
 HcclResult CollAllReduceExecutor::GetSliceNum(const u64 totalSize, const bool isSmallData, u64& sliceNum)
 {
-    const AlgTypeLevel0 algLevel0 = GetLevel0AlgType(algType_);
     u64 actualSize = 0;
     u32 actualRankSize = 0;
 
-    if (algLevel0 == AlgTypeLevel0::ALG_LEVEL0_RESERVED) {
+    if (algType_.algoLevel0 == AlgTypeLevel0::ALG_LEVEL0_RESERVED) {
         // level0算法配null走单层拓扑场景
         actualSize = totalSize;
         actualRankSize = topoAttr_.userRankSize;
@@ -137,7 +136,7 @@ HcclResult CollAllReduceExecutor::GetSliceNum(const u64 totalSize, const bool is
         actualRankSize = topoAttr_.userRankSize / localRankSize;
     }
 
-    if (UseInterServerNBAlgo(algType_)) {
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
         if (totalSize > HCCL_MIN_SLICE_ALIGN) {
             u64 sliceSize = GetSliceSizeOfNB(actualSize, actualRankSize);
             CHK_PRT_RET(sliceSize == 0,
@@ -145,7 +144,7 @@ HcclResult CollAllReduceExecutor::GetSliceNum(const u64 totalSize, const bool is
                 HCCL_E_PARA);
             sliceNum = static_cast<u64>(std::ceil(actualSize * 1.0f / sliceSize));
         }
-    } else if (UseInterServerNHRAlgo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
         u64 sliceSize = (actualSize + (actualRankSize - 1)) / actualRankSize;
         u64 sliceSizeAligned = AlgTemplateBase::RoundUpWithDivisor(sliceSize, HCCL_MIN_SLICE_ALIGN);
         sliceNum = isSmallData ? 1 : static_cast<u64>(std::ceil(actualSize * 1.0f / sliceSizeAligned));
@@ -216,7 +215,7 @@ HcclResult CollAllReduceExecutor::RunLoopInner(OpParam &param, const ReduceType 
 
     if (!is310P3Common_) {
         /* 设置子图复用标志 */
-        auto autoSelectedAlgTypeLevel1 = static_cast<u32>(algType_) >> HCCL_LEVEL_ALGO_WIDTH;
+        auto autoSelectedAlgTypeLevel1 = static_cast<u32>(algType_.algoLevel1);
         bool hugeData = IsHugeData(curSize);    // override
 
         if (reduceType == ReduceType::TBE_REDUCE) {
@@ -280,7 +279,7 @@ HcclResult CollAllReduceExecutor::AvoidSubgraphLoop(OpParam &param, AlgResourceR
     ReduceType reduceType = ((param.reduceType != HCCL_REDUCE_PROD) &&
         (param.DataDes.dataType != HCCL_DATA_TYPE_INT64)) ?
         ReduceType::INLINE_REDUCE : ReduceType::TBE_REDUCE;
-    auto originalAlgTypeLevel1 = static_cast<u32>(algType_) >> HCCL_LEVEL_ALGO_WIDTH;
+    auto originalAlgTypeLevel1 = static_cast<u32>(algType_.algoLevel1);
     bool hugeData =
         (param.DataDes.count * unitSize) / topoAttr_.deviceNumPerAggregation / HCCL_INTERNODE_MAX_DATA_RATE >
         RDMA_SEND_MAX_SIZE || (param.DataDes.count * unitSize) > SDMA_SEND_MAX_SIZE;
@@ -312,9 +311,8 @@ HcclResult CollAllReduceExecutor::AvoidSubgraphLoop(OpParam &param, AlgResourceR
 
 bool CollAllReduceExecutor::IsAllReduceSmallData(u64 size)
 {
-    if (UseInterServerNHRAlgo(algType_)) {
-        const AlgTypeLevel0 algLevel0 = GetLevel0AlgType(algType_);
-        if (algLevel0 == AlgTypeLevel0::ALG_LEVEL0_RESERVED ||
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
+        if (algType_.algoLevel0 == AlgTypeLevel0::ALG_LEVEL0_RESERVED ||
             (topoAttr_.deviceType == DevType::DEV_TYPE_910_93 && !DMAReduceFlag_)) { // level0算法配null走单层拓扑场景
             if (size <= NHR_ALLREDUCE_SMALL_SIZE) {
                 return true;

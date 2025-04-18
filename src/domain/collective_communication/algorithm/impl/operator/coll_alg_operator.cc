@@ -79,6 +79,7 @@ HcclResult CollAlgOperator::Orchestrate(const std::string& algName, OpParam& par
             HCCL_E_PARA);
         CHK_RET(SetExecutorAttr(param));
     }
+    executor_->SetAivClearEnable(aivClearEnable_);
     executor_->SetAlgOpContext(algOpContext_);
     return executor_->Orchestrate(param, algResource);
 }
@@ -204,7 +205,7 @@ HcclResult CollAlgOperator::AutoSelectAlgTypeLevel1(HcclCMDType hcclCMDType, u64
     // auto algo selection process
     if (isAlgoLevel1Default_) {
         // parse algType_ and get algTypeLevel1 and algTypeLevel0
-        auto originalAlgTypeLevel0 = GetLevel0AlgType(algType_);
+        auto originalAlgTypeLevel0 = algType_.algoLevel0;
         // set algTypeLevel1
         AlgTypeLevel1 algTypeLevel1;
         CHK_RET(
@@ -216,8 +217,8 @@ HcclResult CollAlgOperator::AutoSelectAlgTypeLevel1(HcclCMDType hcclCMDType, u64
             HCCL_E_INTERNAL);
         HCCL_INFO("[AutoSelectAlgTypeLevel1] there are %u server(%u module) in level1, using %s algo",
                   serverNum_, moduleNum_, iter->second.c_str());
-        algType_ = AlgType(
-            (static_cast<u32>(algTypeLevel1) << HCCL_LEVEL_ALGO_WIDTH) + static_cast<u32>(originalAlgTypeLevel0));
+        algType_.algoLevel0 = originalAlgTypeLevel0;
+        algType_.algoLevel1 = algTypeLevel1;
         // tag 增加所选的算法
         AppendTag(algTypeLevel1, algTypeLevel1Tag);
     }
@@ -274,7 +275,7 @@ HcclResult CollAlgOperator::GetDefaultAlgoLevel1V2(HcclCMDType hcclCMDType, u64 
     // pipeline mode is deployed,where there is multi-sever multi-device(insever) now,
     // since RDMA is not reduced by normal serial orchestration of tasks.
     // So pipeline mode is more dominant than normal serial orchestration now.
-    auto originalAlgTypeLevel0 = GetLevel0AlgType(algType_);
+    auto originalAlgTypeLevel0 = algType_.algoLevel0;
     bool disdeterniminsticWithInlineReduce = isInlineReduce && isRdmaReduce &&
         topoMatcher_->GetDeterministicConfig() == DETERMINISTIC_CONFIG_DISABLE;
 
@@ -555,7 +556,7 @@ bool CollAlgOperator::IsMultiMeshInlineReduce(void *inputPtr, void *outputPtr, H
                       topoType_ == TopoType::TOPO_TYPE_2P_MESH || topoType_ == TopoType::TOPO_TYPE_1P_MESH;
 
     bool isInlineReduce = IsSupportSDMAReduce(inputPtr, outputPtr, dataType, op);
-    bool isRdmaReduce = IsOverFlowInfNanMode() && IsSupportRDMAReduce(dataType, op);
+    bool isRdmaReduce = IsSupportRDMAReduce(dataType, op);
     bool multiMeshInlineReduce = (deviceType_ == DevType::DEV_TYPE_910B) &&
                                  isMeshTopo && isInlineReduce && isRdmaReduce && (!isSingleMeshAggregation_);
     return multiMeshInlineReduce;
@@ -570,6 +571,12 @@ void CollAlgOperator::SetLegacyHcclImpl(std::unique_ptr<hcclImpl> &impl)
 HcclResult CollAlgOperator::SetRetryEnable(bool retryEnable)
 {
     retryEnable_ = retryEnable;
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollAlgOperator::SetAivClearEnable(bool aivClearEnable)
+{
+    aivClearEnable_ = aivClearEnable;
     return HCCL_SUCCESS;
 }
 
@@ -600,5 +607,10 @@ bool CollAlgOperator::SupportRetryWithInplaceCheck(
     // 1. 非inplace场景
     // 2. 是inplace但同时符合retry条件的场景
     return true;
+}
+
+HcclResult CollAlgOperator::GetBlockDim(u32& blockDim){
+    CHK_SMART_PTR_NULL(executor_);
+    return executor_->GetBlockDim(blockDim);
 }
 }   // namesapce hccl

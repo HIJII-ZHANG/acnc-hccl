@@ -66,9 +66,9 @@ HcclResult CollScatterCommExecutor::CalcCombinedCommInfo(TransportMemType inputT
     }
 
     CommParaInfo commParaInfo(commPlane, CommType::COMM_TAG_MAX);
-    if (UseInterServerNHRAlgo(algType_)) {
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
         commParaInfo.commType = CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING;
-    } else if (UseInterServerNBAlgo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
         commParaInfo.commType = CommType::COMM_TAG_NONUNIFORM_BRUCK;
     } else {
         commParaInfo.commType = CommType::COMM_TAG_RING_INNER;

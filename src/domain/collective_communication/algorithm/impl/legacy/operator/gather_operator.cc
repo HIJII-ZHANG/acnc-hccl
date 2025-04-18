@@ -39,7 +39,8 @@ HcclResult GatherOperator::Gather(const std::string &tag, void *inputPtr, void *
     outputMem = DeviceMem::create(outputPtr, userRankSize_ * inputCount * SIZE_TABLE[dataType]);
 
     if (isHaveCpuRank_) {
-        algType_ = AlgType::ALG_NP_STAR;
+        algType_.algoLevel0 = AlgTypeLevel0::ALG_LEVEL0_NP_STAR;
+        algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_STAR;
     }
     CHK_RET(hcclImpl_->PrepareCommRes(tag, inputMem, outputMem, algType_, stream, rootRank, false, isHaveCpuRank_));
 

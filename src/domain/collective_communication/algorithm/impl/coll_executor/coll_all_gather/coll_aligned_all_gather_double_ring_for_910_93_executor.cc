@@ -79,7 +79,7 @@ HcclResult CollAlignedAllGatherDoubleRingFor91093Executor::DoubleRingAllGather(
     ret = RunTemplate(tempAlg, level0ZeroCommInfo);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAlignedAllGatherDoubleRingFor91093Executor][DoubleRingAllGather] Double ring "
-                   "reduce scatter failed failed,return[%d]", ret), ret);
+                   "all gather failed, return[%d]", ret), ret);
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     return HCCL_SUCCESS;
 }

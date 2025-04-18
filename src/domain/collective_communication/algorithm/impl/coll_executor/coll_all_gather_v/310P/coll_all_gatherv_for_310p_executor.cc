@@ -62,42 +62,47 @@ HcclResult CollAllGatherVFor310PExecutor::CalcLevel0CommInfo(TransportMemType in
     return HCCL_SUCCESS;
 }
 
+u64 CollAllGatherVFor310PExecutor::CalcLoopMaxCount(const u64 cclBuffSize, const u32 unitSize)
+{
+    // 中转内存单次最多能够接受的output count
+    u64 maxCountPerLoop = cclBuffSize / topoAttr_.userRankSize / HCCL_MIN_SLICE_ALIGN
+        * HCCL_MIN_SLICE_ALIGN / unitSize;
+
+    HCCL_WARNING("[CollAllGatherVExecutor][CalcLoopMaxCount]" \
+        "using default maxCountPerLoop[%llu] as CCLBuffSize / unitSize.", maxCountPerLoop);
+    return maxCountPerLoop;
+}
+
+bool CollAllGatherVFor310PExecutor::IsHugeData(const u64 curSize)
+{
+    bool hugeData = curSize > HCCL_SMALL_COUNT_4_MB;
+    return hugeData;
+}
+
 HcclResult CollAllGatherVFor310PExecutor::CalcCurCountsAndCurDispls(const u64 maxTotalCount,
     std::vector<u64> &countsLeft, std::vector<u64> &displs, std::vector<u64> &curCounts, std::vector<u64> &curDispls,
     bool &finished)
 {
-    curCounts = std::vector<u64>(countsLeft.size(), 0);
-    curDispls = std::vector<u64>(displs.size(), 0);
-    auto allocatableCount = maxTotalCount;
+    finished = true;
+
+    curCounts.resize(countsLeft.size(), 0);
+    curDispls.resize(displs.size(), 0);
 
     // 先设置本轮的displacements，等于入参displs
     std::copy(displs.begin(), displs.end(), curDispls.begin());
 
-    // 分配本轮的counts，如果CCLbuffer空间还没完全利用，则再进行分配
-    while (allocatableCount > 0)
-    {
-        // 计算现在还有几个rank还有数据需要去通信(countsLeft不为0)
-        const auto nonZeroCount =
-            std::count_if(countsLeft.begin(), countsLeft.end(), [](const u64 count) { return count != 0; });
-        if (nonZeroCount == 0) {
-            finished = true;
-            break;
-        } else {
-            // 计算每个rank可以分到多少count
-            const auto perRankCount = allocatableCount / nonZeroCount;
-            if (perRankCount == 0) {
-                break;
-            }
-            // 分配好每个rank的counts
-            for (auto i = 0U; i < countsLeft.size(); ++i) {
-                const auto curCount = countsLeft[i] < perRankCount ? countsLeft[i] : perRankCount;
-                allocatableCount -= curCount;
-                curCounts[i] += curCount;
-                countsLeft[i] -= curCount;
-                displs[i] += curCount;
-            }            
+    // 分配好每个rank的counts
+    for (auto i = 0U; i < countsLeft.size(); ++i) {
+        const auto curCount = countsLeft[i] < maxTotalCount ? countsLeft[i] : maxTotalCount;
+        curCounts[i] = curCount;
+        countsLeft[i] -= curCount;
+        displs[i] += curCount;
+
+        if(countsLeft[i] != 0) {
+            finished = false;
         }
     }
+
     return HCCL_SUCCESS;
 }
 
@@ -118,12 +123,14 @@ HcclResult CollAllGatherVFor310PExecutor::KernelRun(const OpParam &param, ExecMe
     const auto counts = static_cast<u64*>(param.VDataDes.counts);
     const auto displs = static_cast<u64*>(param.VDataDes.displs);
     u64 cclOffset = 0;
+
     for (u32 rank = 0; rank < rankSize; ++rank) {
         Slice cclslice;
         cclslice.offset = cclOffset;
         cclslice.size = counts[rank] * unitSize;
         cclOffset += cclslice.size;
         inputSlices.emplace_back(std::move(cclslice));
+
         Slice userslice;
         userslice.offset = displs[rank] * unitSize;
         userslice.size = counts[rank] * unitSize;
@@ -133,11 +140,18 @@ HcclResult CollAllGatherVFor310PExecutor::KernelRun(const OpParam &param, ExecMe
     HcomCollOpInfo opInfo = {"", execMem.inputPtr, execMem.outputPtr, 0, param.VDataDes.dataType, 
         param.root, param.reduceType};
     
-    std::vector<u32> rankOrder(rankSize, 0);
     std::unique_ptr<ExecutorBase> tempAlg;
-    tempAlg.reset(new (std::nothrow) AllGatherRingConcurrentDirect(
-                        dispatcher_, &opInfo, topoAttr_.userRank, algResResp_->slaveStreams,
-                        algResResp_->notifiesMain, algResResp_->notifiesAux, rankOrder, outputSlices));
+
+    if (!IsHugeData(cclOffset)) {
+        tempAlg.reset(new (std::nothrow) AllGatherRingDirect(dispatcher_,
+            &opInfo, topoAttr_.userRank, outputSlices));
+    } else {
+        std::vector<u32> rankOrder(rankSize, 0);
+        tempAlg.reset(new (std::nothrow) AllGatherRingConcurrentDirect(
+            dispatcher_, &opInfo, topoAttr_.userRank, algResResp_->slaveStreams,
+            algResResp_->notifiesMain, algResResp_->notifiesAux, rankOrder, outputSlices));
+    }
+
     CHK_SMART_PTR_NULL(tempAlg);
 
     CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
@@ -148,6 +162,7 @@ HcclResult CollAllGatherVFor310PExecutor::KernelRun(const OpParam &param, ExecMe
         PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
     CHK_RET(RunTemplate(tempAlg, outerCommInfo));
+
     HCCL_INFO("allgatherv for 310P run success");
 
     return HCCL_SUCCESS;

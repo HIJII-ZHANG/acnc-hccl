@@ -50,6 +50,7 @@ public:
     DeviceMem& GetInAlltoAllvParaBuffer();
     DeviceMem& GetOutAlltoAllvParaBuffer();
     void ReleaseAlltoAllvParaBuffer();
+    HcclResult CleanCCLbuffer();
 private:
     HcclResult CreateCCLbuffer(u64 size, DeviceMem &buffer);
     void* GetCCLbufferAddr(const DeviceMem &buffer);

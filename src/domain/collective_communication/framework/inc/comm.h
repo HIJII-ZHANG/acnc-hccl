@@ -56,6 +56,15 @@ using HcclCommConnections = struct HcclCommConnectionsDef {
     std::map<u32, std::shared_ptr<HcclSocket>> serverConnections;
 };
 
+using HcclSocketPortConfig = struct HcclSocketPortConfigDef {
+    // devPortSwitchOn 用于判断是否开启了用户配置的端口（通过环境变量配置的端口范围或者通过ranktable指定的端口）。
+    // devPortSwitchOn开启时，将启用独立的vnic端口；即nic和vnic使用的端口可能不一致。
+    bool devPortSwitchOn{ false };
+    std::pair<std::shared_ptr<HcclSocket>, HcclNetDevCtx> devNicListen{ nullptr, nullptr }; // 抢占的device nic socket
+    std::pair<std::shared_ptr<HcclSocket>, HcclNetDevCtx> devVnicListen{ nullptr, nullptr }; // 抢占的device vnic socket
+    std::pair<std::shared_ptr<HcclSocket>, HcclNetDevCtx> backupDevNicListen{ nullptr, nullptr }; // 抢占的backup nic socket
+};
+
 using HcclCommParams = struct TagHCCLCollectiveParams {
     /**
     通信域的基本构建信息，通信域标识、节点数及本节点的编号
@@ -83,6 +92,7 @@ using HcclCommParams = struct TagHCCLCollectiveParams {
     std::string identifier;
     u32 ranktableCrc;
     HcclCommConnections commConnections;
+    HcclSocketPortConfig commPortConfig;
     TagHCCLCollectiveParams()
         : id{0}, rank(INVALID_VALUE_RANKID), userRank(INVALID_VALUE_RANKID), totalRanks(0xFFFFFFFF),
           logicDevId(-1), deviceType(DevType::DEV_TYPE_COUNT), profilingMode(HcomProfilingMode::PROFILING_CLOSE),
@@ -101,6 +111,8 @@ using WorldGroupInfo = struct worldGroupInfo {
     std::unordered_map<std::string, std::map<u32, HcclIpAddress>> phyIdNicInfoMap;
     std::vector<RankInfo> worldRankInfoList;
     std::vector<u32> ranksPort;
+    std::vector<u32> vnicRanksPort;
+    bool devPortSwitchOn{ false };
     bool useSuperPodMode;
     worldGroupInfo()
         :inlineReduceSwitchOn(true), deviceType(DevType::DEV_TYPE_COUNT), deviceLogicId(-1), profilingInitiated(false),

@@ -219,7 +219,7 @@ private:
         DeviceMem &inOutMem, u32 peerUserRank);
     HcclResult CreateCommByAlg(const std::string &tag, const AlgType algType, CommInfo &commInfo, DeviceMem &inputMem,
         DeviceMem &outputMem, DeviceMem &expMem, u32 root = INVALID_VALUE_RANKID, bool isAicpuModeEn = false,
-        bool meshSinglePlane = false);
+        bool meshSinglePlane = false, bool isA2MC2MultiServer = false);
 
     void DestroyLevel1Comm(const std::string &tag);
     void DestroyIntraServerComm(const std::string &tag);
@@ -237,6 +237,7 @@ private:
     void UnRegisterToHeartBeatP2P();
     void UnRegisterToHeartBeat();
     void UnRegisterToHeartBeat(const std::string& tag);
+    HcclResult SetRankPortInfo(s32 deviceLogicID, bool isUseRankPort, std::vector<u32> &ranksPort);
 
     /* ---------------以下为私有成员变量定义领域-------------------------- */
     TopoType topoType_ = TopoType::TOPO_TYPE_COMMON;
@@ -293,7 +294,6 @@ private:
     u32 realUserRank_; // world group中的userrank
     u32 userRankSize_;
     std::vector<RankInfo> rankInfoList_; // world group内rank的信息, 按照rank id递增依次排列
-    std::vector<HbRankInfo> hbRankInfoList_;  // world group内rank的信息, 按照rank id递增依次排列, 心跳模块使用
     bool inlineReduceSwitchOn_;
     NICDeployment nicDeployment_;
     u32 devicePhyId_;
@@ -329,6 +329,8 @@ private:
     std::shared_ptr<TopoInfoExtractor> topoInfoEx_;
     HcclTopoAttr& topoAttr_;
     HcclAlgoAttr& algoAttr_;
+    u32 localNicPort_{0};
+    bool isNeedInitNic_{false};
 };
 }  // namespace hccl
 

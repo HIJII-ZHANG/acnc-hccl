@@ -89,6 +89,7 @@ HcclResult CollReduceScatterMixExecutor::CalcStreamNum(u32& streamNum)
 
 bool CollReduceScatterMixExecutor::IsHugeData(const u64 curSize, OpParam *param)
 {
+    // 多QP哈希散列开启且RDMA通信下，强制刷新子图
     if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT) {
         return true;
     }
@@ -367,14 +368,14 @@ HcclResult CollReduceScatterMixExecutor::KernelRun(const OpParam &param, ExecMem
 
     CHK_RET(CalLevel1DataSegsSlice(execMem, commIndex, sliceNum, level1RankSize, level1DataSegsSlice));
 
-    if (UseInterServerRingAlgo(algType_)) {
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
         level1Executor.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
         HCCL_INFO("[CollReduceScatterMixExecutor][KernelRun]reducescatter mix: using ring algo inter-server.");
-    } else if (UseInterServerNHRAlgo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
         level1Executor.reset(new (std::nothrow) ReduceScatterNHR(dispatcher_, reduceAttr));
         HCCL_INFO("[CollReduceScatterMixExecutor][KernelRun]reducescatter mix: using nhr algo inter-server.");
     } else {
-        HCCL_ERROR("[CollReduceScatterMixExecutor][KernelRun]reducescatter mix: algType[%u] is not supported.", algType_);
+        HCCL_ERROR("[CollReduceScatterMixExecutor][KernelRun]reducescatter mix: algType[%u] is not supported.", algType_.algoLevel1);
         return HCCL_E_NOT_SUPPORT;
     }
     CHK_SMART_PTR_NULL(level1Executor);

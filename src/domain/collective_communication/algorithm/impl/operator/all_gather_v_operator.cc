@@ -46,7 +46,7 @@ HcclResult AllGatherVOperator::SelectAlg(const std::string& tag, const OpParam& 
     } else if (deviceType_ == DevType::DEV_TYPE_310P3) {
         newTag = tag + algName;
     } else {
-        AlgTypeLevel1 algType1 = GetLevel1AlgType(algType_);
+        AlgTypeLevel1 algType1 = algType_.algoLevel1;
         auto level1Iter = HCCL_ALGO_LEVEL1_NAME_MAP.find(algType1);
         CHK_PRT_RET(level1Iter == HCCL_ALGO_LEVEL1_NAME_MAP.end(), HCCL_ERROR("level1: algType1[%u] is invalid.",
             algType1), HCCL_E_INTERNAL);
@@ -66,18 +66,31 @@ HcclResult AllGatherVOperator::SelectAlgfor910B(const OpParam& param, std::strin
     u64 maxCount = *std::max_element(countsPerRank.begin(), countsPerRank.end());
     u32 unitSize = SIZE_TABLE[param.VDataDes.dataType];
     u64 dataSize = maxCount * unitSize;
+    bool isBigData = false;
 
-    bool isAivMode = GetExternalInputHcclAivMode() && isSingleMeshAggregation_ &&
+    if (dataSize > AIV_ALL_GATHER_SMALL_SIZE) {
+        isBigData = true;
+    }
+
+    if (!isSingleMeshAggregation_) {
+        HCCL_ERROR("[AllGatherVOperator][SelectAlgfor910B] AllGatherV only support one module");
+        return HCCL_E_NOT_SUPPORT;
+    }
+    
+    bool isAivMode = topoMatcher_->GetAivModeConfig() && isSingleMeshAggregation_ &&
                      IsSupportAIVCopy(param.VDataDes.dataType) && dataSize <= AIV_BIG_SIZE;
     if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
         if (isAivMode) {
-            algName = "AllGatherVMeshAivExecutor";
+            if (isBigData) {
+                algName = "AllGatherVMeshAivExecutor";
+            } else {
+                algName = "AllGatherVMeshAivSmallCountExecutor";
+            }
         } else {
             algName = "AllGatherVMeshOpbaseExecutor";
         }
-    } else {
-        HCCL_ERROR("[AllGatherVOperator][SelectAlgfor910B] AllGatherV not support");
-        return HCCL_E_NOT_SUPPORT;
+    } else if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB) {
+        algName = "AllGatherVMeshExecutor";
     }
     HCCL_INFO("[SelectAlgforA2] all_gather_v SelectAlgforA2 is algName [%s]", algName.c_str());
     return HCCL_SUCCESS;

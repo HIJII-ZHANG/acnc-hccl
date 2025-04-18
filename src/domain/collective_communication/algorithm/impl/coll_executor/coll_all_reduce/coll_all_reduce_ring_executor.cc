@@ -27,31 +27,16 @@ CollAllReduceRingExecutor::CollAllReduceRingExecutor(const HcclDispatcher dispat
 HcclResult CollAllReduceRingExecutor::CalcStreamNum(u32& streamNum)
 {
     u32 totalStreamNum = 1U;
-    switch (algType_) {
-        case AlgType::ALG_8P_RING_PLUS_HD:
-        case AlgType::ALG_8P_RING_PLUS_RING:
-        case AlgType::ALG_8P_RING_PLUS_NHR:
-        case AlgType::ALG_8P_RING_PLUS_NHR_V1:
-        case AlgType::ALG_8P_RING_PLUS_AHC:
-        case AlgType::ALG_8P_RING_PLUS_AHC_BROKE:
-        case AlgType::ALG_8P_RING_PLUS_NB:
-        case AlgType::ALG_8P_RING_PLUS_PIPELINE:
-            totalStreamNum = LEVEL0_PLANE_NUM_IN_8PRING;
-            break;
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_RING:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_HD:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_NHR:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_NB:
-            if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
-                if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-                    totalStreamNum = LEVEL0_PLANE_NUM_IN_NPRING_SINGLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
-                } else {
-                    totalStreamNum = LEVEL0_PLANE_NUM_IN_NPRING_SINGLE;
-                }
+    if (algType_.algoLevel0 == AlgTypeLevel0::ALG_LEVEL0_8P_RING) {
+        totalStreamNum = LEVEL0_PLANE_NUM_IN_8PRING;
+    } else if (algType_.algoLevel0 == AlgTypeLevel0::ALG_LEVEL0_NP_SINGLE_RING) {
+        if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
+            if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
+                totalStreamNum = LEVEL0_PLANE_NUM_IN_NPRING_SINGLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
+            } else {
+                totalStreamNum = LEVEL0_PLANE_NUM_IN_NPRING_SINGLE;
             }
-            break;
-        default:
-            break;
+        }
     }
     streamNum = totalStreamNum - 1;
     HCCL_INFO("[CollAllReduceRingExecutor][CalcStreamNum] tag[%s] streamNum[%u]",
@@ -161,7 +146,7 @@ HcclResult CollAllReduceRingExecutor::KernelRun(const OpParam &param, ExecMem &e
     std::vector<u32>::iterator iterNic = std::find(nicList.begin(), nicList.end(), topoAttr_.devicePhyId);
     bool innRunRet = isMultiNic && (iterNic == nicList.end());
     if (!innRunRet) { // 满足以下条件, 不做server间通信: 1. 8P ring的拓扑 2. 网口不满配 3. 当前device不出网口
-        bool isSelectAHC = (UseInterServerAHCAlgo(algType_) || UseInterServerAHCBrokeAlgo(algType_));
+        bool isSelectAHC = (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC || algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE);
         CommPlane commPlaneLevel1 = isSelectAHC ? COMM_LEVEL1_AHC : COMM_LEVEL1;
         CHK_RET(CheckCommSize(commPlaneLevel1, commIndex + 1));
         SubCommInfo level1CommInfo = GetSubCommInfo(commPlaneLevel1, commIndex);
@@ -174,10 +159,10 @@ HcclResult CollAllReduceRingExecutor::KernelRun(const OpParam &param, ExecMem &e
         u64 reduceAttr = GetReduceAttr(allreduceInput, allreduceOutput, param.DataDes.dataType, param.reduceType);
 
         std::unique_ptr<AlgTemplateBase> level1TempAlg;
-        if (UseInterServerRingAlgo(algType_)) {
+        if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
             level1TempAlg.reset(new (std::nothrow) AllReduceRing(dispatcher_, reduceAttr));
             HCCL_INFO("allreduce ring: using ring algo inter-server.");
-        } else if (UseInterServerNHRAlgo(algType_)) {
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
             u64 curSize = execMem.count * SIZE_TABLE[param.DataDes.dataType]; // 单位 byte
             HCCL_DEBUG("allreduce ring: curSize[%llu] deviceNumPerAggregation[%u] commLevel0Size[%u]",
                 curSize, topoAttr_.deviceNumPerAggregation, level0CommInfo.localRankSize);
@@ -187,22 +172,22 @@ HcclResult CollAllReduceRingExecutor::KernelRun(const OpParam &param, ExecMem &e
                 level1TempAlg.reset(new (std::nothrow) AllReduceNHR(dispatcher_, reduceAttr));
             }
             HCCL_INFO("allreduce ring: using nhr algo inter-server.");
-        } else if (UseInterServerNHRV1Algo(algType_)) {
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
             level1TempAlg.reset(new (std::nothrow) AllReduceNHRV1(dispatcher_, reduceAttr));
             HCCL_INFO("allreduce ring: using nhr_v1 algo inter-server.");
-        } else if (UseInterServerAHCAlgo(algType_)) {
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC) {
             // 获取通信域分组信息
-            std::vector<std::vector<u32>> subGroups;
-            CHK_RET(topoMatcher_->GetLevelSubGroups(commPlaneLevel1, subGroups));
-            level1TempAlg.reset(new (std::nothrow) AllReduceAHC(dispatcher_, reduceAttr, execMem.count, subGroups));
+            std::vector<std::vector<std::vector<u32>>> globalSubGroups;
+            CHK_RET(topoMatcher_->GetGlobalSubGroups(commPlaneLevel1, globalSubGroups));
+            level1TempAlg.reset(new (std::nothrow) AllReduceAHC(dispatcher_, reduceAttr, execMem.count, globalSubGroups[0]));
             HCCL_INFO("allreduce ring: using ahc algo inter-server.");
-        } else if (UseInterServerAHCBrokeAlgo(algType_)) {
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE) {
             // 获取通信域分组信息
-            std::vector<std::vector<u32>> subGroups;
-            CHK_RET(topoMatcher_->GetLevelSubGroups(commPlaneLevel1, subGroups));
-            level1TempAlg.reset(new (std::nothrow) AllReduceAHCBroke(dispatcher_, reduceAttr, execMem.count, subGroups));
+            std::vector<std::vector<std::vector<u32>>> globalSubGroups;
+            CHK_RET(topoMatcher_->GetGlobalSubGroups(commPlaneLevel1, globalSubGroups));
+            level1TempAlg.reset(new (std::nothrow) AllReduceAHCBroke(dispatcher_, reduceAttr, execMem.count, globalSubGroups[0]));
             HCCL_INFO("allreduce ring: using ahc-broke algo inter-server.");
-        } else if (UseInterServerNBAlgo(algType_)) {
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
             level1TempAlg.reset(new (std::nothrow) AllReduceNB(dispatcher_, reduceAttr));
             HCCL_INFO("allreduce ring: using nonuniform-bruck algo inter-server.");
         } else {

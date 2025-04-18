@@ -38,11 +38,11 @@ HcclResult CollBroadcastCommExecutor::CalcCombinedCommInfo(TransportMemType inpu
     }
 
     CommParaInfo commParaInfo(commPlane, CommType::COMM_TAG_MAX);
-    if (UseInterServerNHRAlgo(algType_)) {
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
         commParaInfo.commType = CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING;
-    } else if (UseInterServerNHRV1Algo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
         commParaInfo.commType = CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING_V1;
-    } else if (UseInterServerNBAlgo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
         commParaInfo.commType = CommType::COMM_TAG_NONUNIFORM_BRUCK;
     } else {
         commParaInfo.commType = CommType::COMM_TAG_RING_INNER;
@@ -60,6 +60,20 @@ HcclResult CollBroadcastCommExecutor::CalcStreamNum(u32& streamNum)
     return HCCL_SUCCESS;
 }
 
+void SetPrepareData(PrepareData &prepareData, const OpParam &param,
+    const ExecMem &execMem, const u32 &rootRank)
+{
+    prepareData.inputMem = execMem.inputMem;
+    prepareData.outputMem = execMem.outputMem;
+    prepareData.scratchMem = execMem.outputMem;
+    prepareData.count = execMem.count;
+    prepareData.dataType = param.DataDes.dataType;
+    prepareData.stream = param.stream;
+    prepareData.reductionOp = HCCL_REDUCE_RESERVED;
+    prepareData.root = rootRank;
+    prepareData.baseOffset = 0;
+}
+
 HcclResult CollBroadcastCommExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
     CommPlane commPlane = COMM_COMBINE;
@@ -70,19 +84,22 @@ HcclResult CollBroadcastCommExecutor::KernelRun(const OpParam &param, ExecMem &e
     CHK_RET(CheckCommSize(commPlane, COMM_INDEX_0 + 1));
     SubCommInfo combinedCommInfo = GetSubCommInfo(commPlane, COMM_INDEX_0);
 
+    bool isUsedRegister = false;
     std::unique_ptr<AlgTemplateBase> tempAlg;
     u64 curSize = execMem.count * SIZE_TABLE[param.DataDes.dataType];
-    if (UseInterServerNHRAlgo(algType_)) {
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
         if (curSize <= NHR_BCAST_SMALL_SIZE) {
             tempAlg.reset(new (std::nothrow) BroadcastNHROneshot(dispatcher_));
         } else {
             tempAlg.reset(new (std::nothrow) BroadcastNHR(dispatcher_));
         }
         HCCL_INFO("broadcast comm: using nhr algo inter-server.");
-    } else if (UseInterServerNHRV1Algo(algType_)) {
-        tempAlg.reset(new (std::nothrow) BroadcastNHRV1(dispatcher_));
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
+        isUsedRegister = true;
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_BROADCAST_NHR_V1,
+            dispatcher_);
         HCCL_INFO("broadcast comm: using nhr_v1 algo inter-server.");
-    } else if (UseInterServerNBAlgo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
         if (ShouldUseBinaryBroadcastOfNB(curSize, combinedCommInfo.localRankSize, topoAttr_.userRankSize,
                 topoAttr_.deviceNumPerAggregation)) {
             tempAlg.reset(new (std::nothrow) BroadcastNBBinary(dispatcher_));
@@ -100,8 +117,15 @@ HcclResult CollBroadcastCommExecutor::KernelRun(const OpParam &param, ExecMem &e
     u32 rootRank = 0;
     CHK_RET(GetRankByUserRank(commPlane, COMM_INDEX_0, param.root, rootRank));
 
-    CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
-                param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, rootRank));
+    if (isUsedRegister) {
+        PrepareData prepareData;
+        SetPrepareData(prepareData, param, execMem, rootRank);
+        CHK_RET(tempAlg->Prepare(prepareData));
+    } else {
+        CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
+            param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, rootRank));
+    }
+
     CHK_RET(RunTemplate(tempAlg, combinedCommInfo));
 
     return HCCL_SUCCESS;

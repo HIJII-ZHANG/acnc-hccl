@@ -7,7 +7,6 @@ target_sources(hccl_alg PRIVATE
     ${src_list_pub}
 )
 
-add_subdirectory(component)
 add_subdirectory(temp_all_gather)
 add_subdirectory(temp_all_reduce)
 add_subdirectory(temp_alltoallv)

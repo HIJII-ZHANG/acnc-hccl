@@ -20,23 +20,13 @@
 #include "transport_pub.h"
 #include "stream_pub.h"
 #include "local_notify.h"
-#include "hccl_opbase_atrace_info_pub.h"
+#include "hccl_trace_info.h"
 #include "common.h"
 #include "threadManage.h"
+#include "transport_common.h"
 
 namespace hccl {
 using RankId = u32;
-
-enum TransportMemType {
-    CCL_INPUT = 0,
-    CCL_OUTPUT,
-    SCRATCH,
-    PARAM_INPUT,
-    PARAM_OUTPUT,
-    AIV_INPUT,
-    AIV_OUTPUT,
-    RESERVED
-};
 
 enum OpMode {
     OPBASE = 0,
@@ -46,36 +36,6 @@ enum OpMode {
 enum DeviceMode {
     HOST = 0,
     AICPU = 1
-};
-
-enum class TransportStatus {
-    INIT,
-    READY,
-    STOP
-};
-
-struct TransportRequest {
-    bool isValid = false;
-    RankId localUserRank = 0;
-    RankId remoteUserRank = 0;
-    TransportMemType inputMemType = TransportMemType::RESERVED;
-    TransportMemType outputMemType = TransportMemType::RESERVED;
-    bool isUsedRdma = false;
-    u32 notifyNum = 0;
-};
-
-struct SingleSubCommTransport {
-    std::vector<TransportRequest> transportRequests;
-    std::vector<LINK> links;
-    std::vector<TransportStatus> status; // 代表该transport是否ready, stop后为stop, 建链后为ready
-    u64 taskNum = 0;
-    std::map<u32, u32> userRank2subCommRank;
-    std::map<u32, u32> subCommRank2UserRank;
-    bool supportDataReceivedAck = false;
-    LinkMode linkMode = LinkMode::LINK_DUPLEX_MODE;
-    bool enableUseOneDoorbell = false;
-    bool needVirtualLink =false; // for alltoall 多线程性能提升使用
-    std::vector<LINK> virtualLinks; // for alltoall 多线程性能提升使用
 };
 
 using LevelNSubCommTransport = std::vector<SingleSubCommTransport>;
@@ -148,7 +108,7 @@ struct OpParam {
     RankId dstRank = 0;
     RankId srcRank = 0;
     bool aicpuUnfoldMode = false;
-    HcclOpBaseAtraceInfo* opBaseAtraceInfo = nullptr;
+    HcclTraceInfo* opBaseAtraceInfo = nullptr;
     union {
         struct {
             u64 count;
@@ -190,8 +150,21 @@ struct OpRetryHandler {
     bool isPostSync = false;
 };
 
+struct Mc2Handler {
+    u64 version = 0;        // Mc2Handler 版本标记
+    u64 commitAddr = 0;     // mc2 条件算子的监听地址
+    u64 finishAddr = 0;     // mc2 写任务的地址
+    u64 valueAddr = 0;
+    u32 rankSize = 0;       // mc2 作用的卡数
+    u32 repeatCnt = 0;      // 一次通信消息可下发多轮通信，标记为通信的轮数
+    u8 stepSize = 0;        // 细粒度通信下的通信步长
+    u8 skipLocalRankCopy = 0;    // 跳过本卡拷贝
+    u8 skipBufferWindowCopy = 0; // 跳过user in到 cclbuffer 的拷贝
+};
+
 struct AlgOpContext {
     OpRetryHandler opRetryHandler;
+    Mc2Handler mc2Handler;
 };
 }   // namespace hccl
 #endif

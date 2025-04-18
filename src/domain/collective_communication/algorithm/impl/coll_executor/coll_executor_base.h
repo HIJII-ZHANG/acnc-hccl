@@ -30,6 +30,7 @@ public:
     HcclResult SetCCLInBuffer(u64 cclbufferSize);
     HcclResult SetIsSupportSDMAReduce(bool isSupportSDMAReduce);
     HcclResult SetAlgOpContext(AlgOpContext algOpContext);
+    HcclResult SetAivClearEnable(bool aivClearEnable);
 
     virtual HcclResult CalcResRequest(const OpParam& param, AlgResourceRequest &resourceRequest) = 0;
     virtual HcclResult Orchestrate(OpParam& param, AlgResourceResponse& algRes) = 0;
@@ -42,6 +43,7 @@ public:
     //batchsendrecv retry使用
     virtual HcclResult CreatePairWiseList(HcclSendRecvItem *sendRecvInfo, u32 itemNum);
     virtual HcclResult GetPairWiseList(std::vector<std::vector<HcclSendRecvItem*>> &sendRecvPairList);
+    HcclResult GetBlockDim(u32& blockDim);
 
 protected:
     const HcclDispatcher dispatcher_;
@@ -50,6 +52,8 @@ protected:
     std::unique_ptr<TopoMatcher> &topoMatcher_;
     bool isSupportSDMAReduce_ = false;
     AlgOpContext algOpContext_;
+    bool aivClearEnable_ = false;
+    u32 blockDim_ = 0;
 };
 }
 #endif

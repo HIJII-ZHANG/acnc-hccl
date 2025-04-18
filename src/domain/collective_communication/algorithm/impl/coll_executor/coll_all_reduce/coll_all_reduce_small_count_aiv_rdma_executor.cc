@@ -9,6 +9,7 @@
  */
 
 #include "coll_all_reduce_small_count_aiv_rdma_executor.h"
+#include "alg_profiling.h"
 
 namespace hccl {
 constexpr s32 INTRA_RS_STEP = 0;
@@ -80,6 +81,7 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::CalcLevel0CommInfo(TransportM
     std::vector<LevelNSubCommTransport>& opTransport)
 {
     CommParaInfo commParaLevel0(COMM_LEVEL0, CommType::COMM_TAG_MESH);
+    commParaLevel0.meshSinglePlane = true;
     CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel0, opTransport[COMM_LEVEL0], inputType, outputType));
     return HCCL_SUCCESS;
 }
@@ -149,12 +151,38 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::InterServerHDOneshot(const Op
             void *flagBuffers[MAX_RANK_SIZE];
             void* arOutput = static_cast<u8 *>(execMem.inputMem.ptr()) + HCCL_SMALL_COUNT_2_MB + sliceSize + dbOffset;
             CHK_RET(PrepareAivBuffers(A_X_AGGR_SIZE, interRankId % A_X_AGGR_SIZE,
-                interRankId - interRankId % A_X_AGGR_SIZE, execMem.inputMem, execMem.outputMem, interLinks, dataBuffers,
-                flagBuffers, UserMemType::INPUT_MEM, UserMemType::OUTPUT_MEM, HCCL_SMALL_COUNT_2_MB + dbOffset, 0));
-            CHK_RET(ExecuteKernelLaunch(HcclCMDType::HCCL_CMD_ALLREDUCE, nullptr, arOutput, sliceCount,
-                param.DataDes.dataType, param.reduceType, interRankId % A_X_AGGR_SIZE, A_X_AGGR_SIZE, 0, dataBuffers,
-                flagBuffers, param.tag, param.stream.ptr(), isOpbase, execMem.inputMem.size(), INTER_AR_STEP, true,
-                nullptr, topoAttr_.isDiffDeviceModule ? topoAttr_.devicePhyId : A_X_SIZE));
+                interRankId - interRankId % A_X_AGGR_SIZE, execMem.inputMem, execMem.inputMem, interLinks, dataBuffers,
+                flagBuffers, UserMemType::INPUT_MEM, UserMemType::INPUT_MEM, HCCL_SMALL_COUNT_2_MB + dbOffset, HCCL_MID_COUNT_32_MB));
+
+            AivOpArgs opArgs {
+                HcclCMDType::HCCL_CMD_ALLREDUCE, nullptr, arOutput, sliceCount,
+                param.DataDes.dataType, param.reduceType, 0, isOpbase
+            };
+            AivTopoArgs topoArgs {
+                interRankId % A_X_AGGR_SIZE, A_X_AGGR_SIZE,
+                topoAttr_.isDiffDeviceModule ? topoAttr_.devicePhyId : A_X_SIZE
+            };
+            AivResourceArgs resourceArgs {
+                param.tag, param.stream.ptr(), dataBuffers, flagBuffers, execMem.inputMem.size()
+            };
+            AivAlgArgs algArgs { INTER_AR_STEP, true };
+            struct AivProfilingInfo aivProfilingInfo;
+            
+            if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
+                HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
+                HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
+            }
+
+            CHK_RET(ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, aivProfilingInfo));
+
+            TaskAivProfiler(opArgs.cmdType, aivProfilingInfo.tag, opArgs.count * sizeof(opArgs.dataType),
+                aivProfilingInfo.blockDim, topoArgs.rankSize, resourceArgs.buffersOut[topoArgs.rank],
+                resourceArgs.stream, algArgs.step, aivProfilingInfo.beginTime);
+            blockDim_ = aivProfilingInfo.blockDim;
+            if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){ 
+                HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());
+                HCCL_PROFILER_DEL_TAG(param.tag);
+            }
         } else {
             // 其他情况走RDMA
             u32 sliceForReadOffset = HCCL_SMALL_COUNT_2_MB + (step - 1) * sliceSize + dbOffset;
@@ -217,15 +245,33 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::KernelRun(const OpParam &para
     // reduce scatter via AIV
     void* dataBuffers[MAX_RANK_SIZE];
     void* flagBuffers[MAX_RANK_SIZE];  // 标记区的具体偏移在kernel中决定
-    CHK_RET(PrepareAivBuffers(intraRankSize, intraRankId, 0, execMem.inputMem, execMem.outputMem, intraLinks,
-        dataBuffers, flagBuffers, UserMemType::INPUT_MEM, UserMemType::OUTPUT_MEM, 0, 0));
+    CHK_RET(PrepareAivBuffers(intraRankSize, intraRankId, 0, execMem.inputMem, execMem.inputMem, intraLinks,
+        dataBuffers, flagBuffers, UserMemType::INPUT_MEM, UserMemType::INPUT_MEM, 0, HCCL_MID_COUNT_32_MB));
     // RS总数据量最大1m，rs的结果存储到2m处
     void* rsOutput = static_cast<u8 *>(execMem.inputMem.ptr()) + HCCL_SMALL_COUNT_2_MB;
-    CHK_RET(ExecuteKernelLaunch(HcclCMDType::HCCL_CMD_ALLREDUCE, execMem.inputPtr, rsOutput, execMem.count,
-        param.DataDes.dataType, param.reduceType, intraRankId, intraRankSize, 0, dataBuffers, flagBuffers, param.tag,
-        param.stream.ptr(), isOpbase, execMem.inputMem.size(), INTRA_RS_STEP, true,
-        nullptr, topoAttr_.isDiffDeviceModule ? topoAttr_.devicePhyId : A_X_SIZE));
 
+    AivOpArgs opArgs {
+        HcclCMDType::HCCL_CMD_ALLREDUCE, execMem.inputPtr, rsOutput, execMem.count,
+        param.DataDes.dataType, param.reduceType, 0, isOpbase
+    };
+    AivTopoArgs topoArgs {
+        intraRankId, intraRankSize, topoAttr_.isDiffDeviceModule ? topoAttr_.devicePhyId : A_X_SIZE
+    };
+    AivResourceArgs resourceArgs { param.tag, param.stream.ptr(), dataBuffers, flagBuffers, execMem.inputMem.size() };
+    AivAlgArgs algArgs { INTRA_RS_STEP, true };
+    struct AivProfilingInfo aivProfilingInfo;
+    
+    if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
+        HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
+        HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
+    }
+
+    CHK_RET(ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, aivProfilingInfo));
+
+    TaskAivProfiler(opArgs.cmdType, aivProfilingInfo.tag, opArgs.count * sizeof(opArgs.dataType),
+        aivProfilingInfo.blockDim, topoArgs.rankSize, resourceArgs.buffersOut[topoArgs.rank], resourceArgs.stream,
+        algArgs.step, aivProfilingInfo.beginTime);
+    blockDim_ = aivProfilingInfo.blockDim;
     // use hd algo
     u32 arOutputOffset = 0;  // 跨机allreduce的结果的位置，相对于inputMem的偏移
     CHK_RET(InterServerHDOneshot(param, execMem, arOutputOffset, dataSegsSlice[commIndex].size / perDataSize,
@@ -233,13 +279,27 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::KernelRun(const OpParam &para
     void *arOutput = static_cast<u8 *>(execMem.inputMem.ptr()) + arOutputOffset;
 
     // all gather via AIV
-    CHK_RET(PrepareAivBuffers(intraRankSize, intraRankId, 0, execMem.inputMem, execMem.outputMem, intraLinks,
-        dataBuffers, flagBuffers, UserMemType::INPUT_MEM, UserMemType::OUTPUT_MEM, HCCL_SMALL_COUNT_8_MB,
-        0));
-    CHK_RET(ExecuteKernelLaunch(HcclCMDType::HCCL_CMD_ALLREDUCE, arOutput, execMem.outputPtr, execMem.count,
-        param.DataDes.dataType, param.reduceType, intraRankId, intraRankSize, 0, dataBuffers, flagBuffers, param.tag,
-        param.stream.ptr(), isOpbase, execMem.inputMem.size(), INTRA_AG_STEP, true,
-        nullptr, topoAttr_.isDiffDeviceModule ? topoAttr_.devicePhyId : A_X_SIZE));
+    CHK_RET(PrepareAivBuffers(intraRankSize, intraRankId, 0, execMem.inputMem, execMem.inputMem, intraLinks,
+        dataBuffers, flagBuffers, UserMemType::INPUT_MEM, UserMemType::INPUT_MEM, HCCL_SMALL_COUNT_8_MB,
+        HCCL_MID_COUNT_32_MB));
+
+    opArgs.input = arOutput;
+    opArgs.output = execMem.outputPtr;
+    resourceArgs.buffersIn = dataBuffers;
+    resourceArgs.buffersOut = flagBuffers;
+    algArgs.step = INTRA_AG_STEP;
+
+    CHK_RET(ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, aivProfilingInfo));
+
+    TaskAivProfiler(opArgs.cmdType, aivProfilingInfo.tag, opArgs.count * sizeof(opArgs.dataType),
+        aivProfilingInfo.blockDim, topoArgs.rankSize, resourceArgs.buffersOut[topoArgs.rank], resourceArgs.stream,
+        algArgs.step, aivProfilingInfo.beginTime);
+
+    if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){ 
+        HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());
+        HCCL_PROFILER_DEL_TAG(param.tag);
+    }
+    blockDim_ = aivProfilingInfo.blockDim;
 
     HCCL_INFO("[CollAllReduceSmallCountAivRdmaExecutor][KernelRun]allreduce aiv run success");
     return HCCL_SUCCESS;

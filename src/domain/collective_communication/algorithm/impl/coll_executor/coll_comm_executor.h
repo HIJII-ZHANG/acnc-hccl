@@ -13,6 +13,7 @@
 
 #include "coll_native_executor_base.h"
 #include "coll_alg_exec_registry.h"
+#include "profiler_base_pub.h"
 
 namespace hccl {
 class CollCommExecutor : public CollNativeExecutorBase {

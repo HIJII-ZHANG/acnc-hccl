@@ -64,6 +64,7 @@ using HcclOpMetaInfo = struct HcclOpMetaInfoDef {
             return false;
         }
         return !((opMetaInfo.opType == HcclCMDType::HCCL_CMD_ALLTOALLV ||
+            opMetaInfo.opType == HcclCMDType::HCCL_CMD_ALLTOALL ||
             opMetaInfo.opType == HcclCMDType::HCCL_CMD_ALLTOALLVC) &&
             (opMetaInfo.copyPattern == CopyPattern::BCOPY));
     }
@@ -93,7 +94,7 @@ using HcclOpMetaInfo = struct HcclOpMetaInfoDef {
     }
 
     static HcclOpMetaInfoDef GetOneForAllGather(u32 algolevel1Type = 0, bool hugeData = false, bool smallCount = false,
-        CopyPattern copyPattern = CopyPattern::BCOPY, bool dataSplit = false)
+        CopyPattern copyPattern = CopyPattern::BCOPY, bool dataSplit = false, bool isAivMode = false)
     {
         HcclOpMetaInfoDef meta;
         meta.opType = HcclCMDType::HCCL_CMD_ALLGATHER;
@@ -103,6 +104,7 @@ using HcclOpMetaInfo = struct HcclOpMetaInfoDef {
         meta.isSmallCount = smallCount; 
         meta.isEnableCache = CheckEnableCache(meta);
         meta.dataSplit = dataSplit;
+        meta.isAivMode = isAivMode;
         return meta;
     }
 
@@ -149,7 +151,7 @@ using HcclOpMetaInfo = struct HcclOpMetaInfoDef {
         u32 algolevel1Type = 0, HcclDataType dataType = HCCL_DATA_TYPE_RESERVED,
         ReduceType reduceType = ReduceType::INLINE_REDUCE, bool hugeData = false,
         bool isSmallCount = false, CopyPattern copyPattern = CopyPattern::BCOPY, bool dataSplit = false,
-        bool isDeterministic = false)
+        bool isDeterministic = false, bool isAivMode = false)
     {
         HcclOpMetaInfoDef meta;
         meta.opType = HcclCMDType::HCCL_CMD_REDUCE_SCATTER;
@@ -162,6 +164,7 @@ using HcclOpMetaInfo = struct HcclOpMetaInfoDef {
         meta.isEnableCache = CheckEnableCache(meta);
         meta.dataSplit = dataSplit;
         meta.isDeterministic = isDeterministic;
+        meta.isAivMode = isAivMode;
         return meta;
     }
 
@@ -182,6 +185,19 @@ using HcclOpMetaInfo = struct HcclOpMetaInfoDef {
         meta.isEnableCache = CheckEnableCache(meta);
         meta.dataSplit = dataSplit;
         meta.isDeterministic = isDeterministic;
+        return meta;
+    }
+
+    static HcclOpMetaInfoDef GetOneForAllToAll(CopyPattern copyPattern, u64 dataSize, bool hugeData = false,
+        bool isAivMode = false)
+    {
+        HcclOpMetaInfoDef meta;
+        meta.opType = HcclCMDType::HCCL_CMD_ALLTOALL;
+        meta.copyPattern = copyPattern;
+        meta.alltoallvcSendDataSize = dataSize;
+        meta.hugeData = hugeData;
+        meta.isAivMode = isAivMode;
+        meta.isEnableCache = CheckEnableCache(meta);
         return meta;
     }
 

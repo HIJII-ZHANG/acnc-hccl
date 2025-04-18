@@ -85,7 +85,6 @@ public:
     explicit HcclSocketManager(NICDeployment nicDeployment, s32 deviceLogicId, u32 devicePhyId, u32 userRank);
     virtual ~HcclSocketManager();
 
-    HcclResult Init();
     HcclResult AddWhiteList(const std::string &commTag,
         const HcclNetDevCtx netDevCtx,
         HcclRankLinkInfo remoteRankInfo);
@@ -167,7 +166,6 @@ private:
     s32 deviceLogicId_;
     u32 devicePhyId_;
     u32 userRank_;
-    bool isSupCloseSockImmed_;
 
     // 后继这个放在HcclSocket中管理
     std::map<std::string, std::map<std::shared_ptr<HcclSocket>, std::vector<SocketWlistInfo>>>

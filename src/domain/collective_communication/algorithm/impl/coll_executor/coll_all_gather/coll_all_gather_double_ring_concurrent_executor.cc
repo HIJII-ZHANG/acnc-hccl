@@ -79,7 +79,7 @@ HcclResult CollAllGatherDoubleRingConcurrentExecutor::CalcLevel2CommInfo(Transpo
     std::vector<LevelNSubCommTransport>& opTransport)
 {
     CommParaInfo commParaLevel2(COMM_LEVEL2, CommType::COMM_TAG_MAX);
-    if (UseLevel2RingAlgo(algType_)) {
+    if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_RING) {
         commParaLevel2.commType = CommType::COMM_TAG_RING_INNER;
     } else {
         commParaLevel2.commType = CommType::COMM_TAG_HALVING_DOUBLING;
@@ -213,7 +213,7 @@ HcclResult CollAllGatherDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
                 SubCommInfo level1RdmaCommInfo = GetSubCommInfo(COMM_LEVEL1_ANYPATH_RDMA, commIndex);
                 SubCommInfo level1TempCommInfo = level1MultSlice[planeIndex].first ? level1CommInfo : level1RdmaCommInfo;
                 std::unique_ptr<AlgTemplateBase> level1Executor;
-                if (UseInterServerNBAlgo(algType_)) {
+                if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
                     level1Executor.reset(new (std::nothrow) AllGatherNB(dispatcher_));
                     HCCL_INFO("allgather ring: using nonuniform-bruck algo inter-server.");
                 } else {

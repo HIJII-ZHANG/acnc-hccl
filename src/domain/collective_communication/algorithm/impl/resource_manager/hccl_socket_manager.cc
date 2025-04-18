@@ -18,7 +18,7 @@
 namespace hccl {
 HcclSocketManager::HcclSocketManager(NICDeployment nicDeployment, s32 deviceLogicId, u32 devicePhyId, u32 userRank)
     : nicDeployment_(nicDeployment), deviceLogicId_(deviceLogicId), devicePhyId_(devicePhyId), userRank_(userRank),
-      isSupCloseSockImmed_(true), wlistInfosMap_(), commSocketsMap_()
+      wlistInfosMap_(), commSocketsMap_()
 {
 }
 
@@ -30,21 +30,6 @@ HcclSocketManager::~HcclSocketManager()
 std::map<PortInfo, std::shared_ptr<HcclSocket>> HcclSocketManager::serverSocketMap_;
 std::map<PortInfo, Referenced> HcclSocketManager::serverSocketRefMap_;
 std::mutex HcclSocketManager::serverMapMutex_;
-
-HcclResult HcclSocketManager::Init()
-{
-    // isSupCloseSockImmed_ 标识是否支持“立即关闭Socket”, 在服务器间 RDMA 通讯时, 可能有数据在关闭时未完成发送
-    // 当前 HcclSocketManager 会管理服务器间和服务器内的Socket, 以及HCCD 等多场景, 所以 GetIsSupSockBatchCloseImmed
-    // 并不要求返回成功；以及为了兼容原场景, isSupCloseSockImmed_ 初始化默认值修改为 true
-    if (devicePhyId_ != INVALID_UINT) {
-        HcclResult ret = GetIsSupSockBatchCloseImmed(devicePhyId_, isSupCloseSockImmed_);
-        if (ret != HCCL_SUCCESS) {
-            HCCL_WARNING("[Init]call GetIsSupSockBatchCloseImmed is failed.");
-        }
-    }
-
-    return HCCL_SUCCESS;
-}
 
 HcclResult HcclSocketManager::ServerInit(const HcclNetDevCtx netDevCtx, u32 port)
 {
@@ -286,12 +271,6 @@ void HcclSocketManager::DestroySockets()
 // public API
 void HcclSocketManager::DestroySockets(const std::string &commTag)
 {
-    // 不支持立即关闭，那就直接返回，待 HcclSocketManager 析构时关闭
-    if (!isSupCloseSockImmed_) {
-        HCCL_INFO("[Destroy][Sockets]don't support immed close socket.");
-        return;
-    }
-
     std::unique_lock<std::mutex> lock(socketsMapMutex_);
     auto it = commSocketsMap_.find(commTag);
     if (it != commSocketsMap_.end()) {
@@ -310,12 +289,6 @@ void HcclSocketManager::DestroySockets(const std::string &commTag)
 // 暂无使用, 考虑删除
 void HcclSocketManager::DestroySockets(const std::string &commTag, u32 rank)
 {
-    // 不支持立即关闭，那就直接返回，待 HcclSocketManager 析构时关闭
-    if (!isSupCloseSockImmed_) {
-        HCCL_INFO("[Destroy][Sockets]don't support immed close socket.");
-        return;
-    }
-
     std::unique_lock<std::mutex> lock(socketsMapMutex_);
     auto it = commSocketsMap_.find(commTag);
     if (it != commSocketsMap_.end()) {

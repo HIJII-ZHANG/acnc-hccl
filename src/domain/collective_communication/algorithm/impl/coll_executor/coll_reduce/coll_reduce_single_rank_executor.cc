@@ -25,7 +25,7 @@ HcclResult CollReduceSingleRankExecutor::KernelRun(const OpParam &param, ExecMem
         ((param.reduceType != HCCL_REDUCE_PROD) && (param.DataDes.dataType != HCCL_DATA_TYPE_INT64)) ?
         ReduceType::INLINE_REDUCE :
         ReduceType::TBE_REDUCE;
-    auto autoSelectedAlgTypeLevel1 = static_cast<u32>(algType_) >> HCCL_LEVEL_ALGO_WIDTH;
+    auto autoSelectedAlgTypeLevel1 = static_cast<u32>(algType_.algoLevel1);
     bool isRootRank = param.root == topoAttr_.realUserRank ? true : false;
     bool hugeData = IsHugeData(totalSize); // override
     bool isDeterministic = topoMatcher_->GetExternalInputHcclDeterministic();

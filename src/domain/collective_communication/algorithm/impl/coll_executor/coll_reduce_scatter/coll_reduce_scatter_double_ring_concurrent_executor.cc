@@ -121,7 +121,7 @@ HcclResult CollReduceScatterDoubleRingConcurrentExecutor::CalcLevel2CommInfo(Tra
     std::vector<LevelNSubCommTransport>& opTransport)
 {
     CommParaInfo commParaLevel2(COMM_LEVEL2, CommType::COMM_TAG_MAX);
-    if (UseLevel2RingAlgo(algType_)) {
+    if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_RING) {
         commParaLevel2.commType = CommType::COMM_TAG_RING_INNER;
     } else {
         commParaLevel2.commType = CommType::COMM_TAG_HALVING_DOUBLING;
@@ -179,7 +179,7 @@ HcclResult CollReduceScatterDoubleRingConcurrentExecutor::KernelRun(const OpPara
         u64 reduceAttr = GetReduceAttr(execMem.inputMem, execMem.scratchMem, param.DataDes.dataType, param.reduceType);
         std::unique_ptr<AlgTemplateBase> level2TempAlg;
 
-        if (UseLevel2RingAlgo(algType_)) {
+        if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_RING) {
             level2TempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
             HCCL_INFO("reducescatter ring: using ring algo inter-superPod.");
             CHK_SMART_PTR_NULL(level2TempAlg);
@@ -207,7 +207,7 @@ HcclResult CollReduceScatterDoubleRingConcurrentExecutor::KernelRun(const OpPara
             std::unique_ptr<AlgTemplateBase> level1TempAlg;
             u32 level1Index = level1CommInfo.localRank;
 
-            if (UseInterServerRingAlgo(algType_)) {
+            if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
                 level1TempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
                 HCCL_INFO("reducescatter ring: using ring algo inter-server.");
                 CHK_SMART_PTR_NULL(level1TempAlg);
@@ -423,6 +423,7 @@ HcclResult CollReduceScatterDoubleRingConcurrentExecutor::KernelRun(const OpPara
             syncTrans1 = MAX_SPLIT_VALUE;
         }
 
+        // 基于2环数据切分SDMA+ROH; bool = true表示SDMA
         std::vector<std::pair<bool, std::vector<Slice>>> level1MultSlice;
         level1MultSlice.resize(RDMA_PLANE_NUM_IN_NPRING_DOUBLE);
         std::vector<Slice> sdmaSlice;
@@ -460,7 +461,7 @@ HcclResult CollReduceScatterDoubleRingConcurrentExecutor::KernelRun(const OpPara
             std::vector<Slice> singleSlice = level1MultSlice[planeIndex].second;
             SubCommInfo level1TempCommInfo = level1MultSlice[planeIndex].first ? level1CommInfo : level1RdmaCommInfo;
             std::unique_ptr<AlgTemplateBase> level1TempAlg;
-            if (UseInterServerNBAlgo(algType_)) {
+            if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
                 level1TempAlg.reset(new (std::nothrow) ReduceScatterNB(dispatcher_, reduceAttr));
                 HCCL_INFO("reducescatter ring: using nonuniform-bruck algo inter-server.");
             } else {

@@ -59,7 +59,7 @@ private:
     HcclResult GetRemoteFdAndRankSize(std::shared_ptr<HcclSocket> &socket,
         std::map<std::string, std::shared_ptr<HcclSocket>> &connectSockets, u32 &rankSize);
     HcclIpAddress hostIP_;
-    u32 hostPort_;
+    u32 hostPort_{HCCL_INVALID_PORT};
     SocketHandle socketHandle_;
     std::vector<HcclIpAddress> whitelist_;
     HcclNetDevCtx netDevCtx_{nullptr};

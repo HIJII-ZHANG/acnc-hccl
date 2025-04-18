@@ -23,7 +23,6 @@
 #include "hcom_common.h"
 #include "hcom_executor.h"
 #include "rank_consistentcy_checker.h"
-#include "gradient_segment_pub.h"
 #include "profiling_manager_pub.h"
 #include "topoinfo_ranktableParser_pub.h"
 #include "stream_pub.h"
@@ -57,6 +56,15 @@ using HcomInfoCtx = struct HcomInfoCtxTag {
     {
     }
 };
+
+// 梯度切分相关的全局变量
+namespace hccl {
+    std::map<std::string, std::vector<u32>> g_segmentIdxMap;
+    std::map<std::string, std::vector<float>> g_segmentSizeMap;
+    std::mutex g_segmentIdxMapLock;
+    std::mutex g_segmentSizeMapLock;
+}
+
 
 std::mutex g_hcomInfoCtxMutex;
 HcomInfoCtx g_hcomInfoCtx[MAX_MODULE_DEVICE_NUM + 1];
@@ -1353,6 +1361,7 @@ HcclResult HcomInitByFile(const char *rankTablePath, const char *identify)
     HCCL_RUN_INFO("Entry-HcomInitByFile:rankTablePath[%s], identify[%s]", realFilePath.c_str(), identify);
 
     CHK_RET(InitExternalInput());
+    CHK_RET(InitEnvConfig());
 
     // 调用初始化接口
     ret = HcomNormalInit(rankTableM.c_str(), identify);

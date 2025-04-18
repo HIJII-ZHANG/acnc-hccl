@@ -22,10 +22,12 @@ ScatterOperator::ScatterOperator(AlgConfigurator* algConfigurator, CCLBufferMana
     : CollAlgOperator(algConfigurator, cclBufferManager, dispatcher, topoMatcher, HcclCMDType::HCCL_CMD_SCATTER)
 {
     // 由于scatter只支持server间ring、nb和nhr，其他算法需要重定向到ring
-    if (!UseInterServerNHRAlgo(algType_) && !UseInterServerNBAlgo(algType_) && !UseInterServerRingAlgo(algType_)) {
+    if (!(algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) &&
+        !(algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) &&
+        !(algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING)) {
+        algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_RING;
         HCCL_INFO("[ScatterOperator][ScatterOperator] algType[%s] is not supported, reset algType=ring",
             AlgTypeToStr(algType_).c_str());
-        SetInterServerRingAlgo(algType_);
     }
 }
 
@@ -40,9 +42,8 @@ HcclResult ScatterOperator::SelectAlg(const std::string& tag, const OpParam& par
         algName = "ScatterSingleExecutor";
         return HCCL_SUCCESS;
     }
-    HcclResult ret = HCCL_SUCCESS;
     newTag = param.tag;
-    if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && UseInterServerHDAlgo(algType_)) {
+    if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_HD) {
         u32 part1Size = FACTOR_TWO * (moduleNum_ - (1 << static_cast<u32>(log2(moduleNum_))));
         u32 rootId = param.root / deviceNumPerAggregation_;
         std::string appendTag = std::to_string((rootId >= part1Size) || ((rootId % 2) == 0));
@@ -53,14 +54,12 @@ HcclResult ScatterOperator::SelectAlg(const std::string& tag, const OpParam& par
     }
 
     // 由于scatter只支持server间ring,nb和NHR，如果不是需要重定向到ring；910_93仅支持server间ring
-    if ((!UseInterServerRingAlgo(algType_) && (deviceType_ == DevType::DEV_TYPE_910_93)) ||
-        (!UseInterServerNHRAlgo(algType_) && !UseInterServerNBAlgo(algType_) && !UseInterServerRingAlgo(algType_))) {
+    if (!(algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) &&
+        !(algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) &&
+        !(algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING)) {
         HCCL_INFO("[ScatterOperator][Scatter] algType[%s] is not supported, reset algType=ring",
             AlgTypeToStr(algType_).c_str());
-        ret = SetInterServerRingAlgo(algType_);
-        CHK_PRT_RET(ret != HCCL_SUCCESS,
-            HCCL_ERROR("[ScatterOperator][Scatter]errNo[0x%016llx] tag[%s],scatter set inter server "\
-                "algo failed", HCCL_ERROR_CODE(ret), newTag.c_str()), ret);
+        algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_RING;
     }
 
     bool isMeshTopo = topoType_ == TopoType::TOPO_TYPE_NP_MESH || topoType_ == TopoType::TOPO_TYPE_4P_MESH ||

@@ -128,40 +128,41 @@ HcclResult HcomCheckAlltoAllVExternalMem(const void *sendBuf, const void *sendCo
     
     u64 *sendCountsPtr = const_cast<u64 *>(static_cast<const u64 *>(sendCounts));
     u64 *recvCountsPtr = const_cast<u64 *>(static_cast<const u64 *>(recvCounts));
-    std::string sendCountStr = "sendCounts:";
-    std::string recvCountStr = "recvCounts:";
     bool hasSend = false;
     bool hasRecv = false;
     bool invalidSendCount = false;
     bool invalidRecvCount = false;
     for (u32 i = 0; i < rankSize; i++) {
-        sendCountStr += ' ' + std::to_string(*(sendCountsPtr + i));
-        recvCountStr += ' ' + std::to_string(*(recvCountsPtr + i));
         if (*(sendCountsPtr + i) != 0) {
-            if (!invalidSendCount && *(sendCountsPtr + i) > SYS_MAX_COUNT) {
-                invalidSendCount = true;
-            }
+            invalidSendCount = invalidSendCount || (*(sendCountsPtr + i) > SYS_MAX_COUNT);
             hasSend = true;
         }
         if (*(recvCountsPtr + i) != 0) {
-            if (!invalidRecvCount && *(recvCountsPtr + i) > SYS_MAX_COUNT) {
-                invalidRecvCount = true;
-            }
+            invalidRecvCount = invalidRecvCount || (*(recvCountsPtr + i) > SYS_MAX_COUNT);
             hasRecv = true;
         }
     }
 
-    CHK_PRT_RET(invalidSendCount,
-        HCCL_ERROR("HcomCheckAlltoAllVExternalMem sendCounts[%s] is invalid.(bigger than MAX count[%llu])",
-        sendCountStr.c_str(), SYS_MAX_COUNT),
-        HCCL_E_PARA);
-    CHK_PRT_RET(invalidRecvCount,
-        HCCL_ERROR("HcomCheckAlltoAllVExternalMem recvCounts[%s] is invalid.(bigger than MAX count[%llu])",
-        recvCountStr.c_str(), SYS_MAX_COUNT),
-        HCCL_E_PARA);
+    if (invalidSendCount || invalidRecvCount || HcclCheckLogLevel(DLOG_DEBUG)) {
+        std::string sendCountStr = "sendCounts:";
+        std::string recvCountStr = "recvCounts:";
+        for (u32 i = 0; i < rankSize; i++) {
+            sendCountStr += ' ' + std::to_string(*(sendCountsPtr + i));
+            recvCountStr += ' ' + std::to_string(*(recvCountsPtr + i));
+        }
 
-    HCCL_DEBUG("[HcomCheckAlltoAllVExternalMem] sendCounts: %s", sendCountStr.c_str());
-    HCCL_DEBUG("[HcomCheckAlltoAllVExternalMem] recvCounts: %s", recvCountStr.c_str());
+        CHK_PRT_RET(invalidSendCount,
+            HCCL_ERROR("HcomCheckAlltoAllVExternalMem sendCounts[%s] is invalid.(bigger than MAX count[%llu])",
+            sendCountStr.c_str(), SYS_MAX_COUNT),
+            HCCL_E_PARA);
+        CHK_PRT_RET(invalidRecvCount,
+            HCCL_ERROR("HcomCheckAlltoAllVExternalMem recvCounts[%s] is invalid.(bigger than MAX count[%llu])",
+            recvCountStr.c_str(), SYS_MAX_COUNT),
+            HCCL_E_PARA);
+
+        HCCL_DEBUG("[HcomCheckAlltoAllVExternalMem] sendCounts: %s", sendCountStr.c_str());
+        HCCL_DEBUG("[HcomCheckAlltoAllVExternalMem] recvCounts: %s", recvCountStr.c_str());
+    }
 
     if (hasSend) {
         RPT_INPUT_ERR(sendBuf == nullptr, "EI0003",\

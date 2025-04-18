@@ -161,6 +161,23 @@ HcclResult HcclAlg::SetDeterministicConfig(const u8 deterministic)
     return HCCL_SUCCESS;
 }
 
+HcclResult HcclAlg::SetAivModeConfig(const bool aivMode)
+{
+    CHK_RET(topoMatcher_->SetAivModeConfig(aivMode));
+    return HCCL_SUCCESS;
+}
+
+bool HcclAlg::GetAicpuUnfoldConfig() const
+{
+    return topoMatcher_->GetAicpuUnfoldConfig();
+}
+
+HcclResult HcclAlg::SetAicpuUnfoldConfig(const bool aicpuUnfold)
+{
+    CHK_RET(topoMatcher_->SetAicpuUnfoldConfig(aicpuUnfold));
+    return HCCL_SUCCESS;
+}
+
 HcclResult HcclAlg::GetRankVecInfo(std::vector<std::vector<std::vector<u32>>> &serverAndsuperPodToRank)
 {
     CHK_RET(topoInfoEx_->GetRankVecInfo(serverAndsuperPodToRank));
@@ -172,13 +189,23 @@ HcclResult HcclAlg::GetIsBridgeVector(std::vector<bool> &isBridgeVector)
     topoInfoEx_->GetIsBridgeVector(isBridgeVector);
     return HCCL_SUCCESS;
 }
-
 HcclResult HcclAlg::GetCommPlaneRanks(std::vector<std::vector<std::vector<u32>>> &commPlaneRanks)
 {
     CHK_RET(topoInfoEx_->GetCommPlaneRanks(commPlaneRanks));
     return HCCL_SUCCESS;
 }
 
+HcclResult HcclAlg::GetCommPlaneSubGroupVector(std::vector<std::vector<std::vector<std::vector<u32>>>> &commPlaneSubGroupVector)
+{
+    topoMatcher_->GetCommPlaneSubGroupVector(commPlaneSubGroupVector);
+    return HCCL_SUCCESS;
+}
+
+HcclResult HcclAlg::GetAHCAlgOption(std::map<std::string, std::string> &ahcAlgOption)
+{
+    topoMatcher_->GetAHCAlgOption(ahcAlgOption);
+    return HCCL_SUCCESS;
+}
 HcclResult HcclAlg::GetIsUsedRdmaMap(std::unordered_map<u32, bool> &isUsedRdmaMap)
 {
     CHK_RET(topoInfoEx_->GetIsUsedRdmaMap(isUsedRdmaMap));
@@ -199,6 +226,8 @@ HcclResult HcclAlg::InitExternalEnable(HcclExternalEnable& externalEnable)
     externalEnable.highPerfEnable = GetExternalInputHcclHighPerfEnable();
     externalEnable.intraRoceSwitch = GetExternalInputIntraRoceSwitch();
     externalEnable.dumpDebug = GetExternalInputHcclDumpDebug();
+    externalEnable.aivMode = GetExternalInputHcclAivMode();
+    externalEnable.aicpuUnfold = GetExternalInputHcclAicpuUnfold();
     return HCCL_SUCCESS;
 }
 
@@ -226,7 +255,6 @@ HcclResult HcclAlg::InitTopoInfo(HcclTopoInfo& topoInfo, HcclTopoAttr &topoAttr)
     topoInfo.useSuperPodMode = topoAttr.useSuperPodMode;
 
     topoInfoEx_->GetCommPlaneSubGroupVector(topoInfo.CommPlaneSubGroupVector);
-    topoInfoEx_->GetIsAsymPlanVector(topoInfo.isAsymPlanVector);
 
     algConfigurator_->GetTopoType(topoInfo.topoType);
     topoInfo.is310P3Common = Is310P3Common(algoAttr_.isHaveCpuRank, topoAttr_.deviceType);

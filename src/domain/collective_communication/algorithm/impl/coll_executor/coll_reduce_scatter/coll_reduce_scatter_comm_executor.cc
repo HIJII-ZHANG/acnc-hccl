@@ -100,12 +100,14 @@ HcclResult CollReduceScatterCommExecutor::CalcCombinedCommInfo(TransportMemType 
     }
 
     CommParaInfo commParaInfo(commPlane, CommType::COMM_TAG_MAX);
-    if (UseInterServerNHRAlgo(algType_)) {
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
         commParaInfo.commType = CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING;
-    } else if (UseInterServerNHRV1Algo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
         commParaInfo.commType = CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING_V1;
-    } else if (UseInterServerNBAlgo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
         commParaInfo.commType = CommType::COMM_TAG_NONUNIFORM_BRUCK;
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_HD) {
+        commParaInfo.commType = CommType::COMM_TAG_HALVING_DOUBLING;
     } else {
         commParaInfo.commType = CommType::COMM_TAG_RING_INNER;
     }
@@ -143,27 +145,40 @@ HcclResult CollReduceScatterCommExecutor::KernelRun(const OpParam &param, ExecMe
 
     // 构造ring algorithm对应的reduce-scatter实例
     std::unique_ptr<AlgTemplateBase> tempAlg;
-    if (UseInterServerNHRAlgo(algType_)) {
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
         tempAlg.reset(new (std::nothrow) ReduceScatterNHR(dispatcher_, reduceAttr));
         HCCL_INFO("reducescatter comm: using nhr algo inter-server.");
         CHK_SMART_PTR_NULL(tempAlg);
         CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.scratchMem, execMem.count,
             param.DataDes.dataType, param.stream, param.reduceType));
         CHK_RET(RunTemplate(tempAlg, combinedCommInfo));
-    } else if (UseInterServerNHRV1Algo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
         tempAlg.reset(new (std::nothrow) ReduceScatterNHRV1(dispatcher_, reduceAttr));
         HCCL_INFO("reducescatter comm: using nhr_v1 algo inter-server.");
         CHK_SMART_PTR_NULL(tempAlg);
         CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.scratchMem, execMem.count,
             param.DataDes.dataType, param.stream, param.reduceType));
         CHK_RET(RunTemplate(tempAlg, combinedCommInfo));
-    } else if (UseInterServerNBAlgo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
         tempAlg.reset(new (std::nothrow) ReduceScatterNB(dispatcher_, reduceAttr));
         HCCL_INFO("reducescatter comm: using nonuniform-bruck algo inter-server.");
         CHK_SMART_PTR_NULL(tempAlg);
         CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.scratchMem, execMem.count,
             param.DataDes.dataType, param.stream, param.reduceType));
         CHK_RET(RunTemplate(tempAlg, combinedCommInfo));
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_HD) {
+        tempAlg.reset(new (std::nothrow) ReduceScatterRecursiveHalvingDoubling(dispatcher_, reduceAttr));
+        HCCL_INFO("reducescatter comm: using halving-doubling algo inter-server.");
+        CHK_SMART_PTR_NULL(tempAlg);
+        DeviceMem scratchMem = execMem.scratchMem.range(0, execMem.inputMem.size());
+        u64 inputDataCount = execMem.inputMem.size() / SIZE_TABLE[param.DataDes.dataType];
+        CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.inputMem, scratchMem, inputDataCount,
+            param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID, std::vector<Slice>(0)));
+        CHK_RET(RunTemplate(tempAlg, combinedCommInfo));
+        u64 dataSize = execMem.count * SIZE_TABLE[param.DataDes.dataType];
+        DeviceMem srcMem = execMem.inputMem.range(dataSize * topoAttr_.userRank, dataSize);
+        DeviceMem dstMem = execMem.outputMem.range(0, dataSize);
+        CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dstMem, srcMem, const_cast<Stream&>(param.stream)));
     } else {
         tempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
         HCCL_INFO("reducescatter comm: using ring algo inter-server.");

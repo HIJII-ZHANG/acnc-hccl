@@ -12,18 +12,17 @@
 #define ALL_REDUCE_REDUCE_BROADCAST_PUB_H
 
 #include "alg_template_base_pub.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 class AllReduceReduceBcast : public AlgTemplateBase {
 public:
-    explicit AllReduceReduceBcast(const HcclDispatcher dispatcher, const u64 reduceAttrBitMap,
-                                  std::vector<Stream> &meshStreams,
-                                  const std::vector<std::shared_ptr<LocalNotify>> &meshSignal,
-                                  const std::vector<std::shared_ptr<LocalNotify>> &meshSignalAux, u32 interRank,
-                                  u32 interRankSize, u32 userRank, const HcomCollOpInfo *opInfo);
+    explicit AllReduceReduceBcast(const HcclDispatcher dispatcher);
+
     ~AllReduceReduceBcast() override;
 
     HcclResult RunAsync(const u32 rank, const u32 rankSize, const std::vector<LINK> &links) override;
+    HcclResult Prepare(PrepareData &param) override;
 
 protected:
 private:
@@ -37,13 +36,13 @@ private:
     HcclResult RunAllReduceBDReduceReceive(u32 rank, u32 peer, const std::vector<LINK> &links);
     HcclResult RunAllReduceBDMemcpySend(u32 rank, u32 peer, const std::vector<LINK> &links);
     HcclResult RunAllReduceBDMemcpyReceive(u32 rank, u32 peer, const std::vector<LINK> &links);
-    const u64 reduceAttr_;
+    u64 reduceAttr_;
     u32 localRank_;
     u32 localRankSize_;
     u32 userRank_;
     std::vector<Stream> meshStreams_;               /* * 多steam* */
-    const std::vector<std::shared_ptr<LocalNotify>> &meshSignal_;    /* 每个ring创建一个signal */
-    const std::vector<std::shared_ptr<LocalNotify>> &meshSignalAux_; /* 从stream wait，主steam record */
+    const std::vector<std::shared_ptr<LocalNotify>>* meshSignalPtr_;    /* 每个ring创建一个signal */
+    const std::vector<std::shared_ptr<LocalNotify>>* meshSignalAuxPtr_; /* 从stream wait，主steam record */
     const HcomCollOpInfo *opInfo_;
 };
 } // namespace hccl

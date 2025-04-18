@@ -12,6 +12,7 @@
 #include "device_capacity.h"
 #include "config.h"
 #include "externalinput_pub.h"
+#include "env_config.h"
 
 using namespace std;
 
@@ -36,7 +37,6 @@ HcclResult HcclCommunicatorAttrs::Init(HcclCommParams &params, const std::vector
     CHK_RET(InitRankInfoSubGroup(rankList, groupCommonData));
     return HCCL_SUCCESS;
 }
-
 bool HcclCommunicatorAttrs::IsStandardCard()
 {
     if (Is310P3Common()) {
@@ -47,12 +47,10 @@ bool HcclCommunicatorAttrs::IsStandardCard()
            (pairLinkInfo_[static_cast<u32>(LinkTypeInServer::HCCS_SW_TYPE)].size() == 0) &&
            (pairLinkInfo_[static_cast<u32>(LinkTypeInServer::SIO_TYPE)].size() == 0));
 }
-
 bool HcclCommunicatorAttrs::Is310PDuoCard()
 {
     return (Is310P3Common() && (pairLinkInfo_[static_cast<u32>(LinkTypeInServer::HCCS_TYPE)].size() == userRankSize_));
 }
-
 bool HcclCommunicatorAttrs::IsCommon310P3DUO(const std::vector<RankInfo_t> &rankList)
 {
     std::vector<u32> devIdList;
@@ -81,17 +79,14 @@ bool HcclCommunicatorAttrs::IsCommon310P3DUO(const std::vector<RankInfo_t> &rank
         return false;
     }
 }
-
 bool HcclCommunicatorAttrs::Is310P3Common()
 {
     return !isHaveCpuRank_ && !Is310PDevice() && deviceType_ == DevType::DEV_TYPE_310P3;
 }
-
 bool HcclCommunicatorAttrs::CompareWithUserRank(const RankInfo &left, const RankInfo &right)
 {
     return left.userRank < right.userRank;
 }
-
 HcclResult HcclCommunicatorAttrs::CheckDeviceType(const DevType deviceType) const
 {
     if ((deviceType >= DevType::DEV_TYPE_COUNT) || (deviceType < DevType::DEV_TYPE_910)) {
@@ -102,7 +97,6 @@ HcclResult HcclCommunicatorAttrs::CheckDeviceType(const DevType deviceType) cons
 
     return HCCL_SUCCESS;
 }
-
 HcclResult HcclCommunicatorAttrs::GetNicInfo(const NICDeployment &nicDeploy, const u32 curRankIndex,
     const std::vector<RankInfo_t> &servRankList, RankInfo &rankInfo) const
 {
@@ -129,9 +123,14 @@ HcclResult HcclCommunicatorAttrs::GetNicInfo(const NICDeployment &nicDeploy, con
         } else {
             rankInfo.backupNicIp.push_back(curRankInfo.deviceInfo.backupDeviceIp[0]);
         }
-        HCCL_INFO("[Get][NicInfo]serverId[%s], serverIdx[%u], rankIndex[%u], nicIp[%s], backupNicIp[%s]",
+        rankInfo.deviceNicPort = curRankInfo.deviceInfo.port;
+        rankInfo.deviceVnicPort = curRankInfo.deviceInfo.vnicPort;
+        rankInfo.backupDevicePort = curRankInfo.deviceInfo.backupPort;
+        HCCL_INFO("[Get][NicInfo]serverId[%s], serverIdx[%u], rankIndex[%u], nicIp[%s], backupNicIp[%s], "
+            "deviceNicPort[%u], deviceVnicPort[%u], backupDevicePort[%u]",
             rankInfo.serverId.c_str(), rankInfo.serverIdx, curRankIndex,
-            rankInfo.nicIp[0].GetReadableIP(), rankInfo.backupNicIp[0].GetReadableIP());
+            rankInfo.nicIp[0].GetReadableIP(), rankInfo.backupNicIp[0].GetReadableIP(),
+            rankInfo.deviceNicPort, rankInfo.deviceVnicPort, rankInfo.backupDevicePort);
     }
 
     return HCCL_SUCCESS;
@@ -172,7 +171,6 @@ HcclResult HcclCommunicatorAttrs::SetServerId(const RankTable_t &rankTable)
     }
     return HCCL_SUCCESS;
 }
-
 HcclResult HcclCommunicatorAttrs::SetServerNum(const std::vector<RankInfo_t> &ranks)
 {
     std::vector<std::string> serverIds;
@@ -185,7 +183,6 @@ HcclResult HcclCommunicatorAttrs::SetServerNum(const std::vector<RankInfo_t> &ra
     serverNum_ = serverIds.size();
     return HCCL_SUCCESS;
 }
-
 HcclResult HcclCommunicatorAttrs::SetInnerServerAverageDevice(const RankTable_t &rankTable)
 {
     deviceNumPerServer_ = 0;
@@ -214,7 +211,6 @@ HcclResult HcclCommunicatorAttrs::SetInnerServerAverageDevice(const RankTable_t 
     }
     return HCCL_SUCCESS;
 }
-
 HcclResult HcclCommunicatorAttrs::GetPairDeviceLinkType(const RankTable_t &rankTable, u32 i,
     bool &isConnectedWithHCCS, LinkTypeInServer &linkType)
 {
@@ -234,6 +230,39 @@ HcclResult HcclCommunicatorAttrs::GetPairDeviceLinkType(const RankTable_t &rankT
     }
     return HCCL_SUCCESS;
 }
+
+HcclResult HcclCommunicatorAttrs::GetMixInnerLinkInfo(std::unordered_map<u32, u32> &pairLinkCounter,
+    std::unordered_map<u32, std::unordered_map<int, std::vector<int>>> &pairLinkInfo)
+{
+    pairLinkInfo.clear();
+    pairLinkCounter[static_cast<u32>(LinkTypeInServer::HCCS_TYPE)] = 0;
+    pairLinkCounter[static_cast<u32>(LinkTypeInServer::PXI_TYPE)] = 0;
+    pairLinkCounter[static_cast<u32>(LinkTypeInServer::SIO_TYPE)] = 0;
+    pairLinkCounter[static_cast<u32>(LinkTypeInServer::HCCS_SW_TYPE)] = 0;
+    for (auto &it_local : nicList_) {
+        for (auto &it_dest : nicList_) {
+            if (it_local == it_dest || static_cast<s32>(it_local) == HOST_DEVICE_ID ||
+                static_cast<s32>(it_dest) == HOST_DEVICE_ID) {
+                continue;
+            }
+            LinkTypeInServer linkType;
+            CHK_RET(hrtGetPairDeviceLinkType(it_local, it_dest, linkType));
+            pairLinkInfo[static_cast<u32>(linkType)][it_local].push_back(it_dest);
+            pairLinkCounter[static_cast<u32>(linkType)]++;
+        }
+    }
+    if (HcclCheckLogLevel(DLOG_DEBUG)) {
+        for (auto it : pairLinkInfo) {
+            HCCL_DEBUG("pair link information linkType[%u], size[%llu]", it.first, it.second.size());
+        }
+        for (auto it : pairLinkCounter) {
+            HCCL_DEBUG("pair link counter information linkType[%u], size[%llu]", it.first, it.second);
+        }
+    }
+
+    return HCCL_SUCCESS;
+}
+
 // sub group适配获取server内设配数
 HcclResult HcclCommunicatorAttrs::SetInnerServerAverageDevice(const std::vector<RankInfo> &rankList)
 {
@@ -267,7 +296,6 @@ HcclResult HcclCommunicatorAttrs::SetInnerServerAverageDevice(const std::vector<
     }
     return HCCL_SUCCESS;
 }
-
 HcclResult HcclCommunicatorAttrs::TransformRankInfoByServerId(
     const std::vector<RankInfo_t> &rankList, ServRankInfo &servRankInfo) const
 {
@@ -290,12 +318,10 @@ HcclResult HcclCommunicatorAttrs::TransformRankInfoByServerId(
     }
     return HCCL_SUCCESS;
 }
-
 bool HcclCommunicatorAttrs::CompareWithDevicePhyId(const RankInfo_t &left, const RankInfo_t &right)
 {
     return left.deviceInfo.devicePhyId < right.deviceInfo.devicePhyId;
 }
-
 HcclResult HcclCommunicatorAttrs::SetModuleInfo(const std::vector<RankInfo_t> &rankList)
 {
     isDiffDeviceType_ = IsDiffDeviceType(rankList);
@@ -349,6 +375,7 @@ HcclResult HcclCommunicatorAttrs::SetModuleInfo(const std::vector<RankInfo_t> &r
         gcdDeviceNumPerAggregation_ = CalGCD(moduleDeviceNumVec);
         multiModuleDiffDeviceNumMode_ = false;
         deviceNumPerAggregation_ = gcdDeviceNumPerAggregation_;
+        useSuperPodMode_ = false;
         HCCL_INFO("[HcclCommunicatorAttrs][SetModuleInfo]mix mode, set multiModuleDiffDeviceNumMode to false, "
             "gcdDeviceNumPerAggregation [%u] deviceNumPerAggregation [%u]",
             gcdDeviceNumPerAggregation_, deviceNumPerAggregation_);
@@ -453,9 +480,7 @@ bool HcclCommunicatorAttrs::IsDiffDeviceModule(const std::vector<RankInfo_t> &ra
     }
     return isDiffMeshAggregation;
 }
-
-HcclResult HcclCommunicatorAttrs::SetNiclistInfo()
-{
+HcclResult HcclCommunicatorAttrs::SetNiclistInfo(){
     for (auto &iter : servRankInfo_[serverId_]) {
         if (((!iter.hostIp.IsInvalid()) || (!iter.deviceInfo.deviceIp[0].IsInvalid())) &&
             (iter.deviceInfo.devicePhyId != HOST_DEVICE_ID)) {
@@ -490,7 +515,11 @@ HcclResult HcclCommunicatorAttrs::InitTopoInfo(const RankTable_t &rankTable)
     topoInfoParse_.reset(new (std::nothrow) TopoInfoParse());
     CHK_SMART_PTR_NULL(topoInfoParse_);
     CHK_RET(topoInfoParse_->Init(rankTable, serverId_, deviceNumPerServer_));
-    CHK_RET(topoInfoParse_->GetServerInnerLinkInfo(pairLinkCounter_, pairLinkInfo_));   // 获取本Server上HCCS、PXI链接的数目
+    if (isDiffDeviceType_) {
+        CHK_RET(GetMixInnerLinkInfo(pairLinkCounter_, pairLinkInfo_));   // 获取混合组网场景上HCCS、PXI链接的数目
+    } else {
+        CHK_RET(topoInfoParse_->GetServerInnerLinkInfo(pairLinkCounter_, pairLinkInfo_));   // 获取本Server上HCCS、PXI链接的数目
+    }
     // 初始化阶段判断组网状态
     CHK_RET(topoInfoParse_->IsSingleMeshAggregation(isSingleMeshAggregation_));         // 确认集群中只有一个MeshAggregation
     CHK_RET(topoInfoParse_->IsAllRankSamePlane(isAllRankSamePlane_));                   // 确认集群所有卡在一个平面上
@@ -509,7 +538,11 @@ HcclResult HcclCommunicatorAttrs::InitTopoInfo(const std::vector<RankInfo> &rank
     topoInfoParse_.reset(new (std::nothrow) TopoInfoParse());
     CHK_SMART_PTR_NULL(topoInfoParse_);
     CHK_RET(topoInfoParse_->Init(rankList, serverId_, deviceNumPerServer_));
-    CHK_RET(topoInfoParse_->GetServerInnerLinkInfo(pairLinkCounter_, pairLinkInfo_));   // 获取本Server上HCCS、PXI链接的数目
+    if (isDiffDeviceType_) {
+        CHK_RET(GetMixInnerLinkInfo(pairLinkCounter_, pairLinkInfo_));   // 获取混合组网场景上HCCS、PXI链接的数目
+    } else {
+        CHK_RET(topoInfoParse_->GetServerInnerLinkInfo(pairLinkCounter_, pairLinkInfo_));   // 获取本Server上HCCS、PXI链接的数目
+    }
     // 初始化阶段判断组网状态
     CHK_RET(topoInfoParse_->IsSingleMeshAggregation(isSingleMeshAggregation_));         // 确认集群中只有一个MeshAggregation
     CHK_RET(topoInfoParse_->IsAllRankSamePlane(isAllRankSamePlane_));                   // 确认集群所有卡在一个平面上
@@ -574,7 +607,6 @@ HcclResult HcclCommunicatorAttrs::CheckSingleServerComm(const std::vector<RankIn
     }
     return HCCL_SUCCESS;
 }
-
 HcclResult HcclCommunicatorAttrs::SetRankInfoList(const RankTable_t &rankTable)
 {
     // 检查rank table入参正确性
@@ -585,7 +617,6 @@ HcclResult HcclCommunicatorAttrs::SetRankInfoList(const RankTable_t &rankTable)
 
     // 遍历rank table获取rank信息
     rankInfoList_.clear();
-    hbRankInfoList_.clear();
     for (auto iter = servRankInfo_.begin(); iter != servRankInfo_.end(); ++iter) {
         for (u32 index = 0; index < iter->second.size(); ++index) {
             const RankInfo_t &orgRankInfo = iter->second[index];
@@ -602,6 +633,8 @@ HcclResult HcclCommunicatorAttrs::SetRankInfoList(const RankTable_t &rankTable)
                 CHK_RET(CheckDevPhyId(orgRankInfo.deviceInfo.devicePhyId));
             }
             rankInfo.devicePhyId = orgRankInfo.deviceInfo.devicePhyId;
+            rankInfo.deviceNicPort = orgRankInfo.deviceInfo.port;
+            rankInfo.deviceVnicPort = orgRankInfo.deviceInfo.vnicPort;
 
             rankInfo.serverId = orgRankInfo.serverId;
             rankInfo.serverIdx = orgRankInfo.serverIdx;
@@ -614,26 +647,12 @@ HcclResult HcclCommunicatorAttrs::SetRankInfoList(const RankTable_t &rankTable)
             CHK_RET(GetNicInfo(rankTable.nicDeploy, index, iter->second, rankInfo));
             rankInfo.nicIdx.assign(nicList_.begin(), nicList_.end());
             rankInfoList_.push_back(rankInfo);
-
-            // 心跳需要的rank信息填充
-            HbRankInfo hbRankInfo;
-            hbRankInfo.userRank = rankInfo.userRank;
-            hbRankInfo.devicePhyId = rankInfo.devicePhyId;
-            hbRankInfo.serverId = rankInfo.serverId;
-            hbRankInfo.nicIp.assign(rankInfo.nicIp.begin(), rankInfo.nicIp.end());
-            hbRankInfo.backupNicIp.assign(rankInfo.backupNicIp.begin(), rankInfo.backupNicIp.end());
-            hbRankInfo.nicDeploy = rankInfo.nicDeploy;
-            hbRankInfo.useSuperPodMode = useSuperPodMode_;
-            hbRankInfo.superDeviceId = rankInfo.superDeviceId;
-            hbRankInfo.superPodId = rankInfo.superPodId;
-            hbRankInfoList_.push_back(hbRankInfo);
         }
     }
     // 将rank id从小到大的顺序返回
     CHK_RET(SortRankInfoList());
     return HCCL_SUCCESS;
 }
-
 HcclResult HcclCommunicatorAttrs::CheckRankTable(const RankTable_t &rankTable, const ServRankInfo &servRankInfo)
 {
     // 检查网卡挂载位置
@@ -692,7 +711,6 @@ HcclResult HcclCommunicatorAttrs::CheckRankTable(const RankTable_t &rankTable, c
 
     return HCCL_SUCCESS;
 }
-
 HcclResult HcclCommunicatorAttrs::CheckDevPhyId(const s32 &devicePhyId) const
 {
     if (devicePhyId > COMM_MAX_DEVICE_ID && devicePhyId != HOST_DEVICE_ID) {
@@ -703,13 +721,10 @@ HcclResult HcclCommunicatorAttrs::CheckDevPhyId(const s32 &devicePhyId) const
 
     return HCCL_SUCCESS;
 }
-
 HcclResult HcclCommunicatorAttrs::SortRankInfoList()
 {
     // 按rank id从小到大的顺序返回
     std::sort(rankInfoList_.begin(), rankInfoList_.end(), CompareWithUserRank);
-    std::sort(hbRankInfoList_.begin(), hbRankInfoList_.end(),
-        [](const HbRankInfo &left, const HbRankInfo &right) {return left.userRank < right.userRank;});
 
     for (u32 index = 0; index < rankInfoList_.size(); ++index) {
         CHK_PRT_RET((index != rankInfoList_[index].userRank),
@@ -718,7 +733,6 @@ HcclResult HcclCommunicatorAttrs::SortRankInfoList()
     }
     return HCCL_SUCCESS;
 }
-
 HcclResult HcclCommunicatorAttrs::SethbRankInfo(const std::vector<RankInfo> &rankList, 
     WorldGroupInfo &groupCommonData)
 {
@@ -730,22 +744,9 @@ HcclResult HcclCommunicatorAttrs::SethbRankInfo(const std::vector<RankInfo> &ran
         if (rankInfo.devicePhyId == HOST_DEVICE_ID) {
             isHaveCpuRank_ = true;
         }
-        // 心跳需要的rank信息填充
-        HbRankInfo hbRankInfo;
-        hbRankInfo.userRank = rankInfo.userRank;
-        hbRankInfo.devicePhyId = rankInfo.devicePhyId;
-        hbRankInfo.serverId = rankInfo.serverId;
-        hbRankInfo.nicIp.assign(rankInfo.nicIp.begin(), rankInfo.nicIp.end());
-        hbRankInfo.backupNicIp.assign(rankInfo.backupNicIp.begin(), rankInfo.backupNicIp.end());
-        hbRankInfo.nicDeploy = rankInfo.nicDeploy;
-        hbRankInfo.useSuperPodMode = useSuperPodMode_;
-        hbRankInfo.superDeviceId = rankInfo.superDeviceId;
-        hbRankInfo.superPodId = rankInfo.superPodId;
-        hbRankInfoList_.push_back(hbRankInfo);
     }
     return HCCL_SUCCESS;
 }
-
 HcclResult HcclCommunicatorAttrs::CheckNicDeploy(NICDeployment nicDeploy, DevType deviceType) const
 {
     (void)deviceType;
@@ -759,7 +760,6 @@ HcclResult HcclCommunicatorAttrs::CheckNicDeploy(NICDeployment nicDeploy, DevTyp
 
     return HCCL_SUCCESS;
 }
-
 HcclResult HcclCommunicatorAttrs::CheckSuperDeviceId(const RankTable_t &rankTable)
 {
     // 非910_93/910_93非超节点形态 || 用户配置非超节点模式，无需校验SDID合法性
@@ -788,7 +788,6 @@ HcclResult HcclCommunicatorAttrs::CheckSuperDeviceId(const RankTable_t &rankTabl
         "superDeviceId[0x%x], userRank[%u].", superPodId_.c_str(), superDeviceId_, userRank_);
     return HCCL_SUCCESS;
 }
-
 HcclResult HcclCommunicatorAttrs::CheckDevCount(const u32 devNum)
 {
     if (devNum > HCCL_AISERVER_DEVICE_NUM) {
@@ -816,7 +815,6 @@ HcclResult HcclCommunicatorAttrs::CheckDevCount(const u32 devNum)
     }
     return HCCL_SUCCESS;
 }
-
 bool HcclCommunicatorAttrs::Check2N(u32 num) const
 {
     if (num < 1) {
@@ -825,7 +823,6 @@ bool HcclCommunicatorAttrs::Check2N(u32 num) const
         return ((num & (num - 1)) == 0);
     }
 }
-
 HcclResult HcclCommunicatorAttrs::UpdateNicList()
 {
     std::vector<u32> subCommNicList;
@@ -856,7 +853,6 @@ HcclResult HcclCommunicatorAttrs::UpdateNicList()
     }
     return  HCCL_SUCCESS;
 }
-
 HcclResult HcclCommunicatorAttrs::SetLocalRankInfo()
 {
     for (u32 i = 0; i < rankInfoList_.size(); i++) {
@@ -866,6 +862,7 @@ HcclResult HcclCommunicatorAttrs::SetLocalRankInfo()
             devicePhyId_ = rankInfoList_[i].devicePhyId;
             devIpAddr_ = rankInfoList_[i].nicIp;
             devBackupIpAddr_ = rankInfoList_[i].backupNicIp;
+            devBackupPort_ = rankInfoList_[i].backupDevicePort;
             hostIp_ = rankInfoList_[i].hostIp;
             hostPort_ = rankInfoList_[i].hostPort;
             localRank_ = rankInfoList_[i].localRank;
@@ -884,7 +881,6 @@ HcclResult HcclCommunicatorAttrs::SetLocalRankInfo()
     }
     return HCCL_SUCCESS;
 }
-
 HcclResult HcclCommunicatorAttrs::SetLocalRankInfoSubGroup(const std::vector<RankInfo> &rankList)
 {
     rankInfoList_.assign(rankList.begin(), rankList.end());
@@ -892,6 +888,7 @@ HcclResult HcclCommunicatorAttrs::SetLocalRankInfoSubGroup(const std::vector<Ran
         if (rankInfoList_[i].userRank == userRank_) {
             devIpAddr_ = rankInfoList_[i].nicIp;
             devBackupIpAddr_ = rankInfoList_[i].backupNicIp;
+            devBackupPort_ = rankInfoList_[i].backupDevicePort;
             devicePhyId_ = rankInfoList_[i].devicePhyId;
             superPodId_ = rankInfoList_[i].superPodId;
             superDeviceId_ = rankInfoList_[i].superDeviceId;
@@ -917,6 +914,33 @@ HcclResult HcclCommunicatorAttrs::CheckLocalRankInfo()
                 HCCL_E_PARA);
         }
     }
+    return HCCL_SUCCESS;
+}
+
+HcclResult HcclCommunicatorAttrs::SetRanksPort(const std::vector<RankInfo_t> &rankList)
+{
+    bool devicePortSwitchOn = GetExternalInputNpuPortSwitch();
+    if (devicePortSwitchOn) {
+        nicRanksPort_.resize(userRankSize_, HCCL_INVALID_PORT);
+        vnicRanksPort_.resize(userRankSize_, HCCL_INVALID_PORT);
+        for (auto &rankInfo : rankList) {
+            nicRanksPort_[rankInfo.rankId] = rankInfo.deviceInfo.port == HCCL_INVALID_PORT
+                ? HETEROG_CCL_PORT : rankInfo.deviceInfo.port;
+            vnicRanksPort_[rankInfo.rankId] = rankInfo.deviceInfo.vnicPort == HCCL_INVALID_PORT
+                ? HETEROG_CCL_PORT : rankInfo.deviceInfo.vnicPort;
+        }
+    } else {
+        nicRanksPort_.resize(userRankSize_, HCCL_INVALID_PORT);
+        for (auto &rankInfo : rankList) {
+            nicRanksPort_[rankInfo.rankId] = rankInfo.deviceInfo.port == HCCL_INVALID_PORT
+                || rankInfo.deviceInfo.port == 0 ? HETEROG_CCL_PORT : rankInfo.deviceInfo.port;
+        }
+    }
+    isUseRankPort_ = ((devicePortSwitchOn && nicDeployment_ == NICDeployment::NIC_DEPLOYMENT_DEVICE) || isHaveCpuRank_
+        || nicDeployment_ == NICDeployment::NIC_DEPLOYMENT_HOST) ? true : isUseRankPort_;
+    HCCL_INFO("[HcclCommunicatorAttrs][SetRanksPort] devicePortSwitchOn[%u], isHaveCpuRank[%u], isUseRankPort[%u], "
+        "nicRanksPort size[%u], vnicRanksPort size[%u].",
+        devicePortSwitchOn, isHaveCpuRank_, isUseRankPort_, nicRanksPort_.size(), vnicRanksPort_.size());
     return HCCL_SUCCESS;
 }
 
@@ -951,6 +975,9 @@ HcclResult HcclCommunicatorAttrs::InitRankInfo(const RankTable_t &rankTable)
     CHK_RET(SetRankInfoList(rankTable));
     // 解析当前Rank信息
     CHK_RET(SetLocalRankInfo());
+    // 解析rank和port的映射信息
+    CHK_RET(SetRanksPort(rankTable.rankList));
+
     interServer_ = rankTable.serverNum > 1; // serverNum为1时，不进行roce初始化
     nicDeployment_ = rankTable.nicDeploy;
     return HCCL_SUCCESS;
@@ -960,7 +987,6 @@ void HcclCommunicatorAttrs::GenCollectiveId(HcclCommParams &params, const RankTa
 {
     collectiveId_ = rankTable.collectiveId.empty() ? params.id.internal : rankTable.collectiveId;
 }
-
 u32 HcclCommunicatorAttrs::CalMeshAggRankSize(int halfDevNum) const
 {
     u32 size = INVALID_VALUE_RANKSIZE;
@@ -985,14 +1011,12 @@ u32 HcclCommunicatorAttrs::CalMeshAggRankSize(int halfDevNum) const
     }
     return size;
 }
-
 HcclResult HcclCommunicatorAttrs::SetMeshAggregationRankSize(u32 size)
 {
     HCCL_INFO("[Set][HcclCommunicatorAttrs][MeshAggregationRankSize]set MeshAggregationRankSize[%u].", size);
     meshAggregationRankSize_ = size;
     return HCCL_SUCCESS;
 }
-
 HcclResult HcclCommunicatorAttrs::CalAndSetMeshAggRankSize()
 {
     u32 size = INVALID_VALUE_RANKSIZE;
@@ -1008,6 +1032,33 @@ HcclResult HcclCommunicatorAttrs::CalAndSetMeshAggRankSize()
         size = servRankInfo_.begin()->second.size();
     }
     CHK_RET(SetMeshAggregationRankSize(size));
+    return HCCL_SUCCESS;
+}
+
+HcclResult HcclCommunicatorAttrs::SetWorldGroupInfo(
+    std::unordered_map<std::string, std::map<u32, HcclIpAddress>> &phyIdNicInfoMap,
+    std::vector<RankInfo> &worldRankInfoList, std::vector<u32> &nicRanksPort, std::vector<u32> &vnicRanksPort)
+{
+    for (auto &ipInfo : phyIdNicInfoMap) {
+        for (auto &devInfo : ipInfo.second) {
+            rankDevicePhyIdNicInfoMap_[ipInfo.first][devInfo.first] = devInfo.second;
+            HCCL_DEBUG("phyIdNicInfoMap print hostIp[%s] devId[%u] devIp[%s]",
+                ipInfo.first.c_str(), devInfo.first, devInfo.second.GetReadableAddress());
+        }
+    }
+
+    for (auto &rankInfo : worldRankInfoList) {
+        worldRankInfoList_.push_back(rankInfo);
+    }
+
+    for (auto &port : nicRanksPort) {
+        nicRanksPort_.push_back(port);
+        HCCL_DEBUG("nicRanksPort port[%u]", port);
+    }
+    for (auto &port : vnicRanksPort) {
+        vnicRanksPort_.push_back(port);
+        HCCL_DEBUG("vnicRanksPort port[%u]", port);
+    }
     return HCCL_SUCCESS;
 }
 
@@ -1058,10 +1109,46 @@ HcclResult HcclCommunicatorAttrs::InitRankInfoSubGroup(const std::vector<RankInf
     if (IsEnableRoce()) {
         isUsedRdmaLevel0_ = IsUsedRdmaLevel0AndIpInvalid();
     }
+
+    CHK_RET(SetWorldGroupInfo(groupCommonData.phyIdNicInfoMap, groupCommonData.worldRankInfoList,
+        groupCommonData.ranksPort, groupCommonData.vnicRanksPort));
+    for (auto &rankInfo : worldRankInfoList_) {
+        if (rankInfo.devicePhyId == HOST_DEVICE_ID) {
+            isUseRankPort_ = true;
+            break;
+        }
+    }
+    CHK_RET(IsHostUseDevNic(isHostUseDevNic_));
+
+    groupNicRanksPort_.resize(rankInfoList_.size(), HCCL_INVALID_PORT);
+    if (nicRanksPort_.size()) {
+        for (auto &rankInfo : rankInfoList_) {
+            groupNicRanksPort_[rankInfo.userRank] = nicRanksPort_[rankInfo.worldRank];
+            HCCL_INFO("hostIp[%s], nicIp[%s], rankInfo.userRank[%u], rankInfo.worldRank[%u], "
+                "nic port[%u], devicePhyId[%d]",
+                rankInfo.hostIp.GetReadableAddress(), rankInfo.nicIp[0].GetReadableAddress(),
+                rankInfo.userRank, rankInfo.worldRank, groupNicRanksPort_[rankInfo.userRank], rankInfo.devicePhyId);
+        }
+    }
+    bool devicePortSwitchOn = groupCommonData.devPortSwitchOn;
+    if (devicePortSwitchOn) {
+        groupVnicRanksPort_.resize(rankInfoList_.size(), HCCL_INVALID_PORT);
+        if (vnicRanksPort_.size()) {
+            for (auto &rankInfo : rankInfoList_) {
+                groupVnicRanksPort_[rankInfo.userRank] = vnicRanksPort_[rankInfo.worldRank];
+                HCCL_INFO("hostIp[%s], nicIp[%s], rankInfo.userRank[%u], rankInfo.worldRank[%u], "
+                    "vnic port[%u], devicePhyId[%d]",
+                    rankInfo.hostIp.GetReadableAddress(), rankInfo.nicIp[0].GetReadableAddress(),
+                    rankInfo.userRank, rankInfo.worldRank, groupVnicRanksPort_[rankInfo.userRank],
+                    rankInfo.devicePhyId);
+            }
+        }
+    }
+    isUseRankPort_ = ((devicePortSwitchOn && nicDeployment_ == NICDeployment::NIC_DEPLOYMENT_DEVICE) || isHaveCpuRank_
+        || nicDeployment_ == NICDeployment::NIC_DEPLOYMENT_HOST) ? true : isUseRankPort_;
     HCCL_INFO("[InitRankInfoSubGroup]:isUsedRdmaLevel0_[%d]", isUsedRdmaLevel0_);
     return HCCL_SUCCESS;
 }
-
 HcclResult HcclCommunicatorAttrs::TransformRankList(
     const std::vector<RankInfo> &rankListIn, std::vector<RankInfo_t> &rankListOut)
 {
@@ -1082,7 +1169,6 @@ HcclResult HcclCommunicatorAttrs::TransformRankList(
     }
     return HCCL_SUCCESS;
 }
-
 bool HcclCommunicatorAttrs::IsEnableRoce()
 {
     // 910B单机两种使能roce场景：1、a+x同时使用两module  2.标卡
@@ -1115,7 +1201,6 @@ bool HcclCommunicatorAttrs::IsUsedRdmaLevel0AndIpInvalid()
     // 机间卡数一致场景下，需环境变量ROCE打开(IsEnableRoce在针对多机下未对此开关进行拦截)且IP有效情况下走RDMA
     return ((GetExternalInputIntraRoceSwitch() || multiModuleDiffDeviceNumMode_ || isDiffDeviceType_) && ipInvalid);
 }
-
 bool HcclCommunicatorAttrs::IsSupportEnableRoce()
 {
     // 910B单机两种使能roce场景：1、a+x同时使用两module  2.标卡
@@ -1165,8 +1250,9 @@ void HcclCommunicatorAttrs::GetTopoAttr(HcclTopoAttr &topoAttr)
     topoAttr.pairLinkCounter = pairLinkCounter_;
     topoAttr.pairLinkInfo = pairLinkInfo_;
     topoAttr.rankInfoList = rankInfoList_;
-    topoAttr.hbRankInfoList = hbRankInfoList_;
     topoAttr.isSupportRdmaLite = isSupportRdmaLite_;
+    topoAttr.localNicPort = GetLocalNicPort(NicType::DEVICE_NIC_TYPE);
+    topoAttr.isNeedInitNic = isNeedInitNic_;
 }
 
 void HcclCommunicatorAttrs::GetAlgoAttr(HcclAlgoAttr &algoAttr)
@@ -1181,7 +1267,6 @@ void HcclCommunicatorAttrs::GetAlgoAttr(HcclAlgoAttr &algoAttr)
     algoAttr.nicDeployment = nicDeployment_;
     algoAttr.commWorkMode = commWorkMode_;
 }
-
 void HcclCommunicatorAttrs::GenUsedRdmaLevel0()
 {
     isUsedRdmaLevel0_ = IsSupportEnableRoce();
@@ -1196,52 +1281,42 @@ bool HcclCommunicatorAttrs::GetUsedRdmaLevel0()
 {
     return isUsedRdmaLevel0_;
 }
-
 bool HcclCommunicatorAttrs::GetSupportRdmaLite()
 {
     return isSupportRdmaLite_;
 }
-
 std::string HcclCommunicatorAttrs::GetServerId()
 {
     return serverId_;
 }
-
 u32 HcclCommunicatorAttrs::GetServerNum()
 {
     return serverNum_;
 }
-
 std::string HcclCommunicatorAttrs::GetSuperPodId()
 {
     return superPodId_;
 }
-
 u32 HcclCommunicatorAttrs::GetSuperDeviceId()
 {
     return superDeviceId_;
 }
-
 bool HcclCommunicatorAttrs::GetSuperPodMode()
 {
     return useSuperPodMode_;
 }
-
 u32 HcclCommunicatorAttrs::GetSuperPodNums()
 {
     return superPodNum_;
 }
-
 u32 HcclCommunicatorAttrs::GetDeviceNumPerAggregation()
 {
     return deviceNumPerAggregation_;
 }
-
 u32 HcclCommunicatorAttrs::GetDeviceNumPerServer()
 {
     return deviceNumPerServer_;
 }
-
 DevType HcclCommunicatorAttrs::GetRankInfoDevType(const RankInfo_t &rankInfo) const
 {
     if (rankInfo.deviceInfo.deviceType == DevType::DEV_TYPE_NOSOC) {
@@ -1249,165 +1324,168 @@ DevType HcclCommunicatorAttrs::GetRankInfoDevType(const RankInfo_t &rankInfo) co
     }
     return rankInfo.deviceInfo.deviceType;
 }
-
 bool HcclCommunicatorAttrs::GetDiffDeviceType()
 {
     return isDiffDeviceType_;
 }
-
 u32 HcclCommunicatorAttrs::GetGcdDeviceNumPerAggregation()
 {
     return gcdDeviceNumPerAggregation_;
 }
-
 ServRankInfo HcclCommunicatorAttrs::GetServRankInfo()
 {
     return servRankInfo_;
 }
-
 bool HcclCommunicatorAttrs::GetDiffDeviceModule()
 {
     return isDiffDeviceModule_;
 }
-
 u32 HcclCommunicatorAttrs::GetModuleNum()
 {
     return moduleNum_;
 }
-
 bool HcclCommunicatorAttrs::GetMultiModuleDiffDeviceNumMode()
 {
     return multiModuleDiffDeviceNumMode_;
 }
-
 bool HcclCommunicatorAttrs::GetMultiSuperPodDiffServerNumMode()
 {
     return multiSuperPodDiffServerNumMode_;
 }
-
 std::vector<u32> HcclCommunicatorAttrs::GetNicList()
 {
     return nicList_;
 }
-
 bool HcclCommunicatorAttrs::GetSingleMeshAggregation()
 {
     return isSingleMeshAggregation_;
 }
-
 bool HcclCommunicatorAttrs::GetAllRankSamePlane()
 {
     return isAllRankSamePlane_;
 }
-
 bool HcclCommunicatorAttrs::GetStandardCard()
 {
     return isStandardCard_;
 }
-
 bool HcclCommunicatorAttrs::Get310PDuoCard()
 {
     return is310PDuoCard_;
 }
-
 bool HcclCommunicatorAttrs::GetIsCommon310P3DUO()
 {
     return isCommon310P3DUO_;
 }
-
 s32 HcclCommunicatorAttrs::GetHccsPortNum()
 {
     return hccsPortNum_;
 }
-
 void HcclCommunicatorAttrs::GetPairLinkCounter(std::unordered_map<u32, u32> &pairLinkCounter)
 {
     pairLinkCounter = pairLinkCounter_;
 }
-
 void HcclCommunicatorAttrs::GetPairLinkInfo(
     std::unordered_map<u32, std::unordered_map<int, std::vector<int>>> &pairLinkInfo)
 {
     pairLinkInfo = pairLinkInfo_;
 }
-
 bool HcclCommunicatorAttrs::GetUsedInterHccsMode()
 {
     return isUsedInterHccsMode_;
 }
-
 std::vector<RankInfo> HcclCommunicatorAttrs::GetRankInfoList()
 {
     return rankInfoList_;
 }
-
-std::vector<HbRankInfo> HcclCommunicatorAttrs::GethbRankInfoList()
-{
-    return hbRankInfoList_;
-}
-
 std::vector<HcclIpAddress> HcclCommunicatorAttrs::GetDevIpAddr()
 {
     return devIpAddr_;
 }
-
 std::vector<HcclIpAddress> HcclCommunicatorAttrs::GetDevBackupIpAddr()
 {
     return devBackupIpAddr_;
 }
-
+u32 HcclCommunicatorAttrs::GetBackupDevPort()
+{
+    return devBackupPort_;
+}
 u32 HcclCommunicatorAttrs::GetDevicePhyId()
 {
     return devicePhyId_;
 }
-
 HcclIpAddress HcclCommunicatorAttrs::GetHostIp()
 {
     return hostIp_;
 }
-
 u32 HcclCommunicatorAttrs::GetHostPort()
 {
     return hostPort_;
 }
-
 u32 HcclCommunicatorAttrs::GetLocalRank()
 {
     return localRank_;
 }
-
 std::string HcclCommunicatorAttrs::GetCollectiveId()
 {
     return collectiveId_;
 }
-
 s32 HcclCommunicatorAttrs::GetDeviceLogicId()
 {
     return deviceLogicId_;
 }
-
 bool HcclCommunicatorAttrs::GetInterServe()
 {
     return interServer_;
 }
-
 NICDeployment HcclCommunicatorAttrs::GetNicDeployment()
 {
     return nicDeployment_;
 }
-
 bool HcclCommunicatorAttrs::GetHaveCpuRank()
 {
     return isHaveCpuRank_;
 }
-
 u32 HcclCommunicatorAttrs::GetMeshAggregationRankSize()
 {
     return meshAggregationRankSize_;
 }
-
 bool HcclCommunicatorAttrs::GetInlineReduceSwitchOn()
 {
     return inlineReduceSwitchOn_;
+}
+
+u32 HcclCommunicatorAttrs::GetHostPort(s32 devicePhyId)
+{
+    if (GetExternalInputHcclIfBasePort() == HCCL_INVALID_PORT) {
+        return (devicePhyId + HOST_PARA_BASE_PORT);
+    } else {
+        return (devicePhyId + GetExternalInputHcclIfBasePort() + HCCL_AISERVER_DEVICE_NUM);
+    }
+}
+
+u32 HcclCommunicatorAttrs::GetLocalNicPort(NicType nicType)
+{
+    if (nicDeployment_ == NICDeployment::NIC_DEPLOYMENT_HOST) {
+        return GetHostPort(devicePhyId_);
+    }
+    // isUseRankPort_在ranksPort初始化时一同配置：1. 异构场景 2. 开启device侧端口配置
+    // groupRanksPort_为空说明此时处于全局通信域，要从ranksPort_取监听端口；否则取groupRanksPort_
+    if (nicType == NicType::HOST_NIC_TYPE) {
+        return GetHostPort(devicePhyId_);
+    } if (nicType == NicType::VNIC_TYPE && GetExternalInputNpuPortSwitch()) {
+        // vnic ports仅在开启device侧端口配置时单独配置
+        std::vector<u32> &ranksPorts = groupVnicRanksPort_.empty() ? vnicRanksPort_ : groupVnicRanksPort_;
+        return GetNicPort(devicePhyId_, ranksPorts, userRank_, isUseRankPort_);
+    } else {
+        // 1. 开启device侧端口配置时的nic port时使用ranksPorts
+        // 2. 异构场景使用ranksPorts
+        // 3. 其余场景场景isUseRankPort_应当为false，使用默认port
+        std::vector<u32> &ranksPorts = groupNicRanksPort_.empty() ? nicRanksPort_ : groupNicRanksPort_;
+        return GetNicPort(devicePhyId_, ranksPorts, userRank_, isUseRankPort_);
+    }
+}
+void HcclCommunicatorAttrs::SetNeedInitNicFlag(const bool isNeedInitNic)
+{
+    isNeedInitNic_ = isNeedInitNic;
 }
 }

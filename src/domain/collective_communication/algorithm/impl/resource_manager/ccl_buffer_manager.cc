@@ -78,6 +78,21 @@ HcclResult CCLBufferManager::CreateCommExpBuffer()
     return HCCL_SUCCESS;
 }
 
+HcclResult CCLBufferManager::CleanCCLbuffer()
+{
+    if (inCCLbuffer_.ptr() != nullptr) {
+        CHK_RET(hrtMemSet(inCCLbuffer_.ptr(), inCCLbuffer_.size(), inCCLbuffer_.size()));
+        HCCL_INFO("[CleanCCLbuffer] clean input buffer, ptr[%p], size[%llu]", inCCLbuffer_.ptr(), inCCLbuffer_.size());
+    }
+
+    if (outCCLbuffer_.ptr() != nullptr) {
+        CHK_RET(hrtMemSet(outCCLbuffer_.ptr(), outCCLbuffer_.size(), outCCLbuffer_.size()));
+        HCCL_INFO("[CleanCCLbuffer] clean output buffer, ptr[%p], size[%llu]",
+            outCCLbuffer_.ptr(), outCCLbuffer_.size());
+    }
+    return HCCL_SUCCESS;
+}
+
 HcclResult CleanAIVbuffer(void *bufferPtr)
 {
     // 从bufferPtr开始将之后的1M空间置为全零
@@ -132,11 +147,10 @@ HcclResult CCLBufferManager::ReleaseCommExpBuffer()
         HCCL_RUN_INFO("[HCCL_TRACE][ReleaseCCLbuffer]CCLBuffer is null, no need to release.");
         return HCCL_SUCCESS;
     }
-    if (winExpBuffer_.ptr() != nullptr ){
-        HCCL_RUN_INFO("[HCCL_TRACE][ReleaseCCLbuffer]Release winExpBuffer. buffer ptr[%p], size[%llu]",
+    HCCL_RUN_INFO("[HCCL_TRACE][ReleaseCCLbuffer]Release winExpBuffer. buffer ptr[%p], size[%llu]",
         winExpBuffer_.ptr(), winExpBuffer_.size());
-        winExpBuffer_.free();
-    }
+    winExpBuffer_.free();
+
     return HCCL_SUCCESS;
 }
 

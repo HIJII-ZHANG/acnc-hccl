@@ -38,13 +38,15 @@ private:
     HcclResult GetServerList(const nlohmann::json &obj, RankTable_t &clusterInfo);
     HcclResult GetSingleServer(const nlohmann::json &serverListObj, u32 objIndex, RankTable_t &clusterInfo);
     HcclResult GetDeviceList(const nlohmann::json &serverListObj, u32 objIndex, RankTable_t &clusterInfo,
-        std::string &serverId, u32 &serverIdx, HcclIpAddress &hostIp);
+        std::string &serverId, u32 &serverIdx, HcclIpAddress &hostIp, u32 hostPort);
     HcclResult GetSingleDevice(const nlohmann::json &deviceListObj, u32 objIndex,
-        RankTable_t &clusterInfo, std::string &serverId, u32 &serverIdx, HcclIpAddress &hostIp);
+        RankTable_t &clusterInfo, std::string &serverId, u32 &serverIdx, HcclIpAddress &hostIp, u32 hostPort);
     HcclResult GetSingleDeviceIp(const nlohmann::json &deviceListObj, u32 objIndex,
         RankTable_t &clusterInfo, RankInfo_t &rankinfo, bool invalidHostIp = true);
     HcclResult GetSingleBackupDeviceIp(const nlohmann::json &deviceListObj, u32 objIndex, RankInfo_t &rankinfo);
-    HcclResult VerifyBackupDeviceIp(RankInfo_t &rankInfo, u32 devIndex);
+    HcclResult GetSingleDevicePort(const nlohmann::json &deviceListObj, u32 objIndex, RankInfo_t &rankinfo);
+    HcclResult GetSingleBackupDevicePort(const nlohmann::json &deviceListObj, u32 objIndex, RankInfo_t &rankinfo);
+    HcclResult VerifyBackupDeviceIpAndPort(std::vector<RankInfo_t> &rankList, u32 devIndex);
     HcclResult GetSingleSuperDeviceId(const nlohmann::json &deviceListObj, u32 objIndex,
         RankTable_t &clusterInfo, RankInfo_t &rankinfo);
     void DetectNicDepoly(RankTable_t &rankTable);
@@ -59,7 +61,7 @@ private:
         RankTable_t &clusterInfo, std::string superPodId);
     HcclResult CheckSuperPodInfo(RankTable_t &clusterInfo) const;
 
-    std::unordered_map<std::string, s32> devIp2PhyIdMap_;
+    std::unordered_map<std::string, u32> devIp2ObjIndex_;
 };
 }  // namespace hccl
 #endif  // TOPOINFO_RANKTABLEPARSER_VER1_H

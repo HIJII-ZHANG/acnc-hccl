@@ -26,49 +26,6 @@
 
 namespace hccl {
 constexpr u32 COMM_P2P_QUERRY_WAIT_TIME = 100;
-enum class CommType {
-    COMM_TAG_RING_INNER = 0,
-    COMM_TAG_RING_COMBINED,
-    COMM_TAG_HALVING_DOUBLING,
-    COMM_TAG_STAR,
-    COMM_TAG_NONUNIFORM_HIERARCHICAL_RING,
-    COMM_TAG_WHOLE_NHR,
-    COMM_TAG_NONUNIFORM_HIERARCHICAL_RING_V1,
-    COMM_TAG_WHOLE_NHR_V1,
-    COMM_TAG_ASYMMETRIC_HIERARCHICAL_CONCATENATE,
-    COMM_TAG_WHOLE_AHC,
-    COMM_TAG_ASYMMETRIC_HIERARCHICAL_CONCATENATE_BROKE,
-    COMM_TAG_WHOLE_AHC_BROKE,
-    COMM_TAG_NONUNIFORM_BRUCK,
-    COMM_TAG_WHOLE_NB,
-    COMM_TAG_MESH_COMBINED,
-    COMM_TAG_MESH,
-    COMM_TAG_P2P,
-    COMM_TAG_PARTIAL_MESH_COMBINED,
-    COMM_TAG_MAX,
-};
-
-// 通信域建链信息
-struct CommParaInfo {
-    CommPlane commPlane = COMM_LEVEL_RESERVED;
-    CommType commType = CommType::COMM_TAG_MAX;
-    u32 root = INVALID_VALUE_RANKID;
-    u32 peerUserRank = INVALID_VALUE_RANKID;
-    bool isAicpuModeEn = false;
-    bool meshSinglePlane = false;
-    std::set<u32> batchSendRecvtargetRanks;
-    bool forceRdma = false;
-
-    CommParaInfo() {}
-    CommParaInfo (CommPlane commPlane, CommType commType, u32 root = INVALID_VALUE_RANKID,
-        u32 peerUserRank = INVALID_VALUE_RANKID, bool isAicpuModeEn = false, bool meshSinglePlane = false,
-        std::set<u32> batchSendRecvtargetRanks = std::set<u32>(), bool forceRdma = false)
-        : commPlane(commPlane), commType(commType), root(root), peerUserRank(peerUserRank),
-        isAicpuModeEn(isAicpuModeEn), meshSinglePlane(meshSinglePlane),
-        batchSendRecvtargetRanks(batchSendRecvtargetRanks), forceRdma(forceRdma)
-    {
-    }
-};
 
 class ExchangerNetwork;
 class CommFactory {
@@ -134,18 +91,6 @@ private:
         bool isUsedRdma, std::vector<std::unique_ptr<CommBase> > &commVec);
 
     HcclResult CreateCommStar(const std::string &tag, const DeviceMem &inputMem, const DeviceMem &outputMem,
-        const CommParaInfo &commParaInfo, const std::vector<std::vector<RankInfo> > &commPlaneVec,
-        bool isUsedRdma, std::vector<std::unique_ptr<CommBase> > &commVec);
-
-    HcclResult CreateCommNHR(const std::string &tag, const DeviceMem &inputMem, const DeviceMem &outputMem,
-        const CommParaInfo &commParaInfo, const std::vector<std::vector<RankInfo> > &commPlaneVec,
-        bool isUsedRdma, std::vector<std::unique_ptr<CommBase> > &commVec);
-
-    HcclResult CreateCommNHRV1(const std::string &tag, const DeviceMem &inputMem, const DeviceMem &outputMem,
-        const CommParaInfo &commParaInfo, const std::vector<std::vector<RankInfo> > &commPlaneVec,
-        bool isUsedRdma, std::vector<std::unique_ptr<CommBase> > &commVec);
-
-    HcclResult CreateCommNB(const std::string &tag, const DeviceMem &inputMem, const DeviceMem &outputMem,
         const CommParaInfo &commParaInfo, const std::vector<std::vector<RankInfo> > &commPlaneVec,
         bool isUsedRdma, std::vector<std::unique_ptr<CommBase> > &commVec);
 

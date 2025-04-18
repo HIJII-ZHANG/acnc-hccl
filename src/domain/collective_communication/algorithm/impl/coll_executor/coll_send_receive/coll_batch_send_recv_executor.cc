@@ -169,7 +169,8 @@ HcclResult CollBatchSendRecvExecutor::Orchestrate(OpParam& param, AlgResourceRes
     return HCCL_SUCCESS;
 }
 
-HcclResult CollBatchSendRecvExecutor::RunLoopInHostUnfoldMode(OpParam& param) {
+HcclResult CollBatchSendRecvExecutor::RunLoopInHostUnfoldMode(OpParam& param)
+{
     if (topoMatcher_->GetExternalInputHcclEnableFfts()) {
         auto meta = HcclOpMetaInfo::GetOneForBatchSendRecv();
         CHK_RET(InitTask(dispatcher_, param.stream, meta.isEnableCache, meta.GetCacheKey()));
@@ -199,7 +200,8 @@ HcclResult CollBatchSendRecvExecutor::RunLoopInHostUnfoldMode(OpParam& param) {
     return HCCL_SUCCESS;
 }
 
-HcclResult CollBatchSendRecvExecutor::RunLoopInAicpuUnfoldMode(OpParam& param) {
+HcclResult CollBatchSendRecvExecutor::RunLoopInAicpuUnfoldMode(OpParam& param)
+{
     CHK_RET(MainPostSubWait(param.stream, algResResp_->slaveStreams[STREAM_INDEX_0]));
     u32 loopInOnceLaunch = 0;
     // 每隔200个loop launch一次
@@ -243,7 +245,8 @@ HcclResult CollBatchSendRecvExecutor::SubPostMainWait(Stream& mainStream, Stream
     return HCCL_SUCCESS;
 }
 
-HcclResult CollBatchSendRecvExecutor::CalcSendSlices(AlgResourceResponse& algRes) {
+HcclResult CollBatchSendRecvExecutor::CalcSendSlices(AlgResourceResponse& algRes)
+{
     while (!sendDeque_.empty()) {
         HcclSendRecvItem* sendRecvItem = sendDeque_.front();
         HCCL_INFO("[CollBatchSendRecvExecutor][CalcSendSlices] tag[%s], remoteRank[%u], buf[%p], count[%llu],"\
@@ -269,7 +272,8 @@ HcclResult CollBatchSendRecvExecutor::CalcSendSlices(AlgResourceResponse& algRes
     return HCCL_SUCCESS;
 }
 
-HcclResult CollBatchSendRecvExecutor::CalcRecvSlices(AlgResourceResponse& algRes) {
+HcclResult CollBatchSendRecvExecutor::CalcRecvSlices(AlgResourceResponse& algRes)
+{
     while (!recvDeque_.empty()) {
         HcclSendRecvItem* sendRecvItem = recvDeque_.front();
         HCCL_INFO("[CollBatchSendRecvExecutor][CalcSendSlices] tag[%s], remoteRank[%u], buf[%p], count[%llu],"\
@@ -295,7 +299,8 @@ HcclResult CollBatchSendRecvExecutor::CalcRecvSlices(AlgResourceResponse& algRes
     return HCCL_SUCCESS;
 }
 
-HcclResult CollBatchSendRecvExecutor::ProcessSendDataSlice(Stream& stream, bool needStreamSync, bool retryEnable) {
+HcclResult CollBatchSendRecvExecutor::ProcessSendDataSlice(Stream& stream, bool needStreamSync, bool retryEnable)
+{
     SendRecvSlice& slice = sendDataSilces_.front();
     DeviceMem inMem(slice.addr, slice.size);
     DeviceMem inCommMem = algResResp_->cclInputMem.range(0, slice.size);
@@ -314,7 +319,8 @@ HcclResult CollBatchSendRecvExecutor::ProcessSendDataSlice(Stream& stream, bool 
     return HCCL_SUCCESS;
 }
 
-HcclResult CollBatchSendRecvExecutor::ProcessRecvDataSlice(Stream& stream, bool retryEnable) {
+HcclResult CollBatchSendRecvExecutor::ProcessRecvDataSlice(Stream& stream, bool retryEnable)
+{
     SendRecvSlice& slice = recvDataSilces_.front();
     ExecMem execMem;
     execMem.outputMem = algResResp_->cclOutputMem.range(0, slice.size);

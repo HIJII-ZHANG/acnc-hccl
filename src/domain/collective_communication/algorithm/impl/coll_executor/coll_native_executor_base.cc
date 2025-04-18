@@ -112,26 +112,29 @@ HcclResult CollNativeExecutorBase::CalcLevel1CommInfo(TransportMemType inputType
         HCCL_DEBUG("[CollNativeExecutorBase][CalcLevel1CommInfo]tag[%s] subroot is %u usrRank is %u root_ is %u",
             tag_.c_str(), root, topoAttr_.userRank, root_);
     }
-        CommParaInfo commParaLevel1(COMM_LEVEL1, CommType::COMM_TAG_MAX, root);
+    CommParaInfo commParaLevel1(COMM_LEVEL1, CommType::COMM_TAG_MAX, root);
+    bool isUseAHC = false;
 
-    if (UseInterServerRingAlgo(algType_)) {
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
         commParaLevel1.commType = CommType::COMM_TAG_RING_INNER;
         HCCL_INFO("[CollNativeExecutorBase][CalcLevel1CommInfo]tag[%s] Calc RingCommInfo", tag_.c_str());
-    } else if (UseInterServerNHRAlgo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
         commParaLevel1.commType = CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING;
         HCCL_INFO("[CollNativeExecutorBase][CalcLevel1CommInfo]tag[%s] Calc NHRCommInfo", tag_.c_str());
-    } else if (UseInterServerNHRV1Algo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
         commParaLevel1.commType = CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING_V1;
         HCCL_INFO("[CollNativeExecutorBase][CalcLevel1CommInfo]tag[%s] Calc NHRV1CommInfo", tag_.c_str());
-    } else if (UseInterServerAHCAlgo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC) {
+        isUseAHC = true;
         commParaLevel1.commPlane = CommPlane::COMM_LEVEL1_AHC;
         commParaLevel1.commType = CommType::COMM_TAG_ASYMMETRIC_HIERARCHICAL_CONCATENATE;
         HCCL_INFO("[CollNativeExecutorBase][CalcLevel1CommInfo]tag[%s] Calc AHCCommInfo", tag_.c_str());
-    } else if (UseInterServerAHCBrokeAlgo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE) {
+        isUseAHC = true;
         commParaLevel1.commPlane = CommPlane::COMM_LEVEL1_AHC;
         commParaLevel1.commType = CommType::COMM_TAG_ASYMMETRIC_HIERARCHICAL_CONCATENATE_BROKE;
         HCCL_INFO("[CollNativeExecutorBase][CalcLevel1CommInfo]tag[%s] Calc AHCBrokeCommInfo", tag_.c_str());
-    } else if (UseInterServerNBAlgo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
         commParaLevel1.commType = CommType::COMM_TAG_NONUNIFORM_BRUCK;
         HCCL_INFO("[CollNativeExecutorBase][CalcLevel1CommInfo]tag[%s] Calc NBCommInfo", tag_.c_str());
     } else {
@@ -151,6 +154,15 @@ HcclResult CollNativeExecutorBase::CalcLevel1CommInfo(TransportMemType inputType
         CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel1Rdma, opTransport[COMM_LEVEL1_ANYPATH_RDMA], inputType,
         outputType));
         HCCL_INFO("[CollNativeExecutorBase][COMM_LEVEL1_ANYPATH]tag[%s] Calc CommInfo Finish", tag_.c_str());
+    }
+
+    if (isUseAHC) {
+        LevelNSubCommTransport &commTransportLevel1 = opTransport[commParaLevel1.commPlane];
+        for (u32 subCommIndex = 0; subCommIndex < commTransportLevel1.size(); subCommIndex++) {
+            for (auto &transportRequest : commTransportLevel1[subCommIndex].transportRequests) {
+                transportRequest.isUsedRdma = topoAttr_.isUsedRdmaMap.at(transportRequest.remoteUserRank);
+            }
+        }
     }
     HCCL_INFO("[CollNativeExecutorBase][CalcLevel1CommInfo]tag[%s] Calc CommInfo Finish", tag_.c_str());
 
@@ -215,6 +227,7 @@ HcclResult CollNativeExecutorBase::ActiveSlaveStreams(const Stream &stream)
 
 HcclResult CollNativeExecutorBase::AddSubStreamToProfiling()
 {
+#ifndef OPEN_HCCL_TEST
     if (((workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) &&
         hccl::ProfilingManagerPub::GetAddtionInfoState() &&
         hccl::ProfilingManagerPub::GetTaskApiState())) {
@@ -225,6 +238,7 @@ HcclResult CollNativeExecutorBase::AddSubStreamToProfiling()
         // profiling加入从环的stream
         HCCL_PROFILER_ADD_STREAM_BY_STREAMID(algResResp_->slaveStreams[streamIndex].id(), tag_, streamIndex + 1, algType_);
     }
+#endif
     return HCCL_SUCCESS;
 }
 

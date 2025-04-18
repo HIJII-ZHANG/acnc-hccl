@@ -216,11 +216,11 @@ HcclResult CollScatterExecutor::KernelRunLevel1(DeviceMem& inputMem, u64 count, 
     CHK_RET(GetRankByUserRank(commLevel, commIndex, root, rootRankLevel1));
 
     std::unique_ptr<AlgTemplateBase> level1TempAlg;
-    if (UseInterServerNBAlgo(algType_)) {
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
         // server间NB算法走NB
         level1TempAlg.reset(new (std::nothrow) ScatterNB(dispatcher_));
         HCCL_INFO("[Scatter][KernelRunLevel1]: using NB algo inter-server.");
-    } else if (UseInterServerNHRAlgo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
         level1TempAlg.reset(new (std::nothrow) ScatterNHR(dispatcher_));
         HCCL_INFO("[Scatter][KernelRunLevel1]: using NHR algo inter-server.");
     } else {

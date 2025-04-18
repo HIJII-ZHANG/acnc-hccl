@@ -21,27 +21,8 @@ CollAllGatherRingExecutor::CollAllGatherRingExecutor(const HcclDispatcher dispat
 HcclResult CollAllGatherRingExecutor::CalcStreamNum(u32& streamNum)
 {
     u32 totalStreamNum = 1U;
-    switch (algType_) {
-        case AlgType::ALG_8P_RING_PLUS_HD:
-        case AlgType::ALG_8P_RING_PLUS_RING:
-        case AlgType::ALG_8P_RING_PLUS_NHR:
-        case AlgType::ALG_8P_RING_PLUS_NHR_V1:
-        case AlgType::ALG_8P_RING_PLUS_NB:
-        case AlgType::ALG_8P_RING_PLUS_PIPELINE:
-            totalStreamNum = LEVEL0_PLANE_NUM_IN_8PRING;
-            break;
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_RING:
-        case AlgType::ALG_NP_SINGLE_RING_PLUS_HD:
-            if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
-                if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-                    totalStreamNum = LEVEL0_PLANE_NUM_IN_NPRING_SINGLE * STREAM_NUM_FOR_DMAREDUCE_ONE_RING;
-                } else {
-                    totalStreamNum = LEVEL0_PLANE_NUM_IN_NPRING_SINGLE;
-                }
-            }
-            break;
-        default:
-            break;
+    if (algType_.algoLevel0 == AlgTypeLevel0::ALG_LEVEL0_8P_RING) {
+        totalStreamNum = LEVEL0_PLANE_NUM_IN_8PRING;
     }
     streamNum = totalStreamNum - 1;
     HCCL_INFO("[CollAllGatherRingExecutor][CalcStreamNum] tag[%s] streamNum[%u]",
@@ -164,16 +145,16 @@ HcclResult CollAllGatherRingExecutor::KernelRun(const OpParam &param, ExecMem &e
     bool innRunRet = isMultiNic && (iterNic == nicList.end());
     if (!innRunRet) { // 满足以下条件, 不做server间通信: 1. 8P ring的拓扑 2. 网口不满配 3. 当前device不出网口
         std::unique_ptr<AlgTemplateBase> level1TempAlg;
-        if (UseInterServerRingAlgo(algType_)) {
+        if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
             level1TempAlg.reset(new (std::nothrow) AllGatherRing(dispatcher_));
             HCCL_INFO("allgather ring: using ring algo inter-server.");
-        } else if (UseInterServerNHRAlgo(algType_)) {
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
             level1TempAlg.reset(new (std::nothrow) AllGatherNHR(dispatcher_));
             HCCL_INFO("allgather ring: using nhr algo inter-server.");
-        } else if (UseInterServerNHRV1Algo(algType_)) {
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
             level1TempAlg.reset(new (std::nothrow) AllGatherNHRV1(dispatcher_));
             HCCL_INFO("allgather ring: using nhr_v1 algo inter-server.");
-        } else if (UseInterServerNBAlgo(algType_)) {
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
             level1TempAlg.reset(new (std::nothrow) AllGatherNB(dispatcher_));
             HCCL_INFO("allgather ring: using nonuniform-bruck algo inter-server.");
         } else {

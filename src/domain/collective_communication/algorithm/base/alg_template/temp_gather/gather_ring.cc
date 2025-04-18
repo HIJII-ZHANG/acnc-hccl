@@ -97,7 +97,7 @@ HcclResult GatherRing::RunGatherOnOtherRank()
     ret = linkRight_->RxAck(stream_);
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[Run][GatherOnOtherRank]rank[%u] rx ack failed", interRank_), ret);
     DeviceMem sendMem = outputMem_.range(sendOffset, sendSize);
-    ret = linkRight_->TxAsync(UserMemType::OUTPUT_MEM, sendOffset, sendMem.ptr(), sendSize, stream_);
+    ret = linkRight_->TxAsync(UserMemType::OUTPUT_MEM, sendOffset + baseOffset_, sendMem.ptr(), sendSize, stream_);
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[Run][GatherOnOtherRank]rank[%u] TxAsync offset[%llu] size[%llu] "\
         "failed", interRank_, sendOffset, sendSize), ret);
 

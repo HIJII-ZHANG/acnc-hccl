@@ -191,13 +191,14 @@ HcclResult CollReduceScatterExecutor::RunLoopInner(OpParam &param, const ReduceT
 
     if (!is310P3Common_) {
         /* 设置子图复用标志 */
-        auto autoSelectedAlgTypeLevel1 = static_cast<u32>(algType_) >> HCCL_LEVEL_ALGO_WIDTH;
+        auto autoSelectedAlgTypeLevel1 = static_cast<u32>(algType_.algoLevel1);
         bool hugeData = IsHugeData(curSize, &param);
         bool smallData = IsSmallData(param.DataDes.count * unitSize, curSize);
         bool dataSplit = IsDataSplitForRdmaSdmaConcurrent(curSize);
         bool isDeterministic = topoMatcher_->GetExternalInputHcclDeterministic();
         auto opMeta = HcclOpMetaInfo::GetOneForReduceScatter(autoSelectedAlgTypeLevel1,
-            param.DataDes.dataType, reduceType, hugeData, smallData, CopyPattern::BCOPY, dataSplit, isDeterministic);
+            param.DataDes.dataType, reduceType, hugeData, smallData, CopyPattern::BCOPY, dataSplit,
+            isDeterministic, false);
 
         CHK_RET(InitTask(dispatcher_, param.stream, opMeta.isEnableCache, opMeta.GetCacheKey()));
     }
@@ -282,6 +283,28 @@ std::vector<std::vector<Slice>> CollReduceScatterExecutor::ReduceScatterRingSlic
     }
 
     return multiStreamSlice;
+}
+
+HcclResult CollReduceScatterExecutor::PrepareAivBuffers(u32 rankSize, u32 rankId, u32 rankOffset,
+    DeviceMem &inputMem, DeviceMem &outputMem, std::vector<LINK> &links, void **dataBuffers, void **flagBuffers,
+    UserMemType dataMemType, UserMemType flagMemType, u32 dataMemOffset, u32 flagMemOffset)
+{
+    void *tmpCCLBufferData;
+    void *tmpCCLBufferFlag;
+    for (u32 i = 0; i < rankSize; i++) {
+        if (i != rankId) {
+            if (links[i + rankOffset] != nullptr) {
+                CHK_RET(links[i + rankOffset]->GetRemoteMem(dataMemType, &(tmpCCLBufferData)));
+                CHK_RET(links[i + rankOffset]->GetRemoteMem(flagMemType, &(tmpCCLBufferFlag)));
+                dataBuffers[i] = static_cast<u8 *>(tmpCCLBufferData) + dataMemOffset;
+                flagBuffers[i] = static_cast<u8 *>(tmpCCLBufferFlag) + flagMemOffset;
+            }
+        } else {
+            dataBuffers[i] = static_cast<u8 *>(inputMem.ptr()) + dataMemOffset;
+            flagBuffers[i] = static_cast<u8 *>(outputMem.ptr()) + flagMemOffset;
+        }
+    }
+    return HCCL_SUCCESS;
 }
 
 std::vector<std::vector<Slice>> CollReduceScatterExecutor::AnyPathReduceScatterRingSlicePrepare(u32 ringNum,

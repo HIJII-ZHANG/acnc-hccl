@@ -11,6 +11,7 @@ target_include_directories(hccl_alg PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/base/inc
     ${HCCL_BASE_DIR}/pub_inc
     ${HCCL_BASE_DIR}/pub_inc/hccl
+    ${HCCL_BASE_DIR}/algorithm/alg_research/aiv
     ${HCCL_BASE_DIR}/inc
     ${HCCL_BASE_DIR}/inc/adapter
     ${TOP_DIR}/inc
@@ -20,6 +21,7 @@ target_include_directories(hccl_alg PRIVATE
     ${TOP_DIR}/ace/npuruntime/acl/inc/external
     ${CMAKE_CURRENT_SOURCE_DIR}/base/alg_template
     ${CMAKE_CURRENT_SOURCE_DIR}/base/alg_template/component/inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/base/mc2_handler
     ${CMAKE_CURRENT_SOURCE_DIR}/base/communicator
     ${CMAKE_CURRENT_SOURCE_DIR}/base/communicator/legacy
     ${CMAKE_CURRENT_SOURCE_DIR}/impl
@@ -49,10 +51,14 @@ target_include_directories(hccl_alg PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/impl/coll_executor/coll_broadcast/310P
     ${CMAKE_CURRENT_SOURCE_DIR}/pub_inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../common/health
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/debug/profiling/inc
     ${HCCL_BASE_DIR}/../../../../inc/external
     ${HCCL_BASE_DIR}/../../../../inc/external/hccl
     ${HCCL_BASE_DIR}/../../../../inc/hccl
     ${HCCL_BASE_DIR}/../../../../inc
+    ${TOP_DIR}/ace/comop/inc/external/hccl
+    ${TOP_DIR}/ace/comop/inc/hccl
+    ${TOP_DIR}/ace/comop/hccl/whole/hccl/algorithm/alg_research/pub_inc
 )
 
 if(BUILD_OPEN_PROJECT)
@@ -69,7 +75,10 @@ if(BUILD_OPEN_PROJECT)
         ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/hccl
         ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/metadef/common/util/error_manager/
         ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/msprof/
+        ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/msprof/toolchain
         ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/runtime/
+        ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/slog/
+        ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/runtime/external
         ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/slog/toolchain
     )
 
@@ -84,6 +93,7 @@ else()
         ${TOP_DIR}/metadef/inc/common/util/error_manager/
         ${TOP_DIR}/metadef/inc/external/
         ${TOP_DIR}/abl/slog/inc/toolchain
+        ${TOP_DIR}/abl/atrace/inc/utrace
     )
 endif()
 
@@ -108,24 +118,26 @@ target_link_options(hccl_alg PRIVATE
 )
 
 if(BUILD_OPEN_PROJECT)
-target_link_libraries(hccl_alg PRIVATE
-    -Wl,--no-as-needed
-    c_sec
-    ascendalog
-    -Wl,--no-as-needed
-    hccl_alg_research
-    hccl_plf
-)
+    target_link_libraries(hccl_alg PRIVATE
+        -Wl,--no-as-needed
+        c_sec
+        ascendalog
+        -Wl,--no-as-needed
+        hccl_alg_research
+        hccl_plf
+    )
 else()
-target_link_libraries(hccl_alg PRIVATE
-    $<BUILD_INTERFACE:slog_headers>
-    -Wl,--no-as-needed
-    c_sec
-    slog
-    -Wl,--no-as-needed
-    hccl_alg_research
-    hccl_plf
-)
+    target_link_libraries(hccl_alg PRIVATE
+        $<BUILD_INTERFACE:slog_headers>
+        $<BUILD_INTERFACE:msprof_headers>
+        $<BUILD_INTERFACE:runtime_headers> #runtime/rt_error_codes.h
+        -Wl,--no-as-needed
+        c_sec
+        slog
+        -Wl,--no-as-needed
+        hccl_alg_research
+        hccl_plf
+    )
 endif()
 
 add_subdirectory(base)

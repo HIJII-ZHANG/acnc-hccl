@@ -95,6 +95,7 @@ HcclResult TopoinfoRanktablePartition::GenerateSubParams(const hccl::RankTable_t
     subParams.logicDevId = globalParams_.logicDevId;
     subParams.serverId = subRankTable.rankList[subCommRankId].serverId;
     subParams.deviceType = globalParams_.deviceType;
+    subParams.commPortConfig.devPortSwitchOn = globalParams_.commPortConfig.devPortSwitchOn;
     return HCCL_SUCCESS;
 }
 
@@ -111,7 +112,11 @@ HcclResult TopoinfoRanktablePartition::TransformRankInfo(const RankTable_t &clus
     nlohmann::json &perRankJson, u32 rankIndex)
 {
     auto rankInfo = clusterInfo.rankList[rankIndex];
+    perRankJson[PROP_HOST_IP] = std::string(rankInfo.hostIp.GetReadableIP());
     perRankJson[PROP_DEV_ID] = std::to_string(rankInfo.deviceInfo.devicePhyId);
+    perRankJson[PROP_DEV_NIC_PORT] = std::to_string(rankInfo.deviceInfo.port);
+    perRankJson[PROP_DEV_VNIC_PORT] = std::to_string(rankInfo.deviceInfo.vnicPort);
+    perRankJson[PROP_BACKUP_DEV_PORT] = std::to_string(rankInfo.deviceInfo.backupPort);
     perRankJson[PROP_RANK_ID] = std::to_string(rankInfo.rankId);
     perRankJson[PROP_SERVER_ID] = rankInfo.serverId;
     perRankJson[PROP_SUPER_POD_ID] = rankInfo.superPodId;

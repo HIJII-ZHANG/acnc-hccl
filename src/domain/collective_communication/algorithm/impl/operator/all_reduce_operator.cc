@@ -142,12 +142,19 @@ HcclResult AllReduceOperator::SelectAlg(const std::string& tag, const OpParam& p
         if (Is310P3Common(isHaveCpuRank_, deviceType_)) {
             newTag = tag + algName;
         } else {
-            AlgTypeLevel1 algType1 = GetLevel1AlgType(algType_);
+            AlgTypeLevel1 algType1 = algType_.algoLevel1;
             auto level1Iter = HCCL_ALGO_LEVEL1_NAME_MAP.find(algType1);
             CHK_PRT_RET(level1Iter == HCCL_ALGO_LEVEL1_NAME_MAP.end(), HCCL_ERROR("level1: algType1[%u] is invalid.",
                 algType1), HCCL_E_INTERNAL);
             newTag = tag + level1Iter->second + algName;
         }
+
+        bool isInlineReduce = IsSupportSDMAReduce(cclBufferManager_.GetInCCLbuffer().ptr(),
+            cclBufferManager_.GetOutCCLbuffer().ptr(), param.DataDes.dataType, param.reduceType);
+        bool isRdmaReduce = IsSupportRDMAReduce(param.DataDes.dataType, param.reduceType);
+        const std::string ALL_REDUCE_NO_INLINE = "_no_inline";
+        newTag = (!isDiffDeviceType_ || (isDiffDeviceType_ && isInlineReduce && isRdmaReduce)) ?
+            newTag : newTag + ALL_REDUCE_NO_INLINE;
     } else {
         newTag = tag;
     }
@@ -158,22 +165,18 @@ HcclResult AllReduceOperator::SelectAlg(const std::string& tag, const OpParam& p
 
 HcclResult AllReduceOperator::SelectAlgforMix(const OpParam& param, std::string& algName)
 {
-    HcclResult ret;
 
     if (gcdDeviceNumPerAggregation_ > 1) {
-        ret = SetInterServerNHRAlgo(algType_);
+        algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_NHR;
         HCCL_WARNING("[AllReduceOperator][SelectAlgforMix] only support NHR in AlgoLevel1 yet, "\
             "default is algType=NHR.");
         algName = "AllReduceMixExecutor";
     } else {
-        ret = SetInterServerRingAlgo(algType_);
+        algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_RING;;
         HCCL_WARNING("[AllReduceOperator][SelectAlgforMix] only support ring in AlgoComm yet, "\
             "default is algType=ring.");
         algName = "AllReduceComm";
     }
-    CHK_PRT_RET(ret != HCCL_SUCCESS,
-        HCCL_ERROR("[AllReduceOperator][SelectAlgforMix]errNo[0x%016llx] tag[%s], AllReduce set inter server "\
-            "failed", HCCL_ERROR_CODE(ret), param.tag.c_str()), ret);
 
     HCCL_INFO("[SelectAlgforMix] all_reduce SelectAlgforMix is algName [%s]", algName.c_str());
     return HCCL_SUCCESS;
@@ -190,7 +193,8 @@ HcclResult AllReduceOperator::SelectAlgfor310P3DUO(const OpParam& param, std::st
 
     if (isInlineReduce) {
         if ((dataSize <= HCCL_SMALL_COUNT_128_KB && isPowOfTwo) || userRankSize_ == RANK_SIZE_TWO) {
-            algType_ = AlgType::ALG_NP_HD;
+            algType_.algoLevel0 = AlgTypeLevel0::ALG_LEVEL0_NP_HD;
+            algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_HD;
             if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
                 algName = "AllReduceDoublingDirect";
             } else {
@@ -199,7 +203,8 @@ HcclResult AllReduceOperator::SelectAlgfor310P3DUO(const OpParam& param, std::st
         }
     }
     if (algName.empty()) {
-        algType_ = AlgType::ALG_DEFAULT;
+        algType_.algoLevel0 = AlgTypeLevel0::ALG_LEVEL0_WHOLE_RING;
+        algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_WHOLE_RING;
         algName = "AllReduceRing";
     }
     HCCL_INFO("[SelectAlgfor310P3DUO] all_reduce SelectAlgfor310P3DUO is algName [%s].", algName.c_str());
@@ -215,12 +220,14 @@ HcclResult AllReduceOperator::SelectAlgfor310P3(const OpParam& param, std::strin
         IsSupportSDMAReduce(param.inputPtr, param.outputPtr, param.DataDes.dataType, param.reduceType);
     if (isInlineReduce) {
         if (dataSize <= HCCL_SMALL_COUNT_256_KB && isPowOfTwo) {
-            algType_ = AlgType::ALG_NP_HD;
+            algType_.algoLevel0 = AlgTypeLevel0::ALG_LEVEL0_NP_HD;
+            algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_HD;
             algName = "AllReduceDoubling";
         }
     }
     if (algName.empty()) {
-        algType_ = AlgType::ALG_DEFAULT;
+        algType_.algoLevel0 = AlgTypeLevel0::ALG_LEVEL0_WHOLE_RING;
+        algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_WHOLE_RING;
         algName = "AllReduceRing";
     }
     HCCL_INFO("[SelectAlgfor310P3] all_reduce SelectAlgfor310P3 is algName [%s].", algName.c_str());
@@ -257,7 +264,7 @@ HcclResult AllReduceOperator::SelectAlgfor910B(const OpParam& param, std::string
 
     bool isInlineReduce =
         IsSupportSDMAReduce(param.inputPtr, param.outputPtr, param.DataDes.dataType, param.reduceType);
-    bool isRdmaReduce = IsOverFlowInfNanMode() && IsSupportRDMAReduce(param.DataDes.dataType, param.reduceType);
+    bool isRdmaReduce = IsSupportRDMAReduce(param.DataDes.dataType, param.reduceType);
 
     bool isMeshTopo = topoType_ == TopoType::TOPO_TYPE_NP_MESH || topoType_ == TopoType::TOPO_TYPE_4P_MESH ||
         topoType_ == TopoType::TOPO_TYPE_2P_MESH || topoType_ == TopoType::TOPO_TYPE_1P_MESH;
@@ -275,8 +282,7 @@ HcclResult AllReduceOperator::SelectAlgfor910B(const OpParam& param, std::string
 
     // aiv场景单独判断逻辑，满足AIV模式打开+支持AIVReduce+非确定性场景+外层为mesh+（单机/跨机小数据/跨机中数据）时进入分支
     bool isOpbase = (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
-    auto algTypeLevel0 = GetLevel0AlgType(algType_);
-    bool isMesh = IsAlgTypeLevel0Mesh(algTypeLevel0);
+    bool isMesh = IsAlgTypeLevel0Mesh(algType_.algoLevel0);
     u64 rankCountSize = dataSize / deviceNumPerAggregation_;
     bool isServNumPowOfTwo = (serverNum_ > 0) && ((serverNum_ & (serverNum_ - 1)) == 0);
     bool isSupportAivRdmaSmallCount = !isSingleMeshAggregation_ && !multiModuleDiffDeviceNumMode_ &&
@@ -285,7 +291,7 @@ HcclResult AllReduceOperator::SelectAlgfor910B(const OpParam& param, std::string
         (dataSize <= HCCL_MID_COUNT_16_MB);
     bool isCCLBufferGE16M = !isOpbase ||
         (commInputSize >= HCCL_MID_COUNT_16_MB && commOutputSize >= HCCL_MID_COUNT_16_MB);
-    bool isAivMode = GetExternalInputHcclAivMode() && IsSupportAIVReduce(param.DataDes.dataType, param.reduceType) &&
+    bool isAivMode = topoMatcher_->GetAivModeConfig() && IsSupportAIVReduce(param.DataDes.dataType, param.reduceType) &&
         topoMatcher_->GetDeterministicConfig() == DETERMINISTIC_CONFIG_DISABLE && isMesh && isCCLBufferGE16M &&
         (isSingleMeshAggregation_ || isSupportAivRdmaSmallCount || isSupportAivRdmaMidCount);
 
@@ -300,16 +306,16 @@ HcclResult AllReduceOperator::SelectAlgfor910B(const OpParam& param, std::string
     }
 
     // AHC 算法选择逻辑
-    if (((GetLevel1AlgType(algType_) == AlgTypeLevel1::ALG_LEVEL1_AHC) ||
-         (GetLevel1AlgType(algType_) == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE))) {
+    if (((algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC) ||
+         (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE))) {
         CHK_RET(SelectAlgforAHC());
     }
-    
+
     // pipeline算法task数量多，如果超出FFTS子图限制，则重定向到HD算法
-    if (GetLevel1AlgType(algType_) == AlgTypeLevel1::ALG_LEVEL1_PIPELINE) {
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_PIPELINE) {
         u32 contextNum = CalcContextNumForPipeline(HcclCMDType::HCCL_CMD_ALLREDUCE);
         if (contextNum > HCCL_FFTS_CAPACITY) {
-            CHK_RET(SetInterServerHDAlgo(algType_));
+            algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_HD;
             HCCL_WARNING("[AllReduceOperator][SelectAlgfor910B] context num[%u] is out of capacityof FFTS+ graph[%u],"
                 "reset algorithm to HD.", contextNum, HCCL_FFTS_CAPACITY);
         }
@@ -348,7 +354,7 @@ HcclResult AllReduceOperator::SelectAlgfor910B(const OpParam& param, std::string
             }
         // 多机单卡/两卡 pipeline需单独做判断(pipeline无确定性算法，并只支持单算子模式）
         } else if (topoMatcher_->GetDeterministicConfig() == DETERMINISTIC_CONFIG_DISABLE &&
-            GetLevel1AlgType(algType_) == AlgTypeLevel1::ALG_LEVEL1_PIPELINE &&
+            algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_PIPELINE &&
             GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE &&
             IsMultiMeshInlineReduce(param.inputPtr, param.outputPtr, param.DataDes.dataType, param.reduceType)) {
             algName = "AllReduceMeshOpbasePipelineExecutor";
@@ -413,7 +419,7 @@ HcclResult AllReduceOperator::NonDeterministicSelector(const OpParam& param, std
 {
     if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
         if (IsMultiMeshInlineReduce(param.inputPtr, param.outputPtr, param.DataDes.dataType, param.reduceType) &&
-        GetLevel1AlgType(algType_) == AlgTypeLevel1::ALG_LEVEL1_PIPELINE) {
+        algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_PIPELINE) {
             algName = "AllReduceMeshOpbasePipelineExecutor";
         } else if (SingleMeshInlineReduce(param.inputPtr, param.outputPtr, param.DataDes.dataType, param.reduceType)) {
             if (dataSize <= HCCL_SMALL_COUNT_256_KB) {
@@ -446,9 +452,15 @@ HcclResult AllReduceOperator::SelectAlgfor91093(const OpParam& param, std::strin
 {
     u32 unitSize = SIZE_TABLE[param.DataDes.dataType];
     u64 dataSize = param.DataDes.count * unitSize; // 单位：字节
+    if (dataSize >= cclBufferManager_.GetInCCLbufferSize()) {
+        HCCL_WARNING("The current inCCLbufferSize is [%llu] bytes, change the HCCL_BUFFSIZE environment variable"\
+            "to be greater than the current data volume[%llu] bytes to improve the performance of the 91093 environment.",
+            cclBufferManager_.GetInCCLbufferSize(), dataSize);
+    }
+
     u64 dataSizePerRank = dataSize / deviceNumPerAggregation_;
     bool isOpbase = workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE;
-    bool isAivMode = GetExternalInputHcclAivMode() && IsSupportAIVReduce(param.DataDes.dataType, param.reduceType) &&
+    bool isAivMode = topoMatcher_->GetAivModeConfig() && IsSupportAIVReduce(param.DataDes.dataType, param.reduceType) &&
         serverNum_ == 1 && dataSizePerRank <= AIV_ALL_REDUCE_A3_ENTRY_SIZE;
     if (isAivMode) {
         HCCL_INFO("[SelectAlgfor91093] dataSize[%llu], dataSizePerRank[%llu], deviceNumPerAggregation[%u]",
@@ -464,8 +476,8 @@ HcclResult AllReduceOperator::SelectAlgfor91093(const OpParam& param, std::strin
     }
 
     // AHC 算法选择逻辑
-    if ((GetLevel1AlgType(algType_) == AlgTypeLevel1::ALG_LEVEL1_AHC) ||
-        (GetLevel1AlgType(algType_) == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE)) {
+    if ((algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC) ||
+        (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE)) {
         CHK_RET(SelectAlgforAHC());
     }
     void *commInputPtr = nullptr;
@@ -489,36 +501,27 @@ HcclResult AllReduceOperator::SelectAlgfor91093(const OpParam& param, std::strin
     if (multiModuleDiffDeviceNumMode_ || multiSuperPodDiffServerNumMode_ || smallCountOptimMultiServer) {
         algName = "AllReduceComm";
         if (smallCountOptimMultiServer) {
-            CHK_RET(SetInterServerNHRAlgo(algType_));
+            algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_NHR;
         }
     } else if (smallCountOptimSingleServer) {
         algName = "AllReduceMeshSmallCountExecutor";
     } else if (GetExternalInputEnableRdmaSdmaConcurrent() && topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING &&
         !param.aicpuUnfoldMode && (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE)) {
-        if (!(UseInterServerRingAlgo(algType_) || UseInterServerNBAlgo(algType_))) {
-            HcclResult ret = SetInterServerRingAlgo(algType_);
+        if (!(algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING || algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB)) {
+            algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_RING;
             HCCL_WARNING("[AllReduceOperator][SelectAlgfor91093] concurrent only support ring or NB in AlgoLevel1 "\
                 "yet, default is ring.");
-            CHK_PRT_RET(ret != HCCL_SUCCESS,
-                HCCL_ERROR("[AllReduceOperator][SelectAlgfor91093]errNo[0x%016llx] tag[%s], AllReduce concurrent "\
-                "set inter server ring algo failed", HCCL_ERROR_CODE(ret), param.tag.c_str()), ret);
         }
         algName = "AllReduceDoubleRingConcurrentExecutor";
     } else {
         if (GetExternalInputEnableRdmaSdmaConcurrent()) {
-            if (!(UseInterServerRingAlgo(algType_) || UseInterServerNBAlgo(algType_))) {
-                HcclResult ret = SetInterServerRingAlgo(algType_);
-                CHK_PRT_RET(ret != HCCL_SUCCESS,
-                    HCCL_ERROR("[AllReduceOperator][SelectAlgfor91093]errNo[0x%016llx] tag[%s], AllReduce "\
-                    "concurrent set inter server ring algo failed", HCCL_ERROR_CODE(ret), param.tag.c_str()), ret);
+            if (!(algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING || algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB)) {
+                algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_RING;
             }
-        } else if (UseInterServerHDAlgo(algType_)) {
-            HcclResult ret = SetInterServerNHRAlgo(algType_);
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_HD) {
+            algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_NHR;
             HCCL_WARNING("[AllReduceOperator][SelectAlgfor91093] only support ring, NB and NHR in AlgoLevel1 yet, "\
                 "default is algType=NHR.");
-            CHK_PRT_RET(ret != HCCL_SUCCESS,
-                HCCL_ERROR("[AllReduceOperator][SelectAlgfor91093]errNo[0x%016llx] tag[%s], AllReduce set inter server "\
-                    "nhr algo failed", HCCL_ERROR_CODE(ret), param.tag.c_str()), ret);
         }
         if (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) {
             s32 HCCS_PORT_NUM_910_93_7 = 7;
@@ -539,9 +542,10 @@ HcclResult AllReduceOperator::SelectAlgfor91093(const OpParam& param, std::strin
 
 HcclResult AllReduceOperator::SelectAlgforAHC()
 {
-    bool isAHCWholeConfig = ((algType_ == AlgType::ALG_WHOLE_AHC) ||
-                             (algType_ == AlgType::ALG_WHOLE_AHC_BROKE));
-    
+    bool isAHCWholeConfig = (algType_.algoLevel0 == AlgTypeLevel0::ALG_LEVEL0_RESERVED &&
+        (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC ||
+        algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE));
+
     CommPlane ahcSubGroupLevel = COMM_LEVEL1_AHC;
     if (isAHCWholeConfig) {
         if (deviceType_ != DevType::DEV_TYPE_910_93) {
@@ -552,7 +556,7 @@ HcclResult AllReduceOperator::SelectAlgforAHC()
     }
 
     HCCL_INFO("[SelectAlgforAHC] isAHCWholeConfig[%u] AHClevel[%u] algType_[%u]",
-            isAHCWholeConfig, ahcSubGroupLevel, algType_);
+            isAHCWholeConfig, ahcSubGroupLevel, algType_.algoLevel1);
 
     if (deviceType_ == DevType::DEV_TYPE_910_93) {
         HCCL_INFO("[SelectAlgforAHC] select AHC proc");
@@ -563,7 +567,7 @@ HcclResult AllReduceOperator::SelectAlgforAHC()
             CHK_RET(AHCAlgSelect(ahcSubGroupLevel));
             return HCCL_SUCCESS;
         } else {
-            HCCL_ERROR("[SelectAlgforAHC] algType_[%u], is invalid.", algType_);
+            HCCL_ERROR("[SelectAlgforAHC] algType_[%u], is invalid.", algType_.algoLevel1);
             return HCCL_E_PARA;
         }
     }
@@ -578,16 +582,16 @@ HcclResult AllReduceOperator::AHCAlgSelect(CommPlane ahcSubGroupLevel)
     CHK_RET(PrepareAHCSubGroups(algTypeLevel1, ahcSubGroupLevel));
 
     // 支持 AHC 自适应调节为 BROKE 类型，BROKE 类型静态配置后生效，不做自适应调节
-    if (GetLevel1AlgType(algType_) != algTypeLevel1 && GetLevel1AlgType(algType_) == AlgTypeLevel1::ALG_LEVEL1_AHC) {
-        auto originalAlgTypeLevel0 = GetLevel0AlgType(algType_);
+    if (algType_.algoLevel1 != algTypeLevel1 && algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC) {
+        auto originalAlgTypeLevel0 = algType_.algoLevel0;
         auto iter = HCCL_ALGO_LEVEL1_NAME_MAP.find(algTypeLevel1);
         CHK_PRT_RET(iter == HCCL_ALGO_LEVEL1_NAME_MAP.end(),
-                    HCCL_ERROR("[AHCAlgSelect] level1: algType[%u] is invalid.", algTypeLevel1),
+                    HCCL_ERROR("[AHCAlgSelect] level1: algType_[%u] is invalid.", algTypeLevel1),
                     HCCL_E_INTERNAL);
         HCCL_INFO("[AHCAlgSelect] hccl algorithm: there are %u server(%u module) in level1, using %s algo",
                   serverNum_, moduleNum_, iter->second.c_str());
-        algType_ = AlgType((static_cast<u32>(algTypeLevel1) << HCCL_LEVEL_ALGO_WIDTH) +
-                            static_cast<u32>(originalAlgTypeLevel0));
+        algType_.algoLevel0 = originalAlgTypeLevel0;
+        algType_.algoLevel1 = algTypeLevel1;
     }
 
     return HCCL_SUCCESS;
@@ -597,8 +601,10 @@ HcclResult AllReduceOperator::PrepareAHCSubGroups(AlgTypeLevel1 &algType,
     CommPlane algLevel)
 {
     bool isAHCType = true;
+    std::vector<std::vector<std::vector<u32>>> globalSubGroups;
     std::vector<std::vector<u32>> subGroups;
-    CHK_RET(topoMatcher_->GetLevelSubGroups(algLevel, subGroups));
+    CHK_RET(topoMatcher_->GetGlobalSubGroups(algLevel, globalSubGroups));
+    subGroups = globalSubGroups[0];
 
     // subGroups 参数检查
     CHK_RET(CommAHCBaseInfo::CheckSubGroups(subGroups));
@@ -607,7 +613,7 @@ HcclResult AllReduceOperator::PrepareAHCSubGroups(AlgTypeLevel1 &algType,
     bool enableSymSplit = true;
     u32 minSubGroupSize = subGroups[0].size();
     u32 maxSubGroupSize = subGroups[0].size();
-    for (u32 i = 0; i < subGroups.size(); ++i) {
+    for (u32 i = 0; i < globalSubGroups[0].size(); ++i) {
         if (subGroups[i].size() < minSubGroupSize) {
             minSubGroupSize = subGroups[i].size();
         }
@@ -651,7 +657,9 @@ HcclResult AllReduceOperator::PrepareAHCSubGroups(AlgTypeLevel1 &algType,
         isAHCType = false; // 设置为 BROKE 类型
     }
 
-    topoMatcher_->SetLevelSubGroups(algLevel, subGroups);
+    globalSubGroups.erase(globalSubGroups.begin());
+    globalSubGroups.push_back(subGroups);
+    topoMatcher_->SetGlobalSubGroups(algLevel, globalSubGroups);
 
     if (isAHCType) {
         algType = AlgTypeLevel1::ALG_LEVEL1_AHC; // 设置为 AHC 类型

@@ -159,14 +159,14 @@ HcclResult CollAllReduceMeshSmallCountExecutor::KernelRun(const OpParam &param, 
     if (!CalcScratchMemFlag(totalSize_)) {
         execMem.scratchMem = execMem.outputMem;
     }
-    
+
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
     SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
 
     ReduceType reduceType = ((param.reduceType != HCCL_REDUCE_PROD) &&
         (param.DataDes.dataType != HCCL_DATA_TYPE_INT64)) ?
         ReduceType::INLINE_REDUCE : ReduceType::TBE_REDUCE;
-    auto originalAlgTypeLevel1 = static_cast<u32>(algType_) >> HCCL_LEVEL_ALGO_WIDTH;
+    auto originalAlgTypeLevel1 = static_cast<u32>(algType_.algoLevel1);
     bool isDeterministic = topoMatcher_->GetExternalInputHcclDeterministic();
     auto opMeta = HcclOpMetaInfo::GetOneForAllReduce(originalAlgTypeLevel1, param.DataDes.dataType, reduceType,
         true, 1, false, CopyPattern::BCOPY, 1, false, true, false, isDeterministic);
@@ -179,6 +179,7 @@ HcclResult CollAllReduceMeshSmallCountExecutor::KernelRun(const OpParam &param, 
         "", execMem.inputPtr, execMem.outputPtr, execMem.count, param.DataDes.dataType, param.root, param.reduceType
     };
 
+    bool isUsedRegister = false;
     std::unique_ptr<AlgTemplateBase> level0TempAlg;
     if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
         bool aicpu = true;
@@ -187,9 +188,9 @@ HcclResult CollAllReduceMeshSmallCountExecutor::KernelRun(const OpParam &param, 
             reduceAttr, algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
             level0CommInfo.localRank, &opInfo, aicpu));
     } else if (!topoMatcher_->GetExternalInputHcclDeterministic()) {
-        level0TempAlg.reset(new (std::nothrow) AllReduceReduceBcast(dispatcher_,
-            reduceAttr, algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
-            level0CommInfo.localRank, level0CommInfo.localRankSize, topoAttr_.userRank, &opInfo));
+        isUsedRegister = true;
+        level0TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_ALL_REDUCE_REDUCE_BCAST, dispatcher_);
     } else if (topoAttr_.deviceNumPerAggregation == DEVICE_EIGHT) {
         if (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE || aicpuUnfoldMode_) {
             level0TempAlg.reset(new (std::nothrow) AllReduceDoubling(dispatcher_, reduceAttr));
@@ -202,8 +203,32 @@ HcclResult CollAllReduceMeshSmallCountExecutor::KernelRun(const OpParam &param, 
             level0CommInfo.localRank, level0CommInfo.localRankSize, topoAttr_.userRank, &opInfo));
     }
     CHK_SMART_PTR_NULL(level0TempAlg);
-    CHK_RET(level0TempAlg->Prepare(execMem.inputMem, execMem.scratchMem, execMem.outputMem, execMem.count,
+
+    if (isUsedRegister) {
+        PrepareData prepareData;
+        prepareData.reduceAttr = reduceAttr;
+        prepareData.subStreamsPtr = &algResResp_->slaveStreams;
+        prepareData.signalPtr = &algResResp_->notifiesMain;
+        prepareData.signalAuxPtr = &algResResp_->notifiesAux;
+        prepareData.interRank = level0CommInfo.localRank;
+        prepareData.interRankSize = level0CommInfo.localRankSize;
+        prepareData.userRank = topoAttr_.userRank;
+        prepareData.opInfo = &opInfo;
+
+        prepareData.inputMem = execMem.inputMem;
+        prepareData.outputMem = execMem.outputMem;
+        prepareData.scratchMem = execMem.scratchMem;
+        prepareData.count = execMem.count;
+        prepareData.dataType = param.DataDes.dataType;
+        prepareData.stream = param.stream;
+        prepareData.reductionOp = param.reduceType;
+        prepareData.slicesPtr = &dataSegsSlice;
+
+        CHK_RET(level0TempAlg->Prepare(prepareData));
+    } else {
+        CHK_RET(level0TempAlg->Prepare(execMem.inputMem, execMem.scratchMem, execMem.outputMem, execMem.count,
         param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID, dataSegsSlice, 0));
+    }
 
     CHK_RET(
         level0TempAlg->RegisterProfiler(

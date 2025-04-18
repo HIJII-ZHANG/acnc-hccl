@@ -101,8 +101,7 @@ HcclResult SendReceiveOperator::Send(const std::string &tag, void *inputPtr, u64
     u32 perDataSize = SIZE_TABLE[dataType];
     u64 length = static_cast<u64>(count) * perDataSize;
     DeviceMem inputMem(inputPtr, length);
-
-    CHK_RET(hcclImpl_->PrepareCommRes(tag, inputMem, inputMem, AlgType::ALG_RESERVED, stream, destRank, true, false));
+    CHK_RET(hcclImpl_->PrepareCommRes(tag, inputMem, inputMem, AlgType::Reserved(), stream, destRank, true, false));
 
     /*  ------------执行算法-------------- */
     if (Is310P3Common(isHaveCpuRank_, deviceType_)) {
@@ -240,7 +239,7 @@ HcclResult SendReceiveOperator::Receive(const std::string &tag, void *outputPtr,
     DeviceMem outputMem(outputPtr, length);
 
     /*  ------------执行算法-------------- */
-    CHK_RET(hcclImpl_->PrepareCommRes(tag, outputMem, outputMem, AlgType::ALG_RESERVED, stream, srcRank, true, false));
+    CHK_RET(hcclImpl_->PrepareCommRes(tag, outputMem, outputMem, AlgType::Reserved(), stream, srcRank, true, false));
 
     if (Is310P3Common(isHaveCpuRank_, deviceType_)) {
         CHK_RET(ReceiveCommon(tag, outputMem, count, dataType, srcRank, stream));

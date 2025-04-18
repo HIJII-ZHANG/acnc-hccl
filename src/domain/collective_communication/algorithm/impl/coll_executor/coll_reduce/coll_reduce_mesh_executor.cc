@@ -137,7 +137,7 @@ HcclResult CollReduceMeshExecutor::KernelRun(const OpParam &param, ExecMem &exec
         CHK_RET(GetRankByUserRank(COMM_LEVEL1, commIndex, subUserrankRoot, planeRoot));
 
         std::unique_ptr<AlgTemplateBase> level1TempAlg;
-        if (UseInterServerRingAlgo(algType_)) {
+        if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
             level1TempAlg.reset(new (std::nothrow) ReduceRing(dispatcher_, reduceAttr));
         } else {
             level1TempAlg.reset(new (std::nothrow) ReduceRecursiveHalvingDoubling(dispatcher_, reduceAttr));

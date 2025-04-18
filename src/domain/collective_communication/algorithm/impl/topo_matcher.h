@@ -35,7 +35,7 @@ using HcclAlgoInfo = struct HcclAlgoInfoDef {
     {}
 };
 
-using HcclTopoInfo = struct HcclTopoInfoDef {
+struct HcclTopoInfo {
     u32 userRank;                    // 通信域 RankID
     u32 userRankSize;                // 通信域的 Rank数量
     u32 devicePhyId;
@@ -60,10 +60,11 @@ using HcclTopoInfo = struct HcclTopoInfoDef {
     std::unordered_map<u32, bool> isUsedRdmaMap;
     std::unordered_map<u32, u32> pairLinkCounter; // server内所有device间的链路类型计数
 
-    std::vector<std::vector<std::vector<u32>>> CommPlaneSubGroupVector; // 保存所有 level 的通信分组信息
+    std::vector<std::vector<std::vector<std::vector<u32>>>> CommPlaneSubGroupVector; // 保存所有 level 的通信分组信息
+    std::map<std::string, std::string> ahcAlgOption;
     std::vector<bool> isAsymPlanVector; // 对应 level 是否为非对称
 
-    HcclTopoInfoDef()
+    HcclTopoInfo()
         : userRank(0),
         userRankSize(0),
         devicePhyId(0),
@@ -79,6 +80,7 @@ using HcclTopoInfo = struct HcclTopoInfoDef {
         meshAggregationRankSize(0),
         multiModuleDiffDeviceNumMode(0),
         multiSuperPodDiffServerNumMode(0),
+        isDiffDeviceType(false),
         realUserRank(0),
         isDiffDeviceModule(false),
         moduleNum(0),
@@ -94,6 +96,8 @@ using HcclExternalEnable = struct HcclExternalEnableDef {
     u32 intraRoceSwitch;
     u32 dumpDebug;
     u32 interHccsDisable;
+    bool aivMode;
+    bool aicpuUnfold;
 
     HcclExternalEnableDef()
         : enableRdmaSdmaConcurrent(0),
@@ -102,7 +106,9 @@ using HcclExternalEnable = struct HcclExternalEnableDef {
         highPerfEnable(0),
         intraRoceSwitch(0),
         dumpDebug(0),
-        interHccsDisable(0)
+        interHccsDisable(0),
+        aivMode(false),
+        aicpuUnfold(false)
     {}
 };
 
@@ -137,10 +143,16 @@ public:
     HcclResult GetLocalSuperPodRankSize(const u32 userRank, u32& devNumInlocalPod, u32& rankIdxInPod);
     HcclResult GetLocalServerRankSize(const u32 userRank, u32& devNumInlocalServer, u32& rankIdxInServer);
     HcclResult SetDeterministicConfig(const u8 deterministic);
+    HcclResult SetAivModeConfig(const bool aivMode);
+    HcclResult SetAicpuUnfoldConfig(const bool aicpuUnfold);
     u8 GetDeterministicConfig() const;
-    bool GetLevelAsymType(const CommPlane level) const;
-    HcclResult GetLevelSubGroups(const CommPlane level, std::vector<std::vector<u32>> &subGroups);
-    HcclResult SetLevelSubGroups(const CommPlane level, std::vector<std::vector<u32>> &subGroups);
+    bool GetAivModeConfig() const;
+    bool GetAicpuUnfoldConfig() const;
+    HcclResult GetGlobalSubGroups(const CommPlane level, std::vector<std::vector<std::vector<u32>>> &globalSubGroups);
+    HcclResult SetGlobalSubGroups(const CommPlane level, std::vector<std::vector<std::vector<u32>>> &globalSubGroups);
+    HcclResult GetCommPlaneSubGroupVector(std::vector<std::vector<std::vector<std::vector<u32>>>> &commPlaneSubGroupVector);
+    HcclResult SetCommPlaneSubGroupVector(std::vector<std::vector<std::vector<std::vector<u32>>>> &commPlaneSubGroupVector);
+    HcclResult GetAHCAlgOption(std::map<std::string, std::string> &ahcAlgOption);
 
 protected:
 

@@ -7,9 +7,9 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
-#include "coll_reduce_scatter_v_aiv_big_count_executor.h"
-
 #include <algorithm>
+#include "alg_profiling.h"
+#include "coll_reduce_scatter_v_aiv_big_count_executor.h"
 
 namespace hccl {
 CollReduceScatterVAIVBigCountExecutor::CollReduceScatterVAIVBigCountExecutor(const HcclDispatcher dispatcher,
@@ -54,8 +54,9 @@ HcclResult CollReduceScatterVAIVBigCountExecutor::CalcLevel0CommInfo(TransportMe
     TransportMemType outputType,
     std::vector<LevelNSubCommTransport>& opTransport)
 {
-    CommParaInfo commParaLevel0(COMM_MESH_L0, CommType::COMM_TAG_MESH);
-    CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel0, opTransport[COMM_MESH_L0], inputType, outputType));
+    CommParaInfo commParaLevel0(COMM_LEVEL0, CommType::COMM_TAG_MESH);
+    commParaLevel0.meshSinglePlane = true;
+    CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel0, opTransport[COMM_LEVEL0], inputType, outputType));
     return HCCL_SUCCESS;
 }
 
@@ -91,8 +92,8 @@ HcclResult CollReduceScatterVAIVBigCountExecutor::Orchestrate(OpParam& param, Al
 HcclResult CollReduceScatterVAIVBigCountExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
     HCCL_INFO("[CollReduceScatterVAIVBigCountExecutor][KernelRun]ReduceScatterV aiv enter.");
-    CHK_RET(CheckCommSize(COMM_MESH_L0, COMM_INDEX_0 + 1));
-    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_MESH_L0, COMM_INDEX_0);
+    CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
+    SubCommInfo outerCommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
 
     void *buffersIn[MAX_RANK_SIZE];
     void *buffersOut[MAX_RANK_SIZE];
@@ -119,9 +120,31 @@ HcclResult CollReduceScatterVAIVBigCountExecutor::KernelRun(const OpParam &param
 
     execMem.count = (static_cast<const u64 *>(param.VDataDes.counts))[topoAttr_.userRank];
 
-    HcclResult ret = ExecuteKernelLaunch(HcclCMDType::HCCL_CMD_REDUCE_SCATTER_V, execMem.inputPtr, execMem.outputPtr,
-        execMem.count, param.VDataDes.dataType, param.reduceType, localRank, localRankSize, param.root,
-        buffersIn, buffersOut, param.tag, param.stream.ptr(), isOpbase, execMem.inputMem.size(), -1, false, &extraArgs);
+    AivOpArgs opArgs {
+            HcclCMDType::HCCL_CMD_REDUCE_SCATTER_V, execMem.inputPtr, execMem.outputPtr, execMem.count,
+            param.VDataDes.dataType, param.reduceType, param.root, isOpbase
+    };
+    AivTopoArgs topoArgs { localRank, localRankSize };
+    AivResourceArgs resourceArgs { param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size() };
+    AivAlgArgs algArgs {};
+    struct AivProfilingInfo aivProfilingInfo;
+
+    if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
+        HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
+        HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
+    }
+
+    HcclResult ret = ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, extraArgs, aivProfilingInfo);
+    
+    TaskAivProfiler(opArgs.cmdType, aivProfilingInfo.tag, opArgs.count * sizeof(opArgs.dataType),
+        aivProfilingInfo.blockDim, topoArgs.rankSize, resourceArgs.buffersOut[topoArgs.rank], resourceArgs.stream,
+        algArgs.step, aivProfilingInfo.beginTime);
+
+    if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){ 
+        HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());
+        HCCL_PROFILER_DEL_TAG(param.tag);
+    }
+    blockDim_ = aivProfilingInfo.blockDim;
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[CollReduceScatterVAIVBigCountExecutor][KernelRun]"
         "reducescatterv aiv failed, return[%d]", ret), ret);
 

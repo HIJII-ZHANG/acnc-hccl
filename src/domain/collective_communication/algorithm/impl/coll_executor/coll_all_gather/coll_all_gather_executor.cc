@@ -140,7 +140,7 @@ HcclResult CollAllGatherExecutor::RunLoop(OpParam &param, AlgResourceResponse &a
 
         if (!is310P3Common_) {
             /* 设置子图复用标志 */
-            auto autoSelectedAlgTypeLevel1 = static_cast<u32>(algType_) >> HCCL_LEVEL_ALGO_WIDTH;
+            auto autoSelectedAlgTypeLevel1 = static_cast<u32>(algType_.algoLevel1);
             bool hugeData = IsHugeData(curSize);    // override
             bool dataSplit = IsDataSplitForRdmaSdmaConcurrent(curSize);
             auto opMeta = HcclOpMetaInfo::GetOneForAllGather(autoSelectedAlgTypeLevel1, hugeData, smallData,
@@ -295,17 +295,17 @@ HcclResult CollAllGatherExecutor::AllGatherLevel2(const std::string &tag, Device
 
     if (level1RankSize > 1) {
         std::unique_ptr<AlgTemplateBase> level1AGExecutor;
-        if (UseInterServerRingAlgo(algType_)) {
+        if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
             level1AGExecutor.reset(new (std::nothrow) AllGatherRing(dispatcher_));
             HCCL_INFO("allgather ring: using ring algo inter-server.");
-        } else if (UseInterServerNBAlgo(algType_)) {
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
             level1AGExecutor.reset(new (std::nothrow) AllGatherNB(dispatcher_));
             HCCL_INFO("allgather ring: using nonuniform-bruck algo inter-server.");
-        } else if (UseInterServerNHRAlgo(algType_)) {
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
             level1AGExecutor.reset(new (std::nothrow) AllGatherNHR(dispatcher_));
             HCCL_INFO("allgather ring: using nonuniform-hierarchical-ring algo inter-server.");
         } else {
-            HCCL_ERROR("allgather ring: algType[%u] is not supported.", algType_);
+            HCCL_ERROR("allgather ring: unsupported algtype [%s].", AlgTypeToStr(algType_).c_str());
             return HCCL_E_NOT_SUPPORT;
         }
         CHK_SMART_PTR_NULL(level1AGExecutor);

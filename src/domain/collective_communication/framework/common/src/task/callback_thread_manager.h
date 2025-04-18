@@ -14,7 +14,8 @@
 #include <string>
 #include <map>
 #include <unordered_map>
-#include "spin_mutex.h"
+#include <mutex>
+#include <atomic>
 #include "hccl/base.h"
 
 namespace hccl {

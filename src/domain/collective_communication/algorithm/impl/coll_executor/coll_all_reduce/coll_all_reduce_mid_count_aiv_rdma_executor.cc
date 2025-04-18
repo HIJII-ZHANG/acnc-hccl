@@ -9,6 +9,7 @@
  */
 
 #include "coll_all_reduce_mid_count_aiv_rdma_executor.h"
+#include "alg_profiling.h"
 
 namespace hccl {
 constexpr s32 INTRA_RS_STEP = 0;
@@ -68,6 +69,7 @@ HcclResult CollAllReduceMidCountAivRdmaExecutor::CalcLevel0CommInfo(TransportMem
     std::vector<LevelNSubCommTransport>& opTransport)
 {
     CommParaInfo commParaLevel0(COMM_LEVEL0, CommType::COMM_TAG_MESH);
+    commParaLevel0.meshSinglePlane = true;
     CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel0, opTransport[COMM_LEVEL0], inputType, outputType));
     return HCCL_SUCCESS;
 }
@@ -111,7 +113,7 @@ HcclResult CollAllReduceMidCountAivRdmaExecutor::KernelRun(const OpParam &param,
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
     SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
     u32 commIndex = level0CommInfo.localRank;
-    bool isSelectAHC = (UseInterServerAHCAlgo(algType_) || UseInterServerAHCBrokeAlgo(algType_));
+    bool isSelectAHC = (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC || algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE);
     CommPlane commPlaneLevel1 = isSelectAHC ? COMM_LEVEL1_AHC : COMM_LEVEL1;
     CHK_RET(CheckCommSize(commPlaneLevel1, commIndex + 1));
     SubCommInfo level1CommInfo = GetSubCommInfo(commPlaneLevel1, commIndex);
@@ -136,10 +138,27 @@ HcclResult CollAllReduceMidCountAivRdmaExecutor::KernelRun(const OpParam &param,
     CHK_RET(PrepareAivBuffers(intraRankSize, intraRankId, 0, execMem.inputMem, execMem.inputMem, intraLinks,
         dataBuffers, flagBuffers, UserMemType::INPUT_MEM, UserMemType::INPUT_MEM, 0, HCCL_MID_COUNT_32_MB));
     // 先做本地拷贝到AIVIN再跨片拷贝；output统一为allreduceInput的位置，即buffer中原位
-    CHK_RET(ExecuteKernelLaunch(HcclCMDType::HCCL_CMD_ALLREDUCE, execMem.inputPtr, nullptr, execMem.count,
-        param.DataDes.dataType, param.reduceType, intraRankId, intraRankSize, 0, dataBuffers, flagBuffers, param.tag,
-        param.stream.ptr(), isOpbase, execMem.inputMem.size(), INTRA_RS_STEP, false));
 
+    AivOpArgs opArgs {
+        HcclCMDType::HCCL_CMD_ALLREDUCE, execMem.inputPtr, nullptr, execMem.count,
+        param.DataDes.dataType, param.reduceType, 0, isOpbase
+    };
+    AivTopoArgs topoArgs { intraRankId, intraRankSize };
+    AivResourceArgs resourceArgs { param.tag, param.stream.ptr(), dataBuffers, flagBuffers, execMem.inputMem.size() };
+    AivAlgArgs algArgs { INTRA_RS_STEP, false };
+    struct AivProfilingInfo aivProfilingInfo;
+    
+    if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
+        HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
+        HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
+    }
+
+    CHK_RET(ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, aivProfilingInfo));
+
+    TaskAivProfiler(opArgs.cmdType, aivProfilingInfo.tag, opArgs.count * sizeof(opArgs.dataType),
+        aivProfilingInfo.blockDim, topoArgs.rankSize, resourceArgs.buffersOut[topoArgs.rank], resourceArgs.stream,
+        algArgs.step, aivProfilingInfo.beginTime);
+    blockDim_ = aivProfilingInfo.blockDim;
     // allreduce 阶段
     std::unique_ptr<AlgTemplateBase> level1TempAlg;
     DeviceMem allreduceInput = execMem.inputMem.range(dataSegsSlice[commIndex].offset, dataSegsSlice[commIndex].size);
@@ -148,15 +167,15 @@ HcclResult CollAllReduceMidCountAivRdmaExecutor::KernelRun(const OpParam &param,
     CHK_SMART_PTR_NULL(allreduceOutput);
 
     u64 reduceAttr = GetReduceAttr(execMem.inputMem, execMem.outputMem, param.DataDes.dataType, param.reduceType);
-    auto autoSelectedAlgTypeLevel1 = static_cast<u32>(algType_) >> HCCL_LEVEL_ALGO_WIDTH;
+    auto autoSelectedAlgTypeLevel1 = static_cast<u32>(algType_.algoLevel1);
     auto opMeta = HcclOpMetaInfo::GetOneForAllReduce(autoSelectedAlgTypeLevel1, param.DataDes.dataType,
         ReduceType::INLINE_REDUCE, IsAllReduceSmallData(totalSize), 1, false, hccl::CopyPattern::BCOPY, 1, true);
     CHK_RET(InitTask(dispatcher_, const_cast<Stream&>(param.stream), opMeta.isEnableCache, opMeta.GetCacheKey()));
 
-    if (UseInterServerRingAlgo(algType_)) {
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
         level1TempAlg.reset(new (std::nothrow) AllReduceRing(dispatcher_, reduceAttr));
         HCCL_INFO("allreduce mesh: using ring algo inter-server.");
-    } else if (UseInterServerNHRAlgo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
         u64 curSize = execMem.count * perDataSize; // 单位 byte
         HCCL_DEBUG("allreduce mesh: curSize[%llu] deviceNumPerAggregation[%u] commLevel0Size[%u]",
             curSize, topoAttr_.deviceNumPerAggregation, level0CommInfo.localRankSize);
@@ -166,22 +185,22 @@ HcclResult CollAllReduceMidCountAivRdmaExecutor::KernelRun(const OpParam &param,
             level1TempAlg.reset(new (std::nothrow) AllReduceNHR(dispatcher_, reduceAttr));
         }
         HCCL_INFO("allreduce mesh: using nhr algo inter-server.");
-    } else if (UseInterServerNHRV1Algo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
         level1TempAlg.reset(new (std::nothrow) AllReduceNHRV1(dispatcher_, reduceAttr));
         HCCL_INFO("allreduce mesh: using nhr_v1 algo inter-server.");
-    } else if (UseInterServerAHCAlgo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC) {
         // 获取通信域分组信息
-        std::vector<std::vector<u32>> subGroups;
-        CHK_RET(topoMatcher_->GetLevelSubGroups(commPlaneLevel1, subGroups));
-        level1TempAlg.reset(new (std::nothrow) AllReduceAHC(dispatcher_, reduceAttr, execMem.count, subGroups));
+        std::vector<std::vector<std::vector<u32>>> globalSubGroups;
+        CHK_RET(topoMatcher_->GetGlobalSubGroups(commPlaneLevel1, globalSubGroups));
+        level1TempAlg.reset(new (std::nothrow) AllReduceAHC(dispatcher_, reduceAttr, execMem.count, globalSubGroups[0]));
         HCCL_INFO("allreduce mesh: using ahc algo inter-server.");
-    } else if (UseInterServerAHCBrokeAlgo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE) {
         // 获取通信域分组信息
-        std::vector<std::vector<u32>> subGroups;
-        CHK_RET(topoMatcher_->GetLevelSubGroups(commPlaneLevel1, subGroups));
-        level1TempAlg.reset(new (std::nothrow) AllReduceAHCBroke(dispatcher_, reduceAttr, execMem.count, subGroups));
+        std::vector<std::vector<std::vector<u32>>> globalSubGroups;
+        CHK_RET(topoMatcher_->GetGlobalSubGroups(commPlaneLevel1, globalSubGroups));
+        level1TempAlg.reset(new (std::nothrow) AllReduceAHCBroke(dispatcher_, reduceAttr, execMem.count, globalSubGroups[0]));
         HCCL_INFO("allreduce mesh: using ahc-broke algo inter-server.");
-    } else if (UseInterServerNBAlgo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
         level1TempAlg.reset(new (std::nothrow) AllReduceNB(dispatcher_, reduceAttr));
         HCCL_INFO("allreduce mesh: using nb algo inter-server.");
     } else {
@@ -206,10 +225,24 @@ HcclResult CollAllReduceMidCountAivRdmaExecutor::KernelRun(const OpParam &param,
     CHK_RET(PrepareAivBuffers(intraRankSize, intraRankId, 0, execMem.outputMem, execMem.inputMem, intraLinks,
         dataBuffers, flagBuffers, UserMemType::OUTPUT_MEM, UserMemType::INPUT_MEM, 0, HCCL_MID_COUNT_32_MB));
     // 输入统一为allreduceOutput的位置，各卡不同；单算子模式需要outputAddr，先做本地拷贝再跨片拷贝；图模式结果直接放在CCL Out中
-    CHK_RET(ExecuteKernelLaunch(HcclCMDType::HCCL_CMD_ALLREDUCE, nullptr, execMem.outputPtr, execMem.count,
-        param.DataDes.dataType, param.reduceType, intraRankId, intraRankSize, 0, dataBuffers, flagBuffers, param.tag,
-        param.stream.ptr(), isOpbase, execMem.inputMem.size(), INTRA_AG_STEP, false));
 
+    opArgs.input = nullptr;
+    opArgs.output = execMem.outputPtr;
+    resourceArgs.buffersIn = dataBuffers;
+    resourceArgs.buffersOut = flagBuffers;
+    algArgs.step = INTRA_AG_STEP;
+
+    CHK_RET(ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, aivProfilingInfo));
+
+    TaskAivProfiler(opArgs.cmdType, aivProfilingInfo.tag, opArgs.count * sizeof(opArgs.dataType),
+        aivProfilingInfo.blockDim, topoArgs.rankSize, resourceArgs.buffersOut[topoArgs.rank], resourceArgs.stream,
+        algArgs.step, aivProfilingInfo.beginTime);
+
+    if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){ 
+        HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());
+        HCCL_PROFILER_DEL_TAG(param.tag);
+    }
+    blockDim_ = aivProfilingInfo.blockDim;
     HCCL_INFO("[CollAllReduceMidCountAivRdmaExecutor][KernelRun]allreduce aiv run success");
     return HCCL_SUCCESS;
 }

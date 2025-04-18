@@ -20,7 +20,7 @@ CollAllGatherSingleRankExecutor::CollAllGatherSingleRankExecutor(const HcclDispa
 HcclResult CollAllGatherSingleRankExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
     u32 unitSize = SIZE_TABLE[param.DataDes.dataType];
-    auto originalAlgTypeLevel1 = static_cast<u32>(algType_) >> HCCL_LEVEL_ALGO_WIDTH;
+    auto originalAlgTypeLevel1 = static_cast<u32>(algType_.algoLevel1);
     bool hugeData = (execMem.count * unitSize) > SDMA_SEND_MAX_SIZE;
     if (execMem.inputPtr == execMem.outputPtr) {
         // 通过CopyPattern字段区分不同的子图

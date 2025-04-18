@@ -23,12 +23,11 @@ HcclResult CollBroadcastExecutor::Orchestrate(OpParam& param, AlgResourceRespons
     HcclResult ret = HCCL_SUCCESS;
 
     // 由于bcast/allgather/reducescatter/reduce/send/recv暂不支持server间ring，需继续使用HD或NHR
-    if (!UseInterServerNHRAlgo(algType_) && !UseInterServerNHRV1Algo(algType_) && !UseInterServerNBAlgo(algType_)) {
-        ret = SetInterServerHDAlgo(algType_);
-        HCCL_WARNING("[BroadCastOperator][Broadcast] do not support ring in AlgoLevel1 yet, reset algType=HD.");
-        CHK_PRT_RET(ret != HCCL_SUCCESS,
-            HCCL_ERROR("[BroadCastOperator][Broadcast]errNo[0x%016llx] tag[%s],broadcast set inter server "\
-                "halving-doubling algo failed", HCCL_ERROR_CODE(ret), param.tag.c_str()), ret);
+    if (!(algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) &&
+        !(algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) &&
+        !(algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB)) {
+        algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_HD;
+        HCCL_WARNING("[BroadCastOperator][Broadcast] do not support ring in AlgoLevel1 yet, reset algType_=HD.");
     }
 
     tag_ = param.tag;
@@ -129,7 +128,7 @@ HcclResult CollBroadcastExecutor::RunLoopInner(OpParam &param, ExecMem &execMem)
     u64 curSize = execMem.count * unitSize; // 单位：字节
     auto inCCLbufferSize = execMem.inputMem.size();
     u8 *curPtr = static_cast<u8 *>(execMem.inputPtr);
-    auto originalAlgTypeLevel0 = GetLevel0AlgType(algType_);
+    auto originalAlgTypeLevel0 = algType_.algoLevel0;
     bool isDMATopoOn91093 = originalAlgTypeLevel0 == AlgTypeLevel0::ALG_LEVEL0_NP_SINGLE_RING ||
                             originalAlgTypeLevel0 == AlgTypeLevel0::ALG_LEVEL0_NP_DOUBLE_RING;
     bool isDMAreduceOn91093 = (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE
@@ -196,34 +195,33 @@ u64 CollBroadcastExecutor::CalcLoopMaxCount(const u64 cclBuffSize, const u32 uni
     return maxCountPerLoop;
 }
 
-HcclResult CollBroadcastExecutor::GetSliceNum(const u64 totalSize, const bool isSmallData, u64& sliceNum)
+HcclResult CollBroadcastExecutor::GetSliceNum(const u64 size, const bool isSmallData, u64& sliceNum)
 {
-    const AlgTypeLevel0 algLevel0 = GetLevel0AlgType(algType_);
     u64 actualSize = 0;
     u32 actualRankSize = 0;
 
-    if (algLevel0 == AlgTypeLevel0::ALG_LEVEL0_RESERVED) {
+    if (algType_.algoLevel0 == AlgTypeLevel0::ALG_LEVEL0_RESERVED) {
         // level0算法配null走单层拓扑场景
-        actualSize = totalSize;
+        actualSize = size;
         actualRankSize = topoAttr_.userRankSize;
     } else {
         // 非单层拓扑场景
         const u32 localRankSize = topoAttr_.deviceNumPerAggregation;
         const u32 localRank = topoAttr_.userRank % localRankSize;
-        const u64 tempPerSlice = (totalSize + localRankSize - 1) / localRankSize;
+        const u64 tempPerSlice = (size + localRankSize - 1) / localRankSize;
         const u64 sizePerSlice =
             ((tempPerSlice + (HCCL_MIN_SLICE_ALIGN - 1)) / HCCL_MIN_SLICE_ALIGN) * HCCL_MIN_SLICE_ALIGN;
 
-        if ((localRank + 1) * sizePerSlice < totalSize) {
+        if ((localRank + 1) * sizePerSlice < size) {
             actualSize = sizePerSlice;
-        } else if (localRank * sizePerSlice < totalSize) {
-            actualSize = totalSize - localRank * sizePerSlice;
+        } else if (localRank * sizePerSlice < size) {
+            actualSize = size - localRank * sizePerSlice;
         }
 
         actualRankSize = topoAttr_.userRankSize / localRankSize;
     }
 
-    if (UseInterServerNHRAlgo(algType_)) {
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
         u64 sliceSize = (actualSize + (actualRankSize - 1)) / actualRankSize;
         u64 sliceSizeAligned = AlgTemplateBase::RoundUpWithDivisor(sliceSize, HCCL_MIN_SLICE_ALIGN);
         sliceNum = isSmallData ? 1 : static_cast<u64>(std::ceil(actualSize * 1.0f / sliceSizeAligned));
@@ -233,8 +231,6 @@ HcclResult CollBroadcastExecutor::GetSliceNum(const u64 totalSize, const bool is
 
 bool CollBroadcastExecutor::IsBroadcastSmallData(u64 size, u64 totalSize)
 {
-    const AlgTypeLevel0 algLevel0 = GetLevel0AlgType(algType_);
-
     u64 actualSize;
     u64 actualRankSize;
 
@@ -242,7 +238,7 @@ bool CollBroadcastExecutor::IsBroadcastSmallData(u64 size, u64 totalSize)
         return totalSize <= topoAttr_.userRankSize * HCCL_SMALL_COUNT_2_MB;
     }
 
-    if (algLevel0 == AlgTypeLevel0::ALG_LEVEL0_RESERVED ||
+    if (algType_.algoLevel0 == AlgTypeLevel0::ALG_LEVEL0_RESERVED ||
         (topoAttr_.deviceType == DevType::DEV_TYPE_910_93 && DMAReduceFlag_ == false)) {
         // level0算法配null走单层拓扑场景
         actualSize = size;
@@ -253,9 +249,9 @@ bool CollBroadcastExecutor::IsBroadcastSmallData(u64 size, u64 totalSize)
         actualRankSize = topoAttr_.userRankSize / topoAttr_.deviceNumPerAggregation;
     }
 
-    if (UseInterServerNHRAlgo(algType_)) {
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
         return actualSize <= NHR_BCAST_SMALL_SIZE;
-    } else if (UseInterServerNBAlgo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
         return ShouldUseBinaryBroadcastOfNB(actualSize, actualRankSize, topoAttr_.userRankSize,
                 topoAttr_.deviceNumPerAggregation);
     }

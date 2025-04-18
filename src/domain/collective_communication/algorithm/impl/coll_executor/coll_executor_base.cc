@@ -66,4 +66,15 @@ HcclResult CollExecutorBase::SetAlgOpContext(AlgOpContext algOpContext)
     algOpContext_ = algOpContext;
     return HCCL_SUCCESS;
 }
+
+HcclResult CollExecutorBase::SetAivClearEnable(bool aivClearEnable)
+{
+    aivClearEnable_ = aivClearEnable;
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollExecutorBase::GetBlockDim(u32& blockDim){
+   blockDim = blockDim_; 
+   return HCCL_SUCCESS;
+}
 }

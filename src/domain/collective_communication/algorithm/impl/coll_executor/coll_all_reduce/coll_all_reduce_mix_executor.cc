@@ -105,6 +105,7 @@ bool CollAllReduceMixExecutor::IsSmallData(const u64 totalSize, const u64 curSiz
 
 bool CollAllReduceMixExecutor::IsHugeData(const u64 curSize)
 {
+    // 多QP哈希散列开启且RDMA通信下，强制刷新子图
     if (GetExternalInputQpsPerConnection() != HCCL_QPS_PER_CONNECTION_DEFAULT) {
         return true;
     }
@@ -193,10 +194,10 @@ HcclResult CollAllReduceMixExecutor::KernelRun(const OpParam &param, ExecMem &ex
     u64 reduceAttr = GetReduceAttr(allreduceInput, allreduceOutput, param.DataDes.dataType, param.reduceType);
 
     std::unique_ptr<AlgTemplateBase> level1Executor;
-    if (UseInterServerRingAlgo(algType_)) {
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
         level1Executor.reset(new (std::nothrow) AllReduceRing(dispatcher_, reduceAttr));
         HCCL_INFO("[CollAllReduceMixExecutor][KernelRun]allreduce mix: using ring algo inter-server.");
-    } else if (UseInterServerNHRAlgo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
         u64 curSize = execMem.count * perDataSize; // 单位 byte
         HCCL_DEBUG("[CollAllReduceMixExecutor][KernelRun] curSize[%llu] deviceNumPerAggregation[%u] commLevel0Size[%u]",
             curSize, topoAttr_.deviceNumPerAggregation, level0CommInfo.localRankSize);
@@ -207,7 +208,7 @@ HcclResult CollAllReduceMixExecutor::KernelRun(const OpParam &param, ExecMem &ex
         }
         HCCL_INFO("[CollAllReduceMixExecutor][KernelRun]allreduce mix: using nhr algo inter-server.");
     } else {
-        HCCL_ERROR("[CollAllReduceMixExecutor][KernelRun]allreduce mix: algType[%u] is not supported.", algType_);
+        HCCL_ERROR("[CollAllReduceMixExecutor][KernelRun]allreduce mix: algType[%u] is not supported.", algType_.algoLevel1);
         return HCCL_E_NOT_SUPPORT;
     }
     CHK_SMART_PTR_NULL(level1Executor);

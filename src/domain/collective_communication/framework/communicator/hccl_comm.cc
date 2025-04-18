@@ -163,6 +163,47 @@ HcclResult hcclComm::init(HcclCommParams &params, const std::vector<RankInfo> &r
     return ret;
 }
 
+HcclResult hcclComm::SetQpQosAttr(u32 trafficClass, u32 serviceLevel)
+{
+    // 校验config中TC的合法性
+    if (trafficClass == HCCL_COMM_TRAFFIC_CLASS_CONFIG_NOT_SET && serviceLevel == HCCL_COMM_SERVICE_LEVEL_CONFIG_NOT_SET) {
+        HCCL_INFO("[SetQpQosAttr]The TC and SL do not use the config configuration. " \
+            "It will use environment variables to configure. TC[%u], SL[%u]",
+            GetExternalInputRdmaTrafficClass(), GetExternalInputRdmaServerLevel());
+        return HCCL_SUCCESS;
+    } else if (trafficClass != HCCL_COMM_TRAFFIC_CLASS_CONFIG_NOT_SET && serviceLevel == HCCL_COMM_SERVICE_LEVEL_CONFIG_NOT_SET) {
+        serviceLevel = GetExternalInputRdmaServerLevel();
+        HCCL_INFO("[SetQpQosAttr]The SL is not configured. It will use the environment value[%u]", serviceLevel);
+    } else if (trafficClass == HCCL_COMM_TRAFFIC_CLASS_CONFIG_NOT_SET && serviceLevel != HCCL_COMM_SERVICE_LEVEL_CONFIG_NOT_SET) {
+        trafficClass = GetExternalInputRdmaTrafficClass();
+        HCCL_INFO("[SetQpQosAttr]The TC is not configured. It will use the environment value[%u]", trafficClass);
+    }
+
+    // 若转换出错或者设置的RDMATrafficClass不在有效范围内，则报错
+    if (trafficClass < HCCL_RDMA_TC_MIN || trafficClass > HCCL_RDMA_TC_MAX) {
+        HCCL_ERROR("[SetQpQosAttr]rdmaTrafficClass is invalid. except:[%u, %u], actual:[%u]",
+            HCCL_RDMA_TC_MIN, HCCL_RDMA_TC_MAX, trafficClass);
+        return HCCL_E_PARA;
+    }
+    // 若设置的RDMATrafficClass不是4的整数倍，则报错
+    if (trafficClass % HCCL_RDMA_TC_BASE != 0) {
+        HCCL_ERROR("[SetQpQosAttr]rdmaTrafficClass[%u] is not a multiple of [%u]",
+            trafficClass, HCCL_RDMA_TC_BASE);
+        return HCCL_E_PARA;
+    }
+
+    // 校验config中SL是否合法
+    if (serviceLevel < HCCL_RDMA_SL_MIN || serviceLevel > HCCL_RDMA_SL_MAX) {
+        HCCL_ERROR("[SetQpQosAttr]rdmaServiceLevel is invalid. except:[%u, %u], actual:[%u]",
+            HCCL_RDMA_SL_MIN, HCCL_RDMA_SL_MAX, serviceLevel);
+        return HCCL_E_PARA;
+    }
+
+    communicator_->SetQpQosAttr(trafficClass, serviceLevel);
+
+    return HCCL_SUCCESS;
+}
+
 HcclResult hcclComm::CreateGroup(const std::string &group, const u32 &groupRank, const u32 &userRank,
                                  const std::vector<u32> &groupRanks, std::shared_ptr<hcclComm> &groupComm)
 {
@@ -260,6 +301,34 @@ HcclResult hcclComm::AllGather(const std::string &tag, void *inputPtr, void *out
 
     return HCCL_SUCCESS;
 }
+
+HcclResult hcclComm::AllGatherV(const std::string &tag, const void *sendBuf, u64 sendCount, const void *recvBuf,
+    const void *recvCounts, const void *rdispls, HcclDataType dataType, HcclRtStream stream)
+{
+    /* 增加输出日志关键字 */
+    HCCL_DEBUG("HCCL_KEY_INFO: tag[%s], count[%llu], data_type[%s]", tag.c_str(), sendCount,
+        GetDataTypeEnumStr(dataType).c_str());
+
+    /* * 入参检查 */
+    CHK_PTR_NULL(stream);
+    CHK_PTR_NULL(sendBuf);
+    CHK_PTR_NULL(recvBuf);
+    CHK_PTR_NULL(recvCounts);
+    CHK_PTR_NULL(rdispls);
+
+    CHK_PRT_RET(tag.empty(), HCCL_ERROR("[HcclComm][AllGatherV]errNo[0x%016llx] all gather tag length is 0",
+        HCCL_ERROR_CODE(HCCL_E_PARA)), HCCL_E_PARA);
+
+    CHK_RET(communicator_->CheckDataType(dataType, false));
+    HcclResult ret = communicator_->AllGatherV(tag, sendBuf, sendCount, recvBuf, recvCounts, rdispls, dataType, stream);
+    if (ret != HCCL_SUCCESS) {
+        PrintSubmittedOpCnt(tag, ret);
+        return ret;
+    }
+
+    return HCCL_SUCCESS;
+}
+
 HcclResult hcclComm::AllGatherOutPlace(const std::string &tag, void *inputPtr, void *outputPtr, u64 inputCount,
     HcclDataType dataType, HcclRtStream stream)
 {
@@ -438,8 +507,6 @@ HcclResult hcclComm::AlltoAll(const void *sendBuf, u64 sendCount, HcclDataType s
 
     CHK_RET(communicator_->CheckDataType(sendType, false));
 
-    CHK_RET(communicator_->CheckDataType(recvType, false));
-
     HcclResult ret = communicator_->AlltoAll(sendBuf, sendCount, sendType, recvBuf, recvCount, recvType, stream, tag);
     if (ret != HCCL_SUCCESS) {
         PrintSubmittedOpCnt(tag, ret);
@@ -567,6 +634,47 @@ HcclResult hcclComm::ReduceScatterOutPlace(const std::string &tag, void *inputPt
     CHK_RET(communicator_->CheckDataType(dataType, true));
     CHK_RET(communicator_->CheckReduceDataType(dataType, op));
     HcclResult ret = communicator_->ReduceScatterOutPlace(tag, inputPtr, outputPtr, count, dataType, op, stream);
+    if (ret != HCCL_SUCCESS) {
+        PrintSubmittedOpCnt(tag, ret);
+        return ret;
+    }
+
+    return HCCL_SUCCESS;
+}
+
+HcclResult hcclComm::ReduceScatterV(const std::string &tag, void *inputPtr,
+    const void *inputCounts, const void *inputDispls, void *outputPtr, u64 outputCount,
+    HcclDataType dataType, HcclReduceOp op, HcclRtStream stream)
+{
+    /* 增加输出日志关键字 */
+    HCCL_DEBUG("HCCL_KEY_INFO: tag[%s], input_ptr[%p], output_ptr[%p], " \
+        "input_counts[%llu], input_displs[%llu], output_count[%llu], data_type[%s], op[%s]",
+        tag.c_str(), inputPtr, outputPtr, inputCounts, inputDispls, outputCount, 
+        GetDataTypeEnumStr(dataType).c_str(), GetReduceOpEnumStr(op).c_str());
+
+    /* * 入参检查 */
+    CHK_PTR_NULL(stream);
+    CHK_PTR_NULL(inputPtr);
+    CHK_PTR_NULL(outputPtr);
+
+    if (tag.empty()) {
+        HCCL_ERROR("[HcclComm][ReduceScatterV]errNo[0x%016llx] reduceScatterV tag length is"\
+            "0", HCCL_ERROR_CODE(HCCL_E_PARA));
+        return HCCL_E_PARA;
+    }
+
+    // ReduceScatterV只支持inlinereduce，因此不支持int64类型
+    if(dataType == HCCL_DATA_TYPE_INT64) {
+        HCCL_ERROR("[Check][DataType]errNo[0x%016llx] data type[%s] not supported.",
+            HCCL_ERROR_CODE(HCCL_E_NOT_SUPPORT), GetDataTypeEnumStr(dataType).c_str());
+        return HCCL_E_NOT_SUPPORT;
+    }
+
+    CHK_RET(communicator_->CheckDataType(dataType, true));
+    CHK_RET(communicator_->CheckReduceDataType(dataType, op));
+    CHK_RET(communicator_->CheckReductionOp(op));
+    HcclResult ret = communicator_->ReduceScatterV(tag, inputPtr, inputCounts, inputDispls, 
+                        outputPtr, outputCount, dataType, op, stream);
     if (ret != HCCL_SUCCESS) {
         PrintSubmittedOpCnt(tag, ret);
         return ret;
@@ -759,6 +867,13 @@ HcclResult hcclComm::receive(const std::string &tag, void *outputPtr, u64 count,
 HcclResult hcclComm::ClearOpResource(const std::string &tag)
 {
     CHK_RET(communicator_->ClearOpResource(tag));
+
+    return HCCL_SUCCESS;
+}
+
+HcclResult hcclComm::ClearAivSyncBuf(bool aivClearEnable)
+{
+    CHK_RET(communicator_->ClearAivSyncBuf(aivClearEnable));
 
     return HCCL_SUCCESS;
 }
@@ -1082,9 +1197,9 @@ HcclResult hcclComm::ResetDeviceEnable()
     return HCCL_SUCCESS;
 }
 
-HcclResult hcclComm::SaveOpbaseKeyTraceInfo(std::string &logInfo)
+HcclResult hcclComm::SaveTraceInfo(std::string &logInfo)
 {
-    CHK_PRT(communicator_->SaveOpbaseKeyTraceInfo(logInfo));
+    CHK_PRT(communicator_->SaveTraceInfo(logInfo));
 
     return HCCL_SUCCESS;
 }
@@ -1189,6 +1304,18 @@ HcclResult hcclComm::SetDeterministicConfig(const u8 deterministic)
     return HCCL_SUCCESS;
 }
 
+HcclResult hcclComm::SetAivModeConfig(const bool aivMode)
+{
+    CHK_RET(communicator_->SetAivModeConfig(aivMode));
+    return HCCL_SUCCESS;
+}
+
+HcclResult hcclComm::SetAicpuUnfoldConfig(const bool aicpuUnfold)
+{
+    CHK_RET(communicator_->SetAicpuUnfoldConfig(aicpuUnfold));
+    return HCCL_SUCCESS;
+}
+
 u64 hcclComm::GetConfigInCCLbufferSize()
 {
     return inCCLbufferSize_;
@@ -1202,6 +1329,11 @@ u64 hcclComm::GetConfigOutCCLbufferSize()
 u32 hcclComm::GetRankTableCrc()
 {
     return communicator_->GetRankTableCrc();
+}
+
+u32 hcclComm::GetServerNum()
+{
+    return communicator_->GetServerNum();
 }
 
 HcclResult hcclComm::GetCommParams(HcclCommParams &params)
@@ -1289,4 +1421,8 @@ HcclResult hcclComm::DeactivateCommMemory(void *virPtr)
     return HCCL_SUCCESS;
 }
 
+HcclResult hcclComm::GetBlockDim(u32& blockDim)
+{
+    return communicator_->GetBlockDim(blockDim);
+}
 }  // namespace hccl

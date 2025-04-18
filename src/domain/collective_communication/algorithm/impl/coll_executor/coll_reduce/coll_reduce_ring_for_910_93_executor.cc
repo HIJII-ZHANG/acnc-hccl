@@ -73,7 +73,7 @@ HcclResult CollReduceRingFor91093Executor::CalcLevel1CommInfo(TransportMemType i
     std::vector<LevelNSubCommTransport>& opTransport)
 {
     CommParaInfo commParaLevel1(COMM_LEVEL1, CommType::COMM_TAG_RING_INNER);
-    if (UseInterServerRingAlgo(algType_)) {
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
         commParaLevel1.commType = CommType::COMM_TAG_RING_INNER;
     } else {
         commParaLevel1.commType = CommType::COMM_TAG_HALVING_DOUBLING;
@@ -88,7 +88,7 @@ HcclResult CollReduceRingFor91093Executor::CalcLevel2CommInfo(TransportMemType i
     std::vector<LevelNSubCommTransport>& opTransport)
 {
     CommParaInfo commParaLevel2(COMM_LEVEL2, CommType::COMM_TAG_MAX);
-    if (UseLevel2RingAlgo(algType_)) {
+    if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_RING) {
         commParaLevel2.commType = CommType::COMM_TAG_RING_INNER;
     } else {
         commParaLevel2.commType = CommType::COMM_TAG_HALVING_DOUBLING;
@@ -154,7 +154,7 @@ HcclResult CollReduceRingFor91093Executor::KernelRun(const OpParam &param, ExecM
         
         u64 reduceAttr = GetReduceAttr(reduceInput, reduceOutput, param.DataDes.dataType, param.reduceType);
         std::unique_ptr<AlgTemplateBase> level1TempAlg;
-        if (UseInterServerRingAlgo(algType_)) {
+        if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
             level1TempAlg.reset(new (std::nothrow) ReduceRing(dispatcher_, reduceAttr));
             HCCL_INFO("[CollReduceRingFor91093Executor]reduce: using ring algo inter-server.");
         } else {
@@ -195,13 +195,13 @@ HcclResult CollReduceRingFor91093Executor::KernelRun(const OpParam &param, ExecM
             u64 reduceAttr = GetReduceAttr(reducescatterInput, reducescatterOutput,
                 param.DataDes.dataType, param.reduceType);
             std::unique_ptr<AlgTemplateBase> level1RSTempAlg;
-            if (UseInterServerRingAlgo(algType_)) {
+            if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
                 level1RSTempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
                 CHK_SMART_PTR_NULL(level1RSTempAlg);
                 HCCL_INFO("[CollReduceRingFor91093Executor] reducescatter: using ring algo inter-server");
             } else {
-                HCCL_ERROR("[CollReduceRingFor91093Executor][superpod]reducescatter: algType[%u] is not supported.", 
-                    algType_);
+                HCCL_ERROR("[CollReduceRingFor91093Executor][superpod]reducescatter: algType_[%u] is not supported.", 
+                    algType_.algoLevel1);
                 return HCCL_E_NOT_SUPPORT;
             }
             
@@ -234,7 +234,7 @@ HcclResult CollReduceRingFor91093Executor::KernelRun(const OpParam &param, ExecM
 
         u64 reduceAttr = GetReduceAttr(reduceInput, reduceOutput, param.DataDes.dataType, param.reduceType);
         std::unique_ptr<AlgTemplateBase> level1RTempAlg;
-        if (UseLevel2RingAlgo(algType_)) {
+        if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_RING) {
             level1RTempAlg.reset(new (std::nothrow) ReduceRing(dispatcher_, reduceAttr));
             HCCL_INFO("[CollReduceRingFor91093Executor][superpod]reduce: using ring algo inter-server.");
         } else {

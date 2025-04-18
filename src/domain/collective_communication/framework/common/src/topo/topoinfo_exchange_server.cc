@@ -17,10 +17,11 @@
 #include "hccl_socket.h"
 #include "sal_pub.h"
 #include "topoinfo_exchange_dispatcher.h"
+#include "preempt_port_manager.h"
 
 namespace hccl {
 const u32 DISPLAY_RANKNUM_PERLINE = 8;
-const s32 SOCKET_ACCEPT_TIMEOUT = 60;  //Server调用Accept等待的最大超时时间 60s
+const u32 SOCKET_ACCEPT_TIMEOUT = 60;  //Server调用Accept等待的最大超时时间 60s
 const u32 SOCKET_PRINT_COUNT = 3;    //未建链打印的数量
 using namespace std;
 TopoInfoExchangeServer::TopoInfoExchangeServer(HcclIpAddress &hostIP, u32 hostPort,
@@ -107,16 +108,24 @@ HcclResult TopoInfoExchangeServer::Connect(std::map<std::string, std::shared_ptr
     bool isFirstAcceptTimeOut = false;
 
     while (expectSocketNum > 0) {
-        if ((std::chrono::steady_clock::now() - startTime) >= timeout) {
+        auto topoExUsedTime = std::chrono::steady_clock::now() - startTime;
+        if (topoExUsedTime >= timeout) {
             HCCL_ERROR("[Get][Connection]topo exchange server get socket timeout! timeout[%d s]",
                 GetExternalInputHcclLinkTimeOut());
             DisplayConnectionedRank(connectSockets);
             return HCCL_E_TIMEOUT;
         }
-
+        auto topoExResTime =  timeout - topoExUsedTime;
+        u32 topoExRes_i = std::chrono::duration_cast<std::chrono::seconds>(topoExResTime).count();
+        u32 socketWaitTime = SOCKET_ACCEPT_TIMEOUT;
+        if (topoExRes_i != 0) {
+            socketWaitTime = topoExRes_i > SOCKET_ACCEPT_TIMEOUT ? SOCKET_ACCEPT_TIMEOUT : topoExRes_i;
+        } else {
+            continue;
+        }
         std::shared_ptr<HcclSocket> socket;
         std::string tag = TOPO_DETECT_TAG + "_" + identifier_ + "_" + std::to_string(hostPort_);
-        HcclResult ret = listenSocket_->Accept(tag, socket, SOCKET_ACCEPT_TIMEOUT);
+        HcclResult ret = listenSocket_->Accept(tag, socket, socketWaitTime);
         if (ret == HCCL_SUCCESS) {
             HCCL_INFO("listenSocket_->Accept completed.");
             u32 rankNum = 0;
@@ -127,7 +136,7 @@ HcclResult TopoInfoExchangeServer::Connect(std::map<std::string, std::shared_ptr
             expectSocketNum -= 1;
             isFirstAcceptTimeOut = false;
         } else if (ret == HCCL_E_TIMEOUT) {
-            HCCL_INFO("listenSocket_->Accept TimeOut[%lld s]", SOCKET_ACCEPT_TIMEOUT);
+            HCCL_INFO("listenSocket_->Accept TimeOut[%lld s]", socketWaitTime);
             if (isFirstAcceptTimeOut) {
                 continue;
             }
@@ -145,6 +154,10 @@ HcclResult TopoInfoExchangeServer::Connect(std::map<std::string, std::shared_ptr
 HcclResult TopoInfoExchangeServer::DisplayConnectingStatus(u32 totalSockets, u32 waitSockets,
     const std::map<std::string, std::shared_ptr<HcclSocket>> &connectSockets)
 {
+    if (totalSockets == 0 && waitSockets == 1) {
+        return HCCL_SUCCESS;
+    }
+
     // 单算子模式阶段性打印内容
     if (!isByMasterInfo_) {
         std::vector<bool> rankinfos(totalSockets, false);
@@ -180,8 +193,8 @@ HcclResult TopoInfoExchangeServer::DisplayConnectingStatus(u32 totalSockets, u32
 
         HCCL_RUN_INFO("[HCCL_TRACE] %s", infoStr.c_str());
     } else {
-        std::string infoStr = "connected Ranks[" + std::to_string(totalSockets - waitSockets) +
-        "], waiting Ranks[" + std::to_string(waitSockets) + "]";
+        std::string infoStr = "succ sockets is [" + std::to_string(totalSockets - waitSockets) +
+        "], waiting sockets is [" + std::to_string(waitSockets) + "]";
         HCCL_RUN_INFO("[HCCL_TRACE] %s , isByMasterInfo[%d]", infoStr.c_str(), isByMasterInfo_);
     }
 
@@ -285,7 +298,13 @@ HcclResult TopoInfoExchangeServer::StopSocketListen(const std::vector<HcclIpAddr
         if (GetExternalInputHcclEnableWhitelist() == HCCL_WHITELIST_ON) {
             CHK_RET(DeleteSocketWhiteList(hostPort, whitelist));
         }
-        CHK_RET(listenSocket_->DeInit());
+        if (isByMasterInfo_ || !GetExternalInputHostPortSwitch()) {
+            CHK_RET(listenSocket_->DeInit());
+        } else {
+            s32 deviceLogicId = INVALID_INT;
+            CHK_RET(hrtGetDevice(&deviceLogicId));
+            CHK_RET(PreemptPortManager::GetInstance(deviceLogicId).Release(listenSocket_));
+        }
         listenSocket_ = nullptr;
     }
     return HCCL_SUCCESS;

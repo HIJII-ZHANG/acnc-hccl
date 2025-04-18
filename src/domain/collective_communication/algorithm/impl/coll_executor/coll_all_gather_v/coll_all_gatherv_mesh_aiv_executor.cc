@@ -9,6 +9,7 @@
  */
 
 #include "coll_all_gatherv_mesh_aiv_executor.h"
+#include "alg_profiling.h"
 
 namespace hccl {
 
@@ -16,26 +17,6 @@ AllGatherVMeshAivExecutor::AllGatherVMeshAivExecutor(const HcclDispatcher dispat
                                                            std::unique_ptr<TopoMatcher> &topoMatcher)
     : CollAllGatherVExecutor(dispatcher, topoMatcher)
 {
-    isBigData_ = false;
-}
-
-void AllGatherVMeshAivExecutor::ParseParam(const OpParam& param){
-    tag_ = param.tag;
-    root_ = param.root;
-    aicpuUnfoldMode_ = param.aicpuUnfoldMode;
-    opType_ = param.opType;
-    // judge data size
-    const auto *countsPtr = static_cast<const u64*>(param.VDataDes.counts);
-    auto countsPerRank = std::vector<u64>(countsPtr, countsPtr + topoAttr_.userRankSize);
-    u64 maxCount = *std::max_element(countsPerRank.begin(), countsPerRank.end());
-    u32 unitSize = SIZE_TABLE[param.VDataDes.dataType];
-    u64 dataSize = maxCount * unitSize;
-    if (dataSize > AIV_ALL_GATHER_SMALL_SIZE) {
-        isBigData_ = true;
-    } else {
-        isBigData_ = false;
-    }
-    HCCL_INFO("[AllGatherVMeshAivExecutor][ParaseParm] isBigData_ is [%d].", isBigData_);
 }
 
 HcclResult AllGatherVMeshAivExecutor::GetIfNeedAivBuffer(bool &needAivBuffer)
@@ -58,11 +39,7 @@ HcclResult AllGatherVMeshAivExecutor::CalcCommInfo(std::vector<LevelNSubCommTran
 
 HcclResult AllGatherVMeshAivExecutor::CalcTransportMemType(TransportMemType &inputType, TransportMemType &outputType)
 {
-    if(isBigData_){
-        inputType = TransportMemType::CCL_INPUT;
-    }else{
-        inputType = TransportMemType::AIV_INPUT;
-    }
+    inputType = TransportMemType::CCL_INPUT;
     outputType = TransportMemType::AIV_OUTPUT;
     HCCL_INFO("[AllGatherVMeshAivExecutor][CalcTransportMemType] tag[%s] inputType[%d], outputType[%d].",
         tag_.c_str(), inputType, outputType);
@@ -74,6 +51,7 @@ HcclResult AllGatherVMeshAivExecutor::CalcLevel0CommInfo(TransportMemType inputT
     std::vector<LevelNSubCommTransport>& opTransport)
 {
     CommParaInfo commParaLevel0(COMM_LEVEL0, CommType::COMM_TAG_MESH);
+    commParaLevel0.meshSinglePlane = true;
     CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel0, opTransport[COMM_LEVEL0], inputType, outputType));
     return HCCL_SUCCESS;
 }
@@ -91,11 +69,7 @@ HcclResult AllGatherVMeshAivExecutor::Orchestrate(OpParam& param, AlgResourceRes
     execMem.outputPtr = param.outputPtr;
     execMem.count = (static_cast<const u64 *>(param.VDataDes.counts))[topoAttr_.userRank];
 
-    if(isBigData_){
-        execMem.inputMem = algRes.cclInputMem;
-    }else{
-        execMem.inputMem = algRes.aivInputMem;
-    }
+    execMem.inputMem = algRes.cclInputMem;
     execMem.outputMem = algRes.aivOutputMem;
     ret = KernelRun(param, execMem);
 
@@ -138,10 +112,32 @@ HcclResult AllGatherVMeshAivExecutor::KernelRun(const OpParam &param, ExecMem &e
         }
     }
     bool isOpbase = (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
+    AivOpArgs opArgs {
+        HcclCMDType::HCCL_CMD_ALLGATHER_V, execMem.inputPtr, execMem.outputPtr, execMem.count,
+        param.VDataDes.dataType, param.reduceType, param.root, isOpbase
+    };
+    AivTopoArgs topoArgs { localRank, localRankSize };
+    AivResourceArgs resourceArgs { param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size() };
+    AivAlgArgs algArgs {};
+    struct AivProfilingInfo aivProfilingInfo;
 
-    HcclResult ret = ExecuteKernelLaunch(HcclCMDType::HCCL_CMD_ALLGATHER_V, execMem.inputPtr, execMem.outputPtr,
-        execMem.count, param.VDataDes.dataType, param.reduceType, localRank, localRankSize, param.root,
-        buffersIn, buffersOut, param.tag, param.stream.ptr(), isOpbase, execMem.inputMem.size(), -1, false, &extraArgs);
+    if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
+        HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
+        HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
+    }
+
+    HcclResult ret = ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, extraArgs, aivProfilingInfo);
+    
+    TaskAivProfiler(opArgs.cmdType, aivProfilingInfo.tag, opArgs.count * sizeof(opArgs.dataType),
+        aivProfilingInfo.blockDim, topoArgs.rankSize, resourceArgs.buffersOut[topoArgs.rank], resourceArgs.stream,
+        algArgs.step, aivProfilingInfo.beginTime);
+
+    if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){ 
+        HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());
+        HCCL_PROFILER_DEL_TAG(param.tag);
+    }
+
+    blockDim_ = aivProfilingInfo.blockDim;
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[AllGatherVMeshAivExecutor][KernelRun]allgatherv aiv failed, return[%d]", ret), ret);
 

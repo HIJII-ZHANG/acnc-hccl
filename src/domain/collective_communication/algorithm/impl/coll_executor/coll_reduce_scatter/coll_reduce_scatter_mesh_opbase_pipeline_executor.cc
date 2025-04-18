@@ -51,7 +51,7 @@ HcclResult CollReduceScatterMeshOpbasePipelineExecutor::RunLoop(OpParam &param, 
         param.reduceType); // scratchMem用的cclin
     u64 bufferSize = algRes.cclInputMem.size();
 
-    auto originalAlgTypeLevel1 = static_cast<u32>(algType_) >> HCCL_LEVEL_ALGO_WIDTH;
+    auto originalAlgTypeLevel1 = static_cast<u32>(algType_.algoLevel1);
 
     for (u64 countLeft = param.DataDes.count, curCount = 0, curOffset = 0, curSize = 0; countLeft > 0;
         countLeft -= curCount) {
@@ -68,7 +68,7 @@ HcclResult CollReduceScatterMeshOpbasePipelineExecutor::RunLoop(OpParam &param, 
         bool hugeData = IsHugeData(curSize);
         bool isDeterministic = topoMatcher_->GetExternalInputHcclDeterministic();
         auto meta = HcclOpMetaInfo::GetOneForReduceScatter(originalAlgTypeLevel1, param.DataDes.dataType, reduceType,
-            hugeData, false, CopyPattern::BCOPY, false, isDeterministic);
+            hugeData, false, CopyPattern::BCOPY, false, isDeterministic, false);
         CHK_RET(InitTask(dispatcher_, const_cast<Stream&>(param.stream), meta.isEnableCache, meta.GetCacheKey()));
 
         ExecMem execMem;

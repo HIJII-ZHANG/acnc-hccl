@@ -23,23 +23,6 @@
 
 namespace hccl {
 
-typedef enum {
-    COMM_LEVEL0 = 0,    // 一级通信域(server内)
-    COMM_LEVEL0_ANYPATH_RDMA,  // anypath特性使用
-    COMM_LEVEL1,        // 二级通信域(server间)
-    COMM_LEVEL1_ANYPATH_RDMA, // anypath特性使用
-    COMM_LEVEL1_AHC,    // AHC 二级通信域(server间)
-    COMM_LEVEL2,        // 三级通信域(超节点间)
-    COMM_MESH_L0,       // mesh内
-    COMM_MESH_L1,       // mesh间
-    COMM_COMBINE,       // 打平通信域，大ring环
-    COMM_COMBINE_ORDER, // 打平通信域，按rank排序
-    COMM_LEVEL0_ANYPATH_SDMA,  // anypath特性使用
-    COMM_LEVEL1_ANYPATH_SDMA, // anypath特性使用
-    COMM_LEVEL_RESERVED,
-} CommPlane;
-
-
 class TopoInfoExtractor {
 public:
     explicit TopoInfoExtractor(HcclAlgoAttr &algoAttr, HcclTopoAttr &topoAttr, const TopoType topoType);
@@ -78,8 +61,8 @@ public:
     void GetIsBridgeVector(std::vector<bool> &isBridgeVector);
     void InitAHCConfig();
     void AHCCommSubgroupInit();
-    void GetCommPlaneSubGroupVector(std::vector<std::vector<std::vector<u32>>> &CommPlaneSubGroupVector);
-    void GetIsAsymPlanVector(std::vector<bool> &isAsymPlanVector);
+    void GetCommPlaneSubGroupVector(std::vector<std::vector<std::vector<std::vector<u32>>>> &CommPlaneSubGroupVector);
+    void GetAHCAlgOption(std::map<std::string, std::string> &ahcAlgOption);
     HcclResult GetRankVecInfo(std::vector<std::vector<std::vector<u32>>> &serverAndsuperPodToRank);
     HcclResult SetRankMap();
     void GetRankData(RankInfo &rankData);
@@ -135,10 +118,11 @@ private:
     bool isDiffDeviceType_;
     u32 gcdDeviceNumPerAggregation_;
 
-    std::vector<bool> isAsymPlanVector_;
-
     // 保存所有 level 的通信分组关系， CommPlaneSubGroupVector_[CommPlane] : 第 CommPlane 级通信域内分组信息
-    std::vector<std::vector<std::vector<u32>>> CommPlaneSubGroupVector_;
+    std::vector<std::vector<std::vector<std::vector<u32>>>> CommPlaneSubGroupVector_;
+
+    // 保存 AHC 算法中不同 level 以及组内、组间需要使用的算子配置
+    std::map<std::string, std::string> ahcAlgOption_;
 
     // 保存所有级别的通信rank关系, CommPlaneVector_[CommPlane][ringIndex]: 第CommPlane级 第ringIndex个环
     std::vector<std::vector<std::vector<RankInfo> > > CommPlaneVector_;

@@ -21,29 +21,16 @@ CollBroadcastMeshExecutor::CollBroadcastMeshExecutor(const HcclDispatcher dispat
 HcclResult CollBroadcastMeshExecutor::CalcStreamNum(u32& streamNum)
 {
     u32 totalStreamNum = 0U;
-    switch(algType_) {
-        case AlgType::ALG_4P_MESH_PLUS_HD:
-        case AlgType::ALG_4P_MESH_PLUS_RING:
-        case AlgType::ALG_4P_MESH_PLUS_NHR:
-        case AlgType::ALG_4P_MESH_PLUS_NHR_V1:
-        case AlgType::ALG_4P_MESH_PLUS_NB:
-            totalStreamNum = LEVEL0_PLANE_NUM_IN_4PMESH;
-            break;
-        default:
-            if ((workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) &&
-                (topoAttr_.deviceType == DevType::DEV_TYPE_910B) && topoAttr_.isSingleMeshAggregation ) {
-                totalStreamNum = topoAttr_.deviceNumPerAggregation;
-            } else if ((topoAttr_.deviceType == DevType::DEV_TYPE_910_93 || aicpuUnfoldMode_)) { // && (isAicpuModeEn == true)
-                totalStreamNum = topoAttr_.deviceNumPerAggregation;
-            } else if ((workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) &&
-                       (topoAttr_.deviceType == DevType::DEV_TYPE_910B) && UseInterServerPipelineAlgo(algType_)) {
-                totalStreamNum = topoAttr_.deviceNumPerAggregation + 1; /* pipeline ring场景下性能优化 */
-            } else {
-                totalStreamNum = topoAttr_.deviceNumPerAggregation - 1;
-            }
-            break;
+    if (algType_.algoLevel0 == AlgTypeLevel0::ALG_LEVEL0_4P_MESH) {
+        totalStreamNum = LEVEL0_PLANE_NUM_IN_4PMESH;
+    } else {
+        if ((workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) &&
+            (topoAttr_.deviceType == DevType::DEV_TYPE_910B) && topoAttr_.isSingleMeshAggregation ) {
+            totalStreamNum = topoAttr_.deviceNumPerAggregation;
+        } else {
+            totalStreamNum = topoAttr_.deviceNumPerAggregation - 1;
+        }
     }
-
     streamNum = totalStreamNum > 0 ? totalStreamNum - 1 : 0;
 
     HCCL_INFO("[CollBroadcastMeshExecutor][CalcStreamNum] tag[%s] streamNum_[%u]", tag_.c_str(), streamNum);
@@ -73,6 +60,7 @@ HcclResult CollBroadcastMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
 {
     u32 perDataSize = SIZE_TABLE[param.DataDes.dataType];
 
+    bool isUsedRegister = false;
     std::unique_ptr<AlgTemplateBase> level0TempAlg1;
     std::unique_ptr<AlgTemplateBase> level1TempAlg;
     std::unique_ptr<AlgTemplateBase> level0TempAlg2;
@@ -97,7 +85,7 @@ HcclResult CollBroadcastMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
     SubCommInfo level1CommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
 
     u64 curSize = execMem.count * SIZE_TABLE[param.DataDes.dataType];
-    if (UseInterServerNHRAlgo(algType_)) {
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
         HCCL_DEBUG("broadcast mesh: curSize[%llu] deviceNumPerAggregation[%u] commLevel0Size[%u]",
             curSize, topoAttr_.deviceNumPerAggregation, level0CommInfo.localRankSize);
         if (curSize / topoAttr_.deviceNumPerAggregation <= NHR_BCAST_SMALL_SIZE) {
@@ -106,10 +94,12 @@ HcclResult CollBroadcastMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
             level1TempAlg.reset(new (std::nothrow) BroadcastNHR(dispatcher_));
         }
         HCCL_INFO("broadcast mesh: using nhr algo inter-server.");
-    } else if (UseInterServerNHRV1Algo(algType_)) {
-        level1TempAlg.reset(new (std::nothrow) BroadcastNHRV1(dispatcher_));
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
+        isUsedRegister = true;
+        level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_BROADCAST_NHR_V1,
+            dispatcher_);
         HCCL_INFO("broadcast mesh: using nhr_v1 algo inter-server.");
-    } else if (UseInterServerNBAlgo(algType_)) {
+    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
         const u32 level1RankSize = level1CommInfo.localRankSize;
         if (ShouldUseBinaryBroadcastOfNB(curSize / topoAttr_.deviceNumPerAggregation, level1RankSize,
                 topoAttr_.userRankSize, topoAttr_.deviceNumPerAggregation)) {
@@ -171,9 +161,23 @@ HcclResult CollBroadcastMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
     CHK_RET(GetRankByUserRank(COMM_LEVEL1, commIndex, subUserrankRoot, subRoot));
 
     // 增加偏移参数
-    CHK_RET(level1TempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, hdCount,
-                                   param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, subRoot,
-                                   std::vector<Slice>(0), slice[level0CommInfo.localRank].offset));
+    if (isUsedRegister) {
+        PrepareData prepareData;
+        prepareData.inputMem = execMem.inputMem;
+        prepareData.outputMem = execMem.outputMem;
+        prepareData.scratchMem = execMem.outputMem;
+        prepareData.count = hdCount;
+        prepareData.dataType = param.DataDes.dataType;
+        prepareData.stream = param.stream;
+        prepareData.reductionOp = HCCL_REDUCE_RESERVED;
+        prepareData.root = subRoot;
+        prepareData.baseOffset = slice[level0CommInfo.localRank].offset;
+        CHK_RET(level1TempAlg->Prepare(prepareData));
+    } else {
+        CHK_RET(level1TempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, hdCount,
+            param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, subRoot,
+            std::vector<Slice>(0), slice[level0CommInfo.localRank].offset));
+    }
 
     u32 rankSize = level1CommInfo.localRankSize;
     CHK_RET(level1TempAlg->RegisterProfiler((0 << PROF_RINGINDEX_OFFSET_OF_PLANEID) +

@@ -11,7 +11,6 @@
 #include "opexecounter.h"
 #include "adapter_rts_common.h"
 #include "externalinput_pub.h"
-#include "heartbeat_pub.h"
 #include "dispatcher.h"
 namespace hccl {
 OpExeCounter& OpExeCounter::GetInstance(s32 deviceLogicID)
@@ -52,21 +51,22 @@ HcclResult OpExeCounter::InitCounter()
             HCCL_WARNING("addOneMem_ should be nullptr");
             addOneMem_ = nullptr;
         }
-        CHK_RET(hrtMalloc(&headCountMem_, sizeof(int32_t)));
+        memSize_ = sizeof(int32_t);
+        CHK_RET(hrtMalloc(&headCountMem_, memSize_));
         CHK_PTR_NULL(headCountMem_);
-        CHK_RET(hrtMemSyncCopy(headCountMem_, sizeof(int32_t), &defCount,
-            sizeof(int32_t), HcclRtMemcpyKind::HCCL_RT_MEMCPY_KIND_HOST_TO_DEVICE));
+        CHK_RET(hrtMemSyncCopy(headCountMem_, memSize_, &defCount,
+            memSize_, HcclRtMemcpyKind::HCCL_RT_MEMCPY_KIND_HOST_TO_DEVICE));
 
-        CHK_RET(hrtMalloc(&tailCountMem_, sizeof(int32_t)));
+        CHK_RET(hrtMalloc(&tailCountMem_, memSize_));
         CHK_PTR_NULL(tailCountMem_);
-        CHK_RET(hrtMemSyncCopy(tailCountMem_, sizeof(int32_t), &defCount,
-            sizeof(int32_t), HcclRtMemcpyKind::HCCL_RT_MEMCPY_KIND_HOST_TO_DEVICE));
+        CHK_RET(hrtMemSyncCopy(tailCountMem_, memSize_, &defCount,
+            memSize_, HcclRtMemcpyKind::HCCL_RT_MEMCPY_KIND_HOST_TO_DEVICE));
 
         int32_t addOneVal = 1;
-        CHK_RET(hrtMalloc(&addOneMem_, sizeof(int32_t)));
+        CHK_RET(hrtMalloc(&addOneMem_, memSize_));
         CHK_PTR_NULL(addOneMem_);
-        CHK_RET(hrtMemSyncCopy(addOneMem_, sizeof(int32_t), &addOneVal,
-            sizeof(int32_t), HcclRtMemcpyKind::HCCL_RT_MEMCPY_KIND_HOST_TO_DEVICE));
+        CHK_RET(hrtMemSyncCopy(addOneMem_, memSize_, &addOneVal,
+            memSize_, HcclRtMemcpyKind::HCCL_RT_MEMCPY_KIND_HOST_TO_DEVICE));
         
         HCCL_RUN_INFO("alloc counter mem resource.");
     }
@@ -130,14 +130,33 @@ HcclResult OpExeCounter::GetCounter(std::pair<int32_t, int32_t> &counter)
         HCCL_DEBUG("do not need add counter");
         return HCCL_SUCCESS;
     }
-    CHK_RET(hrtMemSyncCopy(&counter.first, sizeof(int32_t), headCountMem_, sizeof(int32_t),
+    CHK_RET(hrtMemSyncCopy(&counter.first, memSize_, headCountMem_, memSize_,
         HcclRtMemcpyKind::HCCL_RT_MEMCPY_KIND_DEVICE_TO_HOST));
 
-    CHK_RET(hrtMemSyncCopy(&counter.second, sizeof(int32_t), tailCountMem_, sizeof(int32_t),
+    CHK_RET(hrtMemSyncCopy(&counter.second, memSize_, tailCountMem_, memSize_,
         HcclRtMemcpyKind::HCCL_RT_MEMCPY_KIND_DEVICE_TO_HOST));
     
     HCCL_DEBUG("head:%d, tail:%d", counter.first, counter.second);
     
+    return HCCL_SUCCESS;
+}
+
+HcclResult OpExeCounter::GetOpCountInfo(OpCounterInfo &opCounterInfo)
+{
+    opCounterInfo.isEnableCounter = GetExternalInputOpCounter();
+    if (!isNeedOpCounter_) {
+        HCCL_DEBUG("do not need add counter");
+        return HCCL_SUCCESS;
+    }
+
+    if (headCountMem_ == nullptr || tailCountMem_ == nullptr || addOneMem_ == nullptr ) {
+        HCCL_ERROR("[OpExeCounter][GetOpCountInfo] aicpu headCountMem or tailCountMem or addOneMem is nullptr");
+        return HCCL_E_PTR;
+    }
+    opCounterInfo.headCountMem = reinterpret_cast<u64>(headCountMem_);
+    opCounterInfo.tailCountMem = reinterpret_cast<u64>(tailCountMem_);
+    opCounterInfo.addOneMem = reinterpret_cast<u64>(addOneMem_);
+    opCounterInfo.memSize = memSize_;
     return HCCL_SUCCESS;
 }
 
@@ -174,14 +193,15 @@ HcclResult StarsCounter(const HcclDispatcher &dispatcher, Stream &stream, int fl
     return OpExeCounter::GetInstance(devLogicID).AddCounter(dispatcher, stream, flag);
 }
 
-HcclResult GetOpCounter(const s32 &deviceId, std::pair<int32_t, int32_t> &counter)
+HcclResult GetOpCountInfo(OpCounterInfo &opCounterInfo)
 {
-    return OpExeCounter::GetInstance(deviceId).GetCounter(counter);
+    s32 devLogicID = 0;
+    CHK_RET(hrtGetDevice(&devLogicID));
+    return OpExeCounter::GetInstance(devLogicID).GetOpCountInfo(opCounterInfo);
 }
 
 __attribute__((constructor)) void CallBackInit()
 {
-    RegisterStuckDetectCallBack(GetOpCounter);
     RegisterInitTaskCallBack(FftsHeadCounter);
     RegisterLaunchTaskCallBack(FftsTailCounter);
 }
