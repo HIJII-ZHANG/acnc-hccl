@@ -16,17 +16,19 @@
 namespace hccl {
 class AlltoAllVStagedMesh : public AlltoAllVStagedBase {
 public:
-    explicit AlltoAllVStagedMesh(const HcclDispatcher dispatcher, Stream &stream,
-        const std::vector<std::shared_ptr<LocalNotify>> &meshSignalMainToSub,
-        const std::vector<std::shared_ptr<LocalNotify>> &meshSignalSubToMain,
-        u32 userRank, std::vector<Stream> &subStreams);
+    using AlgTemplateBase::Prepare;
+    explicit AlltoAllVStagedMesh(const HcclDispatcher dispatcher);
     ~AlltoAllVStagedMesh() override;
     HcclResult Prepare(DeviceMem &sendMem, DeviceMem &recvMem, StageAlltoAllVAddrInfo &sendAddrInfo,
-        StageAlltoAllVAddrInfo &recvAddrInfo, bool isAlltoAllZCopyMode,
-        const std::vector<Stream> &subStreams = std::vector<Stream>()) override;
+        StageAlltoAllVAddrInfo &recvAddrInfo, bool isAlltoAllZCopyMode, u32 userRank, Stream &mainStream, 
+        std::vector<Stream> &subStreams, 
+        std::vector<std::shared_ptr<LocalNotify>> &meshSignalMainToSub, 
+        std::vector<std::shared_ptr<LocalNotify>> &meshSignalSubToMain) override;
     HcclResult Prepare(DeviceMem &sendMem, DeviceMem &recvMem, DeviceMem &scratchInputMem,
         DeviceMem &scratchOutputMem, StageAlltoAllVAddrInfo &sendAddrInfo, StageAlltoAllVAddrInfo &recvAddrInfo,
-        bool isAlltoAllZCopyMode, const std::vector<Stream> &subStreams = std::vector<Stream>()) override;
+        bool isAlltoAllZCopyMode, u32 userRank, Stream &mainStream, std::vector<Stream> &subStreams, 
+        std::vector<std::shared_ptr<LocalNotify>> &meshSignalMainToSub, 
+        std::vector<std::shared_ptr<LocalNotify>> &meshSignalSubToMain) override;
     HcclResult RunAsync(const u32 rank, const u32 rankSize, const std::vector<LINK> &links) override;
 
 protected:
@@ -35,10 +37,10 @@ private:
     HcclResult LoadTask(std::shared_ptr<Transport> destTransport, Stream &currentStream,
         std::vector<TxMemoryInfo> &txMems, std::vector<RxMemoryInfo> &rxMems) const;
     void BuildSendRecvMemoryInfo(std::vector<TxMemoryInfo>& txMems, std::vector<RxMemoryInfo>& rxMems, u32 destRank);
-    const std::vector<std::shared_ptr<LocalNotify>> &meshSignalMainToSub_;
-    const std::vector<std::shared_ptr<LocalNotify>> &meshSignalSubToMain_;
+    const std::vector<std::shared_ptr<LocalNotify>> *meshSignalMainToSubPtr_{nullptr};
+    const std::vector<std::shared_ptr<LocalNotify>> *meshSignalSubToMainPtr_{nullptr};
     u32 userRank_;
-    std::vector<Stream> &subStreams_;
+    std::vector<Stream> *subStreamsPtr_{nullptr};
 };
 } // namespace hccl
 #endif /* ALLTOALL_V_STAGED_MESH_PUB_H */

@@ -178,22 +178,6 @@ u64 CalculatePiplineSliceNum(HcclCMDType opType, u64 dataSize, AlgType algType, 
     return piplineSliceNum;
 }
 
-
-u64 GetGlobalMaxUserInSize(const std::vector<SendRecvInfo> &allMeshAggregationSendRecvInfo)
-{
-    u64 maxUserIn = 0;
-    for (const auto& sendRecvInfo: allMeshAggregationSendRecvInfo) {
-        u64 sendLengthSize = sendRecvInfo.sendLength.size();
-        u64 sendOffsetSize = sendRecvInfo.sendOffset.size();
-        CHK_PRT_RET(sendLengthSize != sendOffsetSize, HCCL_ERROR("invalid sendRecvInfo"), HCCL_E_PARA);
-        for (u32 index = 0; index < sendLengthSize; index++) {
-            u64 currRankUserIn = sendRecvInfo.sendLength[index] + sendRecvInfo.sendOffset[index];
-            maxUserIn = std::max(maxUserIn, currRankUserIn);
-        }
-    }
-    return maxUserIn;
-}
-
 bool HcclOpInplaceDefaultCase(const OpParam &param, u8 &isInplaceStatus)
 {
     // unknown op

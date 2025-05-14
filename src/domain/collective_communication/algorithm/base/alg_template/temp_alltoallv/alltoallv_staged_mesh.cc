@@ -10,42 +10,49 @@
 
 #include "alltoallv_staged_mesh.h"
 #include "log.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 using namespace std;
 
-AlltoAllVStagedMesh::AlltoAllVStagedMesh(const HcclDispatcher dispatcher, Stream &stream,
-    const std::vector<std::shared_ptr<LocalNotify>> &meshSignalMainToSub,
-    const std::vector<std::shared_ptr<LocalNotify>> &meshSignalSubToMain,
-    u32 userRank, std::vector<Stream> &subStreams)
-    : AlltoAllVStagedBase(dispatcher, stream),
-      meshSignalMainToSub_(meshSignalMainToSub),
-      meshSignalSubToMain_(meshSignalSubToMain),
-      userRank_(userRank),
-      subStreams_(subStreams)
-{}
+AlltoAllVStagedMesh::AlltoAllVStagedMesh(const HcclDispatcher dispatcher)
+    : AlltoAllVStagedBase(dispatcher)
+{
+}
 
 AlltoAllVStagedMesh::~AlltoAllVStagedMesh() {}
 
 // 图模式Prepare入口
 HcclResult AlltoAllVStagedMesh::Prepare(DeviceMem &sendMem, DeviceMem &recvMem, StageAlltoAllVAddrInfo &sendAddrInfo,
-    StageAlltoAllVAddrInfo &recvAddrInfo, bool isAlltoAllZCopyMode, const std::vector<Stream> &subStreams)
+    StageAlltoAllVAddrInfo &recvAddrInfo, bool isAlltoAllZCopyMode, u32 userRank, Stream &mainStream,
+    std::vector<Stream> &subStreams,
+    std::vector<std::shared_ptr<LocalNotify>> &meshSignalMainToSub,
+    std::vector<std::shared_ptr<LocalNotify>> &meshSignalSubToMain)
 {
-    sendMem_ = sendMem;
-    recvMem_ = recvMem;
-    sendAddrInfo_ = sendAddrInfo;
-    recvAddrInfo_ = recvAddrInfo;
-    subStreams_ = subStreams;
-    isAlltoAllZCopyMode_ = isAlltoAllZCopyMode;
+    userRank_ = userRank;
+    subStreamsPtr_ = &subStreams;
+    meshSignalMainToSubPtr_ = &meshSignalMainToSub;
+    meshSignalSubToMainPtr_ = &meshSignalSubToMain;
 
-    HCCL_DEBUG("[AlltoAllVStagedMesh][Prepare] finished and isAlltoAllZCopyMode_[%d]", isAlltoAllZCopyMode_);
-    return HCCL_SUCCESS;
+    HCCL_DEBUG("[AlltoAllVStagedMesh][Prepare] and isAlltoAllZCopyMode_[%d]", isAlltoAllZCopyMode_);
+    return AlltoAllVStagedBase::Prepare(sendMem, recvMem, sendAddrInfo, recvAddrInfo,
+        isAlltoAllZCopyMode, mainStream);
 }
 
 HcclResult AlltoAllVStagedMesh::Prepare(DeviceMem &sendMem, DeviceMem &recvMem, DeviceMem &scratchInputMem,
     DeviceMem &scratchOutputMem, StageAlltoAllVAddrInfo &sendAddrInfo, StageAlltoAllVAddrInfo &recvAddrInfo,
-    bool isAlltoAllZCopyMode, const std::vector<Stream> &subStreams)
+    bool isAlltoAllZCopyMode, u32 userRank, Stream &mainStream, std::vector<Stream> &subStreams,
+    std::vector<std::shared_ptr<LocalNotify>> &meshSignalMainToSub,
+    std::vector<std::shared_ptr<LocalNotify>> &meshSignalSubToMain)
 {
+    (void)userRank_;
+    (void)subStreamsPtr_;
+    (void)meshSignalMainToSubPtr_;
+    (void)meshSignalSubToMainPtr_;
+    (void)scratchInputMem;
+    (void)scratchOutputMem;
+    CHK_RET(AlltoAllVStagedBase::Prepare(sendMem, recvMem, sendAddrInfo, recvAddrInfo,
+        isAlltoAllZCopyMode, mainStream));
     HCCL_ERROR("AlltoAllv Staged Mesh is not supported in Op base mode!");
     return HCCL_E_NOT_SUPPORT;
 }
@@ -63,9 +70,9 @@ HcclResult AlltoAllVStagedMesh::RunAsync(const u32 rank, const u32 rankSize, con
         links.size()),
         HCCL_E_PARA);
 
-    CHK_PRT_RET(rankSize > 1 && subStreams_.size() < rankSize - 2, // 从流个数是rankSize - 2，ranksize为1时不需要校验
+    CHK_PRT_RET(rankSize > 1 && subStreamsPtr_->size() < rankSize - 2, // 从流个数是rankSize - 2，ranksize为1时不需要校验
         HCCL_ERROR("[AlltoAllVStagedMesh][RunAsync]: rankSize[%u] and stream size[%llu] do not match", rankSize,
-        subStreams_.size()),
+        subStreamsPtr_->size()),
         HCCL_E_PARA);
 
     bool sizeEqual = (sendAddrInfo_.size() == recvAddrInfo_.size() && sendAddrInfo_.size() == rankSize);
@@ -108,14 +115,16 @@ HcclResult AlltoAllVStagedMesh::RunZCopyMode(const u32 rank, const u32 rankSize,
 {
     // 从stream wait, 主stream record
     for (u32 i = 0; i < rankSize - 2; i++) { // 从stream 个数 = ranksize -2
-        CHK_RET(LocalNotify::Wait(subStreams_[i], dispatcher_, meshSignalMainToSub_[i], INVALID_VALUE_STAGE));
-        CHK_RET(LocalNotify::Post(mainStream_, dispatcher_, meshSignalMainToSub_[i], INVALID_VALUE_STAGE));
+        CHK_RET(LocalNotify::Wait((*subStreamsPtr_)[i], dispatcher_, (*meshSignalMainToSubPtr_)[i],
+                                  INVALID_VALUE_STAGE));
+        CHK_RET(LocalNotify::Post(*mainStreamPtr_, dispatcher_, (*meshSignalMainToSubPtr_)[i],
+                                  INVALID_VALUE_STAGE));
     }
 
     for (u32 i = 1; i < rankSize; i++) {
         u32 destRank = (rank + i) % rankSize;
         shared_ptr<Transport> destTransport = links[destRank];
-        Stream &currentStream = (i == 1) ? mainStream_ : subStreams_[i - 2];
+        Stream &currentStream = (i == 1) ? *mainStreamPtr_ : (*subStreamsPtr_)[i - 2];
 
         u32 sendDataNum = sendAddrInfo_[destRank].size();
         vector<TxMemoryInfo> txMems(sendDataNum);
@@ -127,11 +136,13 @@ HcclResult AlltoAllVStagedMesh::RunZCopyMode(const u32 rank, const u32 rankSize,
     }
     // 主stream wait, 从stream record
     for (u32 i = 0; i < rankSize - 2; i++) { // 从stream 个数 = ranksize -2
-        CHK_RET(LocalNotify::Wait(mainStream_, dispatcher_, meshSignalSubToMain_[i], INVALID_VALUE_STAGE));
-        CHK_RET(LocalNotify::Post(subStreams_[i], dispatcher_, meshSignalSubToMain_[i], INVALID_VALUE_STAGE));
+        CHK_RET(LocalNotify::Wait(*mainStreamPtr_, dispatcher_, (*meshSignalSubToMainPtr_)[i],
+                                  INVALID_VALUE_STAGE));
+        CHK_RET(LocalNotify::Post((*subStreamsPtr_)[i], dispatcher_, (*meshSignalSubToMainPtr_)[i],
+                                  INVALID_VALUE_STAGE));
     }
 
-    CHK_RET(AlgTemplateBase::ExecEmptyTask(sendMem_, recvMem_, mainStream_, dispatcher_));
+    CHK_RET(AlgTemplateBase::ExecEmptyTask(sendMem_, recvMem_, *mainStreamPtr_, dispatcher_));
     return HCCL_SUCCESS;
 }
 
@@ -148,4 +159,5 @@ HcclResult AlltoAllVStagedMesh::LoadTask(shared_ptr<Transport> destTransport, St
     CHK_RET(destTransport->RxDataSignal(currentStream));    // wait send Ready
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_ALL_2_ALL_V_STAGED_MESH, AlltoAllVStagedMesh);
 } // namespace hccl

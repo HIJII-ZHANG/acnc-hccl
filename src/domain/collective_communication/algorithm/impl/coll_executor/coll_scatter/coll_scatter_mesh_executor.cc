@@ -84,11 +84,10 @@ HcclResult CollScatterMeshExecutor::KernelRun(const OpParam &param, ExecMem &exe
     DeviceMem scatterMeshOutput = execMem.inputMem.range(serverSliceOffset, serverSliceSize);
     CHK_SMART_PTR_NULL(scatterMeshOutput);
 
-    std::unique_ptr<AlgTemplateBase> level0TempAlg;
-    level0TempAlg.reset(
-        new (std::nothrow) ScatterMesh(dispatcher_, level0LocalRank, level0LocalRankSize));
+    std::unique_ptr<AlgTemplateBase> level0TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_SCATTER_MESH, dispatcher_);
     CHK_SMART_PTR_NULL(level0TempAlg);
-
+    CHK_RET(level0TempAlg->Prepare(level0LocalRank, level0LocalRankSize));
     // 偏移需要带入prepare
     u32 rootRankLevel0 = 0;
     CHK_RET(GetRankByUserRank(COMM_LEVEL0, COMM_INDEX_0, subRoot, rootRankLevel0));

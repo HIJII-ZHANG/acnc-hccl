@@ -67,7 +67,7 @@ uint64_t hrtMsprofGetHashId(const char *hashInfo, uint32_t length)
 
 uint64_t hrtMsprofSysCycleTime(void)
 {
-    if (!GetExternalInputHcclIfProf()) {
+    if (!GetIfProfile()) {
         return 0;
     }
     u64 ret = DlProfFunction::GetInstance().dlMsprofSysCycleTime();

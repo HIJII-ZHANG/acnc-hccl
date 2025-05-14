@@ -64,6 +64,10 @@ public:
 
     // 处理RingBuffer
     HcclResult ProcessRingBuffer(ZeroCopyRingBufferItem *ringBuffer, u32 *head, u32 *tail);
+    // 处理引用计数
+    u32 GetCommRefCnt();
+    HcclResult IncreCommRefCnt();
+    HcclResult DecreCommRefCnt();
 
 private:
     ZeroCopyAddressMgr(const ZeroCopyAddressMgr&) = delete;
@@ -100,6 +104,7 @@ private:
         u64 end = 0;
     };
 
+    u32 commRefCnt_{0};
     std::mutex lock_;
     std::mutex processRingBufferLock_;
     // 每个device保存自己的预留内存，每个内存的key都是对端基地址，value是映射关系

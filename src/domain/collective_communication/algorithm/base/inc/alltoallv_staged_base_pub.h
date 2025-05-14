@@ -11,34 +11,28 @@
 #ifndef ALLTOALL_V_STAGED_BASE_PUB_H
 #define ALLTOALL_V_STAGED_BASE_PUB_H
 
+#include "alg_template_base_pub.h"
 #include "alltoallv_staged_calculator_pub.h"
 
 namespace hccl {
-class AlltoAllVStagedBase {
+class AlltoAllVStagedBase : public AlgTemplateBase{
 public:
-    explicit AlltoAllVStagedBase(const HcclDispatcher dispatcher, Stream &stream);
-    virtual ~AlltoAllVStagedBase() = default;
+    explicit AlltoAllVStagedBase(const HcclDispatcher dispatcher);
+    virtual ~AlltoAllVStagedBase();
 
     virtual HcclResult Prepare(DeviceMem &sendMem, DeviceMem &recvMem, StageAlltoAllVAddrInfo& sendAddrInfo,
-        StageAlltoAllVAddrInfo& recvAddrInfo, bool isAlltoAllZCopyMode,
-        const std::vector<Stream> &subStreams = std::vector<Stream>()) = 0;
-    virtual HcclResult Prepare(DeviceMem &sendMem, DeviceMem &recvMem, DeviceMem &scratchInputMem,
-        DeviceMem &scratchOutputMem, StageAlltoAllVAddrInfo &sendAddrInfo, StageAlltoAllVAddrInfo &recvAddrInfo,
-        bool isAlltoAllZCopyMode, const std::vector<Stream> &subStreams = std::vector<Stream>()) = 0;
-    virtual HcclResult RunAsync(const u32 rank, const u32 rankSize, const std::vector<LINK> &links) = 0;
+        StageAlltoAllVAddrInfo& recvAddrInfo, bool isAlltoAllZCopyMode, Stream &mainStream) override;
 
 protected:
     HcclResult LocalCopy(u32 rank);
-
-    const HcclDispatcher dispatcher_;
 
     DeviceMem sendMem_;
     DeviceMem recvMem_;
 
     StageAlltoAllVAddrInfo sendAddrInfo_;
     StageAlltoAllVAddrInfo recvAddrInfo_;
-    Stream &mainStream_;
     bool isAlltoAllZCopyMode_ = false;
+    Stream *mainStreamPtr_{nullptr};
 };
 } // namespace hccl
 #endif /* ALLTOALL_V_STAGED_BASE_PUB_H */

@@ -851,6 +851,10 @@ HcclResult HcclCommunicatorAttrs::UpdateNicList()
         const char *charNicList = nicListString.c_str();
         HCCL_DEBUG("[HcclCommunicatorAttrs][Init] The subcommunication domain related nicList_: %s", charNicList);
     }
+    // 将更新的nicList_刷新到rankInfoList_中
+    for (u32 i = 0; i < rankInfoList_.size(); i++) {
+        rankInfoList_[i].nicIdx.assign(nicList_.begin(), nicList_.end());
+    }
     return  HCCL_SUCCESS;
 }
 HcclResult HcclCommunicatorAttrs::SetLocalRankInfo()

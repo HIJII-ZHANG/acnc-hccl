@@ -395,7 +395,7 @@ HcclResult CollAlltoAllExecutor::CheckNeedRecreateComm(u64 lastScratchMemSize, b
     return HCCL_SUCCESS;
 }
 
-HcclResult CollAlltoAllExecutor::RunAlltoAllTemplate(const std::unique_ptr<AlltoAllVPairWise> &executor,
+HcclResult CollAlltoAllExecutor::RunAlltoAllTemplate(const std::unique_ptr<AlgTemplateBase> &executor,
     const SubCommInfo &commInfo)
 {
     HcclResult ret = executor->RunAsync(commInfo.localRank, commInfo.localRankSize, commInfo.links);
@@ -407,7 +407,7 @@ HcclResult CollAlltoAllExecutor::RunAlltoAllTemplate(const std::unique_ptr<Allto
     return HCCL_SUCCESS;
 }
 
-HcclResult CollAlltoAllExecutor::RunAlltoAllVTemplateStaged(const std::unique_ptr<AlltoAllVStagedBase> &executor,
+HcclResult CollAlltoAllExecutor::RunAlltoAllVTemplateStaged(const std::unique_ptr<AlgTemplateBase> &executor,
     const SubCommInfo &commInfo)
 {
     HcclResult ret = executor->RunAsync(commInfo.localRank, commInfo.localRankSize, commInfo.links);
@@ -420,7 +420,7 @@ HcclResult CollAlltoAllExecutor::RunAlltoAllVTemplateStaged(const std::unique_pt
 }
 
 // deprecated
-HcclResult CollAlltoAllExecutor::RunTemplateWithVirtualLink(const std::unique_ptr<AlltoAllVStagedBase> &executor,
+HcclResult CollAlltoAllExecutor::RunTemplateWithVirtualLink(const std::unique_ptr<AlgTemplateBase> &executor,
     const SubCommInfo &commInfo)
 {
     HcclResult ret = executor->RunAsync(commInfo.localRank, commInfo.localRankSize, commInfo.virtualLinks);

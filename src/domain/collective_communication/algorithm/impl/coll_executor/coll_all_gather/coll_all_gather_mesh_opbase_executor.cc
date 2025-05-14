@@ -105,12 +105,11 @@ HcclResult CollAllGatherMeshOpbaseExecutor::KernelRun(const OpParam &param, Exec
         "", execMem.inputPtr, execMem.outputPtr, param.DataDes.count, param.DataDes.dataType, 0, HCCL_REDUCE_RESERVED
     };
 
-    std::unique_ptr<AlgTemplateBase> level0TempAlg;
-    level0TempAlg.reset(
-        new (std::nothrow) AllgatherMeshDirect(dispatcher_, algResResp_->slaveStreams,
-        algResResp_->notifiesMain, algResResp_->notifiesAux, level0CommInfo.localRank, level0CommInfo.localRankSize,
-        topoAttr_.userRank, &opInfo));
+    std::unique_ptr<AlgTemplateBase> level0TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_ALL_GATHER_MESH_DIRECT, dispatcher_);
     CHK_SMART_PTR_NULL(level0TempAlg);
+    CHK_RET(level0TempAlg->Prepare(algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
+        topoAttr_.userRank, &opInfo, level0CommInfo.localRank, level0CommInfo.localRankSize));
     CHK_RET(level0TempAlg->Prepare(currentOutputMem, currentOutputMem, execMem.inputMem, execMem.count,
         param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, LEVEL0_BRIDGE_RANK_ID,
         dataSegsSlice, baseOffset));

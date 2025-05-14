@@ -65,8 +65,9 @@ HcclResult CollCommExecutor::MultiRingAllReduce(const std::string &tag, DeviceMe
         u32 rankSize = level0RingCommInfo.localRankSize;
         u32 ringIndexOp = ringIndex;
         std::unique_ptr<AlgTemplateBase> tempAlg;
-        tempAlg.reset(new (std::nothrow) AllReduceRing(dispatcher_, reduceAttr));
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_RING, dispatcher_);
         CHK_SMART_PTR_NULL(tempAlg);
+        CHK_RET(tempAlg->Prepare(reduceAttr));
 
         if (ringIndex != (ringNum - 1)) {  // 0~ringNum-2的环
             if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB) { // offline
@@ -107,8 +108,11 @@ HcclResult CollCommExecutor::MultiRingAllReduce(const std::string &tag, DeviceMe
             CHK_PRT_RET(ret != HCCL_SUCCESS,
                 HCCL_ERROR("[CollCommExecutor][MultiRingAllReduce]stream[%u] record failed", ringIndex), ret);
         } else {  // 主环
-            tempAlg.reset(new (std::nothrow) AllReduceRing(dispatcher_, reduceAttr));
+            tempAlg =
+                AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_RING, dispatcher_);
             CHK_SMART_PTR_NULL(tempAlg);
+            CHK_RET(tempAlg->Prepare(reduceAttr));
+
             ret = tempAlg->Prepare(inputMem, outputMem, outputMem, count, dataType, stream,
                 reductionOp, LEVEL0_BRIDGE_RANK_ID, singleRingSliceZero, baseOffset, ringNics[ringIndex]);
             CHK_PRT_RET(ret != HCCL_SUCCESS,
@@ -238,13 +242,17 @@ HcclResult CollCommExecutor::MultiRingAllGather(const std::string &tag, DeviceMe
                 // 如何判断是否环内是否有数据, 以ring的第一个rank的 size为判断依据
                 std::unique_ptr<AlgTemplateBase> tempAlg;
                 if (opInfo != nullptr) {
-                    tempAlg.reset(new (std::nothrow) AllGatherRingConcurrentDirect(
-                        dispatcher_, opInfo, topoAttr_.userRank, subStreamsInOneRing,
-                        mainSignalsInOneRing, subSignalsInOneRing, rankOrder, userMemOutputSlices));
+                    tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                        TemplateType::TEMPLATE_ALL_GATHER_RING_CONCURRENT_DIRECT, dispatcher_);
+                    CHK_SMART_PTR_NULL(tempAlg);
+                    CHK_RET(tempAlg->Prepare(const_cast<HcomCollOpInfo *>(opInfo), topoAttr_.userRank,
+                        subStreamsInOneRing, mainSignalsInOneRing, subSignalsInOneRing, rankOrder, userMemOutputSlices));
                 } else {
-                    tempAlg.reset(new (std::nothrow) AllGatherRing(dispatcher_));
+                    tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                        TemplateType::TEMPLATE_ALL_GATHER_RING, dispatcher_);
+                    CHK_SMART_PTR_NULL(tempAlg);
                 }
-                CHK_SMART_PTR_NULL(tempAlg);
+
                 ret = tempAlg->Prepare(outputMem, outputMem, inputMem, count, dataType,
                     algResResp_->slaveStreams[ringIndex], HcclReduceOp::HCCL_REDUCE_RESERVED, LEVEL0_BRIDGE_RANK_ID,
                     singleRingSliceZero, baseOffset, ringNics[ringIndex]);
@@ -277,13 +285,17 @@ HcclResult CollCommExecutor::MultiRingAllGather(const std::string &tag, DeviceMe
         } else { // 主环
             std::unique_ptr<AlgTemplateBase> tempAlg;
             if (opInfo != nullptr) {
-                tempAlg.reset(new (std::nothrow) AllGatherRingConcurrentDirect(
-                    dispatcher_, opInfo, topoAttr_.userRank, subStreamsInOneRing, mainSignalsInOneRing,
-                    subSignalsInOneRing, rankOrder, userMemOutputSlices));
+                tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_ALL_GATHER_RING_CONCURRENT_DIRECT, dispatcher_);
+                CHK_SMART_PTR_NULL(tempAlg);
+                CHK_RET(tempAlg->Prepare(const_cast<HcomCollOpInfo *>(opInfo), topoAttr_.userRank, subStreamsInOneRing,
+                    mainSignalsInOneRing, subSignalsInOneRing, rankOrder, userMemOutputSlices));
             } else {
-                tempAlg.reset(new (std::nothrow) AllGatherRing(dispatcher_));
+                tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_ALL_GATHER_RING, dispatcher_);
+                CHK_SMART_PTR_NULL(tempAlg);
             }
-            CHK_SMART_PTR_NULL(tempAlg);
+
             ret = tempAlg->Prepare(outputMem, outputMem, inputMem, count, dataType, stream, HCCL_REDUCE_RESERVED,
                 LEVEL0_BRIDGE_RANK_ID, singleRingSliceZero, baseOffset, ringNics[ringIndex]);
             CHK_PRT_RET(ret != HCCL_SUCCESS,
@@ -403,13 +415,17 @@ HcclResult CollCommExecutor::MultiRingAllGatherConcurrent(const std::string &tag
                 // 如何判断是否环内是否有数据, 以ring的第一个rank的 size为判断依据
                 std::unique_ptr<AlgTemplateBase> tempAlg;
                 if (opInfo != nullptr) {
-                    tempAlg.reset(new (std::nothrow) AllGatherRingConcurrentDirect(
-                        dispatcher_, opInfo, topoAttr_.userRank, subStreamsInOneRing,
-                        mainSignalsInOneRing, subSignalsInOneRing, rankOrder, userMemOutputSlices, isSdma));
+                    tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                        TemplateType::TEMPLATE_ALL_GATHER_RING_CONCURRENT_DIRECT, dispatcher_);
+                    CHK_SMART_PTR_NULL(tempAlg);
+                    CHK_RET(tempAlg->Prepare(const_cast<HcomCollOpInfo *>(opInfo), topoAttr_.userRank, 
+                        subStreamsInOneRing, mainSignalsInOneRing, subSignalsInOneRing, rankOrder,
+                        userMemOutputSlices, isSdma));
                 } else {
-                    tempAlg.reset(new (std::nothrow) AllGatherRing(dispatcher_));
+                    tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                        TemplateType::TEMPLATE_ALL_GATHER_RING, dispatcher_);
+                    CHK_SMART_PTR_NULL(tempAlg);
                 }
-                CHK_SMART_PTR_NULL(tempAlg);
                 ret = tempAlg->Prepare(outputMem, outputMem, inputMem, count, dataType,
                     algResResp_->slaveStreams[ringIndex], HcclReduceOp::HCCL_REDUCE_RESERVED, LEVEL0_BRIDGE_RANK_ID,
                     singleRingSliceZero, baseOffset, ringNics[ringIndex%halfRingSize]);
@@ -442,13 +458,16 @@ HcclResult CollCommExecutor::MultiRingAllGatherConcurrent(const std::string &tag
         } else { // 主环
             std::unique_ptr<AlgTemplateBase> tempAlg;
             if (opInfo != nullptr) {
-                tempAlg.reset(new (std::nothrow) AllGatherRingConcurrentDirect(
-                    dispatcher_, opInfo, topoAttr_.userRank, subStreamsInOneRing, mainSignalsInOneRing,
-                    subSignalsInOneRing, rankOrder, userMemOutputSlices, isSdma));
+                tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_ALL_GATHER_RING_CONCURRENT_DIRECT, dispatcher_);
+                CHK_SMART_PTR_NULL(tempAlg);
+                CHK_RET(tempAlg->Prepare(const_cast<HcomCollOpInfo *>(opInfo), topoAttr_.userRank, subStreamsInOneRing,
+                        mainSignalsInOneRing, subSignalsInOneRing, rankOrder, userMemOutputSlices, isSdma));
             } else {
-                tempAlg.reset(new (std::nothrow) AllGatherRing(dispatcher_));
+                tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_ALL_GATHER_RING, dispatcher_);
+                CHK_SMART_PTR_NULL(tempAlg);
             }
-            CHK_SMART_PTR_NULL(tempAlg);
             ret = tempAlg->Prepare(outputMem, outputMem, inputMem, count, dataType, stream, HCCL_REDUCE_RESERVED,
                 LEVEL0_BRIDGE_RANK_ID, singleRingSliceZero, baseOffset, ringNics[ringIndex%halfRingSize]);
             CHK_PRT_RET(ret != HCCL_SUCCESS,
@@ -529,10 +548,12 @@ HcclResult CollCommExecutor::Level1AllGatherConcurrent(DeviceMem inputMem, Devic
         SubCommInfo level1TempCommInfo = level1MultSlice[planeIndex].first ? level1CommInfo : level1RdmaCommInfo;
         std::unique_ptr<AlgTemplateBase> level1TempAlg;
         if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
-            level1TempAlg.reset(new (std::nothrow) AllGatherNB(dispatcher_));
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_ALL_GATHER_NB, dispatcher_);
             HCCL_INFO("allgather ring: using nonuniform-bruck algo inter-server.");
         } else {
-            level1TempAlg.reset(new (std::nothrow) AllGatherRing(dispatcher_));
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_ALL_GATHER_RING, dispatcher_);
             HCCL_INFO("allgather ring: using ring algo inter-server.");
         }
         CHK_SMART_PTR_NULL(level1TempAlg);
@@ -699,11 +720,16 @@ HcclResult CollCommExecutor::MultiRingReduceScatter(const std::string &tag, Devi
             } else {
                 std::unique_ptr<AlgTemplateBase> tempAlg;
                 if (opInfo != nullptr) {
-                    tempAlg.reset(new (std::nothrow) ReduceScatterRingConcurrentDirect(
-                        dispatcher_, reduceAttr, opInfo, topoAttr_.userRank, subStreamsInOneRing,
+                    tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                        TemplateType::TEMPLATE_REDUCESCATTER_RING_DIRECT, dispatcher_);
+                    CHK_SMART_PTR_NULL(tempAlg);
+                    CHK_RET(tempAlg->Prepare(reduceAttr, opInfo, topoAttr_.userRank, subStreamsInOneRing,
                         mainSignalsInOneRing, subSignalsInOneRing, rankOrder, userMemInputSlices));
                 } else {
-                    tempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
+                    tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                        TemplateType::TEMPLATE_REDUCESCATTER_RING, dispatcher_);
+                    CHK_SMART_PTR_NULL(tempAlg);
+                    CHK_RET(tempAlg->Prepare(reduceAttr));
                 }
                 CHK_SMART_PTR_NULL(tempAlg);
 
@@ -742,11 +768,16 @@ HcclResult CollCommExecutor::MultiRingReduceScatter(const std::string &tag, Devi
         } else { // 主环 最后一个环
             std::unique_ptr<AlgTemplateBase> tempAlg;
             if (opInfo != nullptr) {
-                tempAlg.reset(new (std::nothrow) ReduceScatterRingConcurrentDirect(
-                    dispatcher_, reduceAttr, opInfo, topoAttr_.userRank, subStreamsInOneRing, mainSignalsInOneRing,
-                    subSignalsInOneRing, rankOrder, userMemInputSlices));
+                tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_REDUCESCATTER_RING_DIRECT, dispatcher_);
+                CHK_SMART_PTR_NULL(tempAlg);
+                CHK_RET(tempAlg->Prepare(reduceAttr, opInfo, topoAttr_.userRank, subStreamsInOneRing,
+                    mainSignalsInOneRing, subSignalsInOneRing, rankOrder, userMemInputSlices));
             } else {
-                tempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
+                tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_REDUCESCATTER_RING, dispatcher_);
+                CHK_SMART_PTR_NULL(tempAlg);
+                CHK_RET(tempAlg->Prepare(reduceAttr));
             }
             CHK_SMART_PTR_NULL(tempAlg);
             ret = tempAlg->Prepare(inputMem, inputMem, outputMem, count, dataType, stream,
@@ -808,7 +839,9 @@ HcclResult CollCommExecutor::MultiRingGather(const std::string &tag, DeviceMem i
             HCCL_ERROR("[CommonOperator][MultiRingGather]invalid root rank[%u] to get user rank", root), ret);
 
         std::unique_ptr<AlgTemplateBase> tempAlg = nullptr;
-        EXECEPTION_CATCH((tempAlg = std::make_unique<GatherRing>(dispatcher_)), return HCCL_E_PTR);
+        EXECEPTION_CATCH(
+            (tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_GATHER_RING, dispatcher_)),
+            return HCCL_E_PTR);
 
         if (ringIndex != (ringNum - 1)) {  // 0~ringNum-2的环
             if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB) { // offline
@@ -848,7 +881,7 @@ HcclResult CollCommExecutor::MultiRingGather(const std::string &tag, DeviceMem i
             CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[CommonOperator][MultiRingGather]stream[%u] record failed", \
                 ringIndex), ret);
         } else {  // 主环
-            tempAlg.reset(new (std::nothrow) GatherRing(dispatcher_));
+            tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_GATHER_RING, dispatcher_);
             CHK_SMART_PTR_NULL(tempAlg);
 
             ret = tempAlg->Prepare(inputMem, outputMem, outputMem, count, dataType, stream,
@@ -972,11 +1005,16 @@ HcclResult CollCommExecutor::MultiRingReduceScatterConcurrent(const std::string 
             } else {
                 std::unique_ptr<AlgTemplateBase> tempAlg;
                 if (opInfo != nullptr) {
-                    tempAlg.reset(new (std::nothrow) ReduceScatterRingConcurrentDirect(
-                        dispatcher_, reduceAttr, opInfo, topoAttr_.userRank, subStreamsInOneRing,
+                    tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                        TemplateType::TEMPLATE_REDUCESCATTER_RING_DIRECT, dispatcher_);
+                    CHK_SMART_PTR_NULL(tempAlg);
+                    CHK_RET(tempAlg->Prepare(reduceAttr, opInfo, topoAttr_.userRank, subStreamsInOneRing,
                         mainSignalsInOneRing, subSignalsInOneRing, rankOrder, userMemInputSlices, isSdma));
                 } else {
-                    tempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
+                    tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                        TemplateType::TEMPLATE_REDUCESCATTER_RING, dispatcher_);
+                    CHK_SMART_PTR_NULL(tempAlg);
+                    CHK_RET(tempAlg->Prepare(reduceAttr));
                 }
                 CHK_SMART_PTR_NULL(tempAlg);
 
@@ -1019,11 +1057,16 @@ HcclResult CollCommExecutor::MultiRingReduceScatterConcurrent(const std::string 
         } else { // 主环 最后一个环
             std::unique_ptr<AlgTemplateBase> tempAlg;
             if (opInfo != nullptr) {
-                tempAlg.reset(new (std::nothrow) ReduceScatterRingConcurrentDirect(
-                    dispatcher_, reduceAttr, opInfo, topoAttr_.userRank, subStreamsInOneRing, mainSignalsInOneRing,
-                    subSignalsInOneRing, rankOrder, userMemInputSlices, isSdma));
+                tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_REDUCESCATTER_RING_DIRECT, dispatcher_);
+                CHK_SMART_PTR_NULL(tempAlg);
+                CHK_RET(tempAlg->Prepare(reduceAttr, opInfo, topoAttr_.userRank, subStreamsInOneRing,
+                    mainSignalsInOneRing, subSignalsInOneRing, rankOrder, userMemInputSlices, isSdma));
             } else {
-                tempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
+                tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_REDUCESCATTER_RING, dispatcher_);
+                CHK_SMART_PTR_NULL(tempAlg);
+                CHK_RET(tempAlg->Prepare(reduceAttr));
             }
             CHK_SMART_PTR_NULL(tempAlg);
             ret = tempAlg->Prepare(inputMem, inputMem, outputMem, count, dataType, stream,
@@ -1106,13 +1149,16 @@ HcclResult CollCommExecutor::Level1ReduceScatterConcurrent(DeviceMem inputMem, D
         SubCommInfo level1TempCommInfo = level1MultSlice[planeIndex].first ? level1CommInfo : level1RdmaCommInfo;
         std::unique_ptr<AlgTemplateBase> level1TempAlg;
         if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
-            level1TempAlg.reset(new (std::nothrow) ReduceScatterNB(dispatcher_, reduceAttr));
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_REDUCESCATTER_NB, dispatcher_);
             HCCL_INFO("reducescatter ring: using nonuniform-bruck algo inter-server.");
         } else {
-            level1TempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_REDUCESCATTER_RING, dispatcher_);
             HCCL_INFO("reducescatter ring: using ring algo inter-server.");
         }
         CHK_SMART_PTR_NULL(level1TempAlg);
+        CHK_RET(level1TempAlg->Prepare(reduceAttr));
         HcclResult ret = HCCL_SUCCESS;
 
         if (planeIndex != (commPlaneNum - 1)) {
@@ -1194,13 +1240,16 @@ HcclResult CollCommExecutor::Level1AllReduceConcurrent(DeviceMem inputMem, Devic
         u64 reduceAttr = GetReduceAttr(allreduceInput, allreduceOutput, dataType, reductionOp);
         std::unique_ptr<AlgTemplateBase> level1TempAlg;
         if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
-            level1TempAlg.reset(new (std::nothrow) AllReduceNB(dispatcher_, reduceAttr));
+            level1TempAlg =
+                AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_NB, dispatcher_);
             HCCL_INFO("allreduce ring: using nonuniform-bruck algo inter-server.");
         } else {
-            level1TempAlg.reset(new (std::nothrow) AllReduceRing(dispatcher_, reduceAttr));
+            level1TempAlg =
+                AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_RING, dispatcher_);
             HCCL_INFO("allreduce ring: using ring algo inter-server.");
         }
         CHK_SMART_PTR_NULL(level1TempAlg);
+        CHK_RET(level1TempAlg->Prepare(reduceAttr));
 
         if (planeIndex != (commPlaneNum - 1)) {
             ret = LocalNotify::Wait(
@@ -1262,8 +1311,8 @@ HcclResult CollCommExecutor::MultiRingMultiRootScatter(const std::string &tag, D
         SubCommInfo level0RingCommInfo = GetSubCommInfo(COMM_LEVEL0, ringIndex);
 
         u32 rankSize = level0RingCommInfo.localRankSize;
-        std::unique_ptr<AlgTemplateBase> tempAlg;
-        tempAlg.reset(new (std::nothrow) MultiRootScatterRing(dispatcher_));
+        std::unique_ptr<AlgTemplateBase> tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_MULTI_ROOT_SCATTER_RING, dispatcher_);
         CHK_SMART_PTR_NULL(tempAlg);
 
         if (ringIndex != (ringNum - 1)) {
@@ -1314,7 +1363,8 @@ HcclResult CollCommExecutor::MultiRingMultiRootScatter(const std::string &tag, D
             CHK_PRT_RET(ret != HCCL_SUCCESS,
                 HCCL_ERROR("[CollCommExecutor][MultiRingMultiRootScatter]stream[%u] record failed", ringIndex), ret);
         } else {  // 主环
-            tempAlg.reset(new (std::nothrow) MultiRootScatterRing(dispatcher_));
+            tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_MULTI_ROOT_SCATTER_RING, dispatcher_);
             CHK_SMART_PTR_NULL(tempAlg);
             ret = tempAlg->Prepare(inputMem, outputMem, outputMem, count, dataType, stream,
                 HCCL_REDUCE_RESERVED, LEVEL0_BRIDGE_RANK_ID, singleRingSliceZero, baseOffset, ringNics[ringIndex]);
@@ -1361,26 +1411,23 @@ HcclResult CollCommExecutor::MultiStreamReduceScatterMeshAtomic(const std::strin
         if (((opInfo -> count) * unitSize <= HCCL_SMALL_COUNT_32_KB) &&
             (topoAttr_.deviceNumPerAggregation == DEVICE_EIGHT)) {
             deviceOutputMem = outputMem;
-            tempAlg.reset(new (std::nothrow) ReduceScatterHDStage(dispatcher_, reduceAttr, algResResp_->slaveStreams,
-                algResResp_->notifiesMain, algResResp_->notifiesAux, topoAttr_.userRank, opInfo));
+            tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_REDUCESCATTER_HDSTAGE, dispatcher_);
         } else {
-            tempAlg.reset(new (std::nothrow) ReduceScatterMeshDirect(dispatcher_, reduceAttr,
-                algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
-                topoAttr_.userRank, opInfo));
+            tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_REDUCESCATTER_MESH_DIRECT, dispatcher_);
         }
     } else {
-        tempAlg.reset(
-            new (std::nothrow) ReduceScatterMeshAtomic(dispatcher_, reduceAttr,
-            algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
-            topoAttr_.userRank)
-        );
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_REDUCESCATTER_MESH_ATOMIC, dispatcher_);
     }
     CHK_SMART_PTR_NULL(tempAlg);
 
     CHK_RET(CheckCommSize(commLevelIndex, COMM_INDEX_0 + 1));
     const SubCommInfo subCommInfo = GetSubCommInfo(commLevelIndex, COMM_INDEX_0);
     CHK_RET(tempAlg->Prepare(inputMem, deviceOutputMem, outputMem, count, dataType, stream, reductionOp,
-        LEVEL0_BRIDGE_RANK_ID, dataSliceVct, baseOffset));
+        LEVEL0_BRIDGE_RANK_ID, dataSliceVct, baseOffset, reduceAttr, algResResp_->slaveStreams,
+        algResResp_->notifiesMain, algResResp_->notifiesAux, topoAttr_.userRank, opInfo));
 
     CHK_RET(tempAlg->RegisterProfiler(
         (subCommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + subCommInfo.localRank,
@@ -1423,11 +1470,14 @@ HcclResult CollCommExecutor::MultiStreamReduceScatterMesh(const std::string &tag
 
         if (topoAttr_.isDiffDeviceType) {
             HCCL_DEBUG("[CollCommExecutor][MultiStreamReduceScatterMesh]isDiffDeviceType");
-            tempAlg.reset(new (std::nothrow) ReduceScatterMeshMixSingleStream(dispatcher_, reduceAttr, streamIndex));
+            tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_REDUCESCATTER_MESH_MIX_SS, dispatcher_);
         } else {
-            tempAlg.reset(new (std::nothrow) ReduceScatterMesh(dispatcher_, reduceAttr, streamIndex));
+            tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_REDUCESCATTER_MESH, dispatcher_);
         }
         CHK_SMART_PTR_NULL(tempAlg);
+        CHK_RET(tempAlg->Prepare(reduceAttr, streamIndex));
 
         if (streamIndex != (streamNum - 1)) {  // 0~ringNum-2的环
             HCCL_INFO("MultiStreamReduceScatterMesh step into subStream");
@@ -1942,19 +1992,25 @@ HcclResult CollCommExecutor::MultiRingScatter(const std::string &tag, DeviceMem 
         std::vector<std::shared_ptr<LocalNotify>> subSignalsInOneRing;
         std::unique_ptr<AlgTemplateBase> tempAlg;
         if (opInfo == nullptr) {
-            tempAlg.reset(new (std::nothrow) ScatterRing(dispatcher_));
+            tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_SCATTER_RING, dispatcher_);
+            CHK_SMART_PTR_NULL(tempAlg);
         }
         else if (opInfo->inputAddr != nullptr) {
             CHK_RET(GetSubStreamInfoOnOneRing(ringIndex, subStreamsInOneRing, mainSignalsInOneRing,
                                               subSignalsInOneRing));
-            tempAlg.reset(new (std::nothrow) ScatterRingConcurrentDirect(dispatcher_, opInfo, topoAttr_.userRank,
-                subStreamsInOneRing, mainSignalsInOneRing, subSignalsInOneRing, rankOrder, userMemInputSlices));
+            tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_SCATTER_RING_CONCURRENT_DIRECT, dispatcher_);
+            CHK_SMART_PTR_NULL(tempAlg);
+            CHK_RET(tempAlg->Prepare(const_cast<HcomCollOpInfo *>(opInfo), topoAttr_.userRank, subStreamsInOneRing,
+                mainSignalsInOneRing, subSignalsInOneRing, rankOrder, userMemInputSlices));
         }
         else {
-            tempAlg.reset(new (std::nothrow) ScatterRingDirect(dispatcher_, opInfo, topoAttr_.userRank, rankOrder,
-                userMemInputSlices));
+            tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                        TemplateType::TEMPLATE_SCATTER_RING_DIRECT, dispatcher_);
+            CHK_SMART_PTR_NULL(tempAlg);
+            CHK_RET(tempAlg->Prepare(
+                const_cast<HcomCollOpInfo *>(opInfo), topoAttr_.userRank, rankOrder, userMemInputSlices));
         }
-        CHK_SMART_PTR_NULL(tempAlg);
 
         if (ringIndex != (ringNum - 1)) {
             if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB) { // offline
@@ -2007,18 +2063,25 @@ HcclResult CollCommExecutor::MultiRingScatter(const std::string &tag, DeviceMem 
             } else {  // 主环
                 std::unique_ptr<AlgTemplateBase> tempAlg;
                 if (opInfo == nullptr) {
-                    tempAlg.reset(new (std::nothrow) ScatterRing(dispatcher_));
+                    tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                        TemplateType::TEMPLATE_SCATTER_RING, dispatcher_);
+                    CHK_SMART_PTR_NULL(tempAlg);
                 }
                 else if (opInfo->inputAddr != nullptr) {
-                    tempAlg.reset(new (std::nothrow) ScatterRingConcurrentDirect(dispatcher_, opInfo,
-                        topoAttr_.userRank, subStreamsInOneRing, mainSignalsInOneRing, subSignalsInOneRing, rankOrder,
-                        userMemInputSlices));
+                    tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                        TemplateType::TEMPLATE_SCATTER_RING_CONCURRENT_DIRECT, dispatcher_);
+                    CHK_SMART_PTR_NULL(tempAlg);
+                    CHK_RET(tempAlg->Prepare(const_cast<HcomCollOpInfo *>(opInfo), topoAttr_.userRank,
+                        subStreamsInOneRing, mainSignalsInOneRing, subSignalsInOneRing, rankOrder, userMemInputSlices));
                 }
                 else {
-                    tempAlg.reset(new (std::nothrow) ScatterRingDirect(dispatcher_, opInfo, topoAttr_.userRank,
-                        rankOrder,userMemInputSlices));
+                    tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                        TemplateType::TEMPLATE_SCATTER_RING_DIRECT, dispatcher_);
+                    CHK_SMART_PTR_NULL(tempAlg);
+                    CHK_RET(tempAlg->Prepare(
+                        const_cast<HcomCollOpInfo *>(opInfo), topoAttr_.userRank, rankOrder, userMemInputSlices));
                 }
-                CHK_SMART_PTR_NULL(tempAlg);
+
                 ret = tempAlg->Prepare(inputMem, inputMem, outputMem, count, dataType, stream,
                     HCCL_REDUCE_RESERVED, rootRank, singleRingSliceZero, baseOffset, ringNics[ringIndex]);
                 CHK_PRT_RET(ret != HCCL_SUCCESS,

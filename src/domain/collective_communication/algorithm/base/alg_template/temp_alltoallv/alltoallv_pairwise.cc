@@ -10,34 +10,43 @@
 
 #include "alltoallv_pairwise.h"
 #include "externalinput_pub.h"
+#include "alg_template_register.h"
 
 
 namespace hccl {
-AlltoAllVPairWise::AlltoAllVPairWise(const HcclDispatcher dispatcher,
-    const std::map<u32, std::vector<u64>> &rankSendDisplsMap,
-    const std::map<u32, std::vector<u64>> &rankRecvDisplsMap,
-    HcclWorkflowMode workMode)
-    : dispatcher_(dispatcher), scratchMemSize_(0), sendDataUnitBytes_(0), recvDataUnitBytes_(0),
-    rankSendDisplsMap_(rankSendDisplsMap), rankRecvDisplsMap_(rankRecvDisplsMap), workMode_(workMode),
-    isAlltoAllZCopyMode_(false)
-{}
+AlltoAllVPairWise::AlltoAllVPairWise(const HcclDispatcher dispatcher)
+    : AlgTemplateBase(dispatcher)
+{
+}
 
 AlltoAllVPairWise::~AlltoAllVPairWise() {}
 
 HcclResult AlltoAllVPairWise::Prepare(AlltoAllVBufferInfo& sendBuffer, AlltoAllVBufferInfo& recvBuffer,
-    bool isAlltoAllZCopyMode, const Stream &stream)
+    bool isAlltoAllZCopyMode, const Stream &stream, HcclWorkflowMode workMode,
+    std::map<u32, std::vector<u64>> &rankSendDisplsMap,
+    std::map<u32, std::vector<u64>> &rankRecvDisplsMap)
 {
     DeviceMem scratchInputMem = DeviceMem();
     DeviceMem scratchOutputMem = DeviceMem();
-    CHK_RET(Prepare(sendBuffer, recvBuffer, scratchInputMem, scratchOutputMem, isAlltoAllZCopyMode, stream));
+    CHK_RET(AlltoAllVPairWise::Prepare(sendBuffer, recvBuffer, scratchInputMem, scratchOutputMem,
+                                       isAlltoAllZCopyMode, stream, workMode,
+                                       rankSendDisplsMap, rankRecvDisplsMap));
     return HCCL_SUCCESS;
 }
 
 HcclResult AlltoAllVPairWise::Prepare(AlltoAllVBufferInfo &sendBuffer, AlltoAllVBufferInfo &recvBuffer,
-    DeviceMem &scratchInputMem, DeviceMem &scratchOutputMem, bool isAlltoAllZCopyMode, const Stream &stream)
+    DeviceMem &scratchInputMem, DeviceMem &scratchOutputMem, bool isAlltoAllZCopyMode, const Stream &stream,
+    HcclWorkflowMode workMode, std::map<u32, std::vector<u64>> &rankSendDisplsMap,
+    std::map<u32, std::vector<u64>> &rankRecvDisplsMap)
 {
     HCCL_INFO("[AlltoAllVPairWise][Prepare] Begin");
+    scratchMemSize_ = 0;
+    sendDataUnitBytes_ = 0;
+    recvDataUnitBytes_ = 0;
     isAlltoAllZCopyMode_ = isAlltoAllZCopyMode;
+    workMode_ = workMode;
+    rankSendDisplsMapPtr_ = &rankSendDisplsMap;
+    rankRecvDisplsMapPtr_ = &rankRecvDisplsMap;
 
     if (workMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
         CHK_PRT_RET((!isAlltoAllZCopyMode_ && scratchInputMem.size() != scratchOutputMem.size()),
@@ -253,8 +262,8 @@ HcclResult AlltoAllVPairWise::RunZCopyAlltoAll(const u32 rank, const u32 rankSiz
         u8 *sendAddr = reinterpret_cast<u8 *>(sendBuffer_.mem.ptr()) + sendDispBytes;
         u8 *recvAddr = reinterpret_cast<u8 *>(recvBuffer_.mem.ptr()) + recvDispBytes;
 
-        u64 dstOffset = rankRecvDisplsMap_.at(nextRank)[rank];
-        u64 srcOffset = rankSendDisplsMap_.at(prevRank)[rank];
+        u64 dstOffset = rankRecvDisplsMapPtr_->at(nextRank)[rank];
+        u64 srcOffset = rankSendDisplsMapPtr_->at(prevRank)[rank];
 
         TxMemoryInfo txMemoryInfo{UserMemType::OUTPUT_MEM, dstOffset, sendAddr, sendBytes};
         RxMemoryInfo rxMemoryInfo{UserMemType::INPUT_MEM, srcOffset, recvAddr, recvBytes};
@@ -271,4 +280,5 @@ HcclResult AlltoAllVPairWise::RunZCopyAlltoAll(const u32 rank, const u32 rankSiz
 
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_ALL_2_ALL_V_PAIRWISE, AlltoAllVPairWise);
 } // namespace hccl

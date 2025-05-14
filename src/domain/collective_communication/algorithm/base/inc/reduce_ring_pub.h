@@ -18,9 +18,13 @@
 namespace hccl {
 class ReduceRing : public AlgTemplateBase {
 public:
-    explicit ReduceRing(const HcclDispatcher dispatcher, const u64 reduceAttrBitMap);
+    using AlgTemplateBase::Prepare;
+    explicit ReduceRing(const HcclDispatcher dispatcher);
 
     ~ReduceRing() override;
+
+    /* 新增的两段式构造函数，获取实例后要无脑调用实现构造函数功能,后续还要调用其它的基类Prepare函数实现其它成员变量初始化 */
+    HcclResult Prepare(u64 reduceAttrBitMap, HcomCollOpInfo *opInfo = nullptr) override;
 
     HcclResult RunAsync(const u32 rank, const u32 rankSize,
         const std::vector<std::shared_ptr<Transport> > &links) override;
@@ -34,7 +38,7 @@ private:
 
     DeviceMem scratch_; /* * 临时Device/Host memory(本层output或下层操作的结果) */
 
-    const u64 reduceAttr_;       /* 0x1:表示data_type + reduce_type支持inlinereduce  */
+    u64 reduceAttr_;       /* 0x1:表示data_type + reduce_type支持inlinereduce  */
 };
 }  // namespace hccl
 

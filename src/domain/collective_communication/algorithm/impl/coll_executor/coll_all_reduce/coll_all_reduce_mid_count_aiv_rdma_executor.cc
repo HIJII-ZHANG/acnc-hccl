@@ -139,6 +139,10 @@ HcclResult CollAllReduceMidCountAivRdmaExecutor::KernelRun(const OpParam &param,
         dataBuffers, flagBuffers, UserMemType::INPUT_MEM, UserMemType::INPUT_MEM, 0, HCCL_MID_COUNT_32_MB));
     // 先做本地拷贝到AIVIN再跨片拷贝；output统一为allreduceInput的位置，即buffer中原位
 
+    if (aivClearEnable_) {
+        ClearAivSyncBuf(flagBuffers, intraRankId, intraRankSize, param.stream.ptr());
+    }
+
     AivOpArgs opArgs {
         HcclCMDType::HCCL_CMD_ALLREDUCE, execMem.inputPtr, nullptr, execMem.count,
         param.DataDes.dataType, param.reduceType, 0, isOpbase
@@ -173,39 +177,57 @@ HcclResult CollAllReduceMidCountAivRdmaExecutor::KernelRun(const OpParam &param,
     CHK_RET(InitTask(dispatcher_, const_cast<Stream&>(param.stream), opMeta.isEnableCache, opMeta.GetCacheKey()));
 
     if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
-        level1TempAlg.reset(new (std::nothrow) AllReduceRing(dispatcher_, reduceAttr));
+        level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_RING, 
+            dispatcher_);
         HCCL_INFO("allreduce mesh: using ring algo inter-server.");
+        CHK_SMART_PTR_NULL(level1TempAlg);
+        CHK_RET(level1TempAlg->Prepare(reduceAttr));
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
         u64 curSize = execMem.count * perDataSize; // 单位 byte
         HCCL_DEBUG("allreduce mesh: curSize[%llu] deviceNumPerAggregation[%u] commLevel0Size[%u]",
             curSize, topoAttr_.deviceNumPerAggregation, level0CommInfo.localRankSize);
         if (curSize / topoAttr_.deviceNumPerAggregation <= NHR_ALLREDUCE_SMALL_SIZE) {
-            level1TempAlg.reset(new (std::nothrow) AllReduceNHROneshot(dispatcher_, reduceAttr));
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_NHR_ONESHOT, 
+                dispatcher_);
         } else {
-            level1TempAlg.reset(new (std::nothrow) AllReduceNHR(dispatcher_, reduceAttr));
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_NHR, dispatcher_);
         }
         HCCL_INFO("allreduce mesh: using nhr algo inter-server.");
+        CHK_SMART_PTR_NULL(level1TempAlg);
+        CHK_RET(level1TempAlg->Prepare(reduceAttr));
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
-        level1TempAlg.reset(new (std::nothrow) AllReduceNHRV1(dispatcher_, reduceAttr));
+        level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_NHR_V1, dispatcher_);
         HCCL_INFO("allreduce mesh: using nhr_v1 algo inter-server.");
+        CHK_SMART_PTR_NULL(level1TempAlg);
+        CHK_RET(level1TempAlg->Prepare(reduceAttr));
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC) {
         // 获取通信域分组信息
-        std::vector<std::vector<std::vector<u32>>> globalSubGroups;
-        CHK_RET(topoMatcher_->GetGlobalSubGroups(commPlaneLevel1, globalSubGroups));
-        level1TempAlg.reset(new (std::nothrow) AllReduceAHC(dispatcher_, reduceAttr, execMem.count, globalSubGroups[0]));
+        std::vector<std::vector<std::vector<u32>>> gloableSubGroups;
+        CHK_RET(topoMatcher_->GetGlobalSubGroups(commPlaneLevel1, gloableSubGroups));
+        level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_AHC, dispatcher_);
         HCCL_INFO("allreduce mesh: using ahc algo inter-server.");
+        CHK_SMART_PTR_NULL(level1TempAlg);
+        CHK_RET(level1TempAlg->Prepare(reduceAttr, execMem.count, gloableSubGroups[0]));
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE) {
         // 获取通信域分组信息
-        std::vector<std::vector<std::vector<u32>>> globalSubGroups;
-        CHK_RET(topoMatcher_->GetGlobalSubGroups(commPlaneLevel1, globalSubGroups));
-        level1TempAlg.reset(new (std::nothrow) AllReduceAHCBroke(dispatcher_, reduceAttr, execMem.count, globalSubGroups[0]));
+        std::vector<std::vector<std::vector<u32>>> gloableSubGroups;
+        CHK_RET(topoMatcher_->GetGlobalSubGroups(commPlaneLevel1, gloableSubGroups));
+        level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_AHC_BROKE, dispatcher_);
         HCCL_INFO("allreduce mesh: using ahc-broke algo inter-server.");
+        CHK_SMART_PTR_NULL(level1TempAlg);
+        CHK_RET(level1TempAlg->Prepare(reduceAttr, execMem.count, gloableSubGroups[0]));
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
-        level1TempAlg.reset(new (std::nothrow) AllReduceNB(dispatcher_, reduceAttr));
+        level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_NB, 
+            dispatcher_);
         HCCL_INFO("allreduce mesh: using nb algo inter-server.");
+        CHK_SMART_PTR_NULL(level1TempAlg);
+        CHK_RET(level1TempAlg->Prepare(reduceAttr));
     } else {
-        level1TempAlg.reset(new (std::nothrow) AllReduceRecursiveHalvingDoubling(dispatcher_, reduceAttr));
+        level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_RECURSIVE_HALVING_DOUBLING, 
+            dispatcher_);
         HCCL_INFO("allreduce mesh: using Recursive halving-doubling algo inter-server.");
+        CHK_SMART_PTR_NULL(level1TempAlg);
+        CHK_RET(level1TempAlg->Prepare(reduceAttr));
     }
     CHK_SMART_PTR_NULL(level1TempAlg);
 

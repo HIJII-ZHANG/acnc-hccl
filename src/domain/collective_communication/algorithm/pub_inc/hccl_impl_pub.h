@@ -15,8 +15,6 @@
 #include "threadManage.h"
 
 namespace hccl {
-constexpr u32 LEVEL0_BRIDGE_RANK_ID = 0;
-
 constexpr s32 PROF_RANKSIZE_OFFSET_OF_PLANEID = 16;
 constexpr s32 PROF_RINGINDEX_OFFSET_OF_PLANEID = 28;
 

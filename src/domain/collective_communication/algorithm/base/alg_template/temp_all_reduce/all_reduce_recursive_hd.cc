@@ -8,20 +8,25 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-
+#include "alg_template_register.h"
 #include "reduce_scatter_halving_doubling_pub.h"
 #include "all_gather_halving_doubling_pub.h"
 #include "all_reduce_recursive_hd.h"
 
 namespace hccl {
-AllReduceRecursiveHalvingDoubling::AllReduceRecursiveHalvingDoubling(
-    const HcclDispatcher dispatcher, const u64 reduceAttrBitMap)
-    : RecursiveHalvingDoublingBase(dispatcher), reduceAttr(reduceAttrBitMap)
+AllReduceRecursiveHalvingDoubling::AllReduceRecursiveHalvingDoubling(const HcclDispatcher dispatcher)
+    : RecursiveHalvingDoublingBase(dispatcher)
 {
 }
 
 AllReduceRecursiveHalvingDoubling::~AllReduceRecursiveHalvingDoubling()
 {
+}
+
+HcclResult AllReduceRecursiveHalvingDoubling::Prepare(u64 reduceAttrBitMap, HcomCollOpInfo *opInfo)
+{
+    reduceAttr = reduceAttrBitMap;
+    return HCCL_SUCCESS;
 }
 
 // 算法的主入口
@@ -188,12 +193,14 @@ HcclResult AllReduceRecursiveHalvingDoubling::ReduceScatterInBlock(u32 rank, u32
         rankInBlock = rank - part1Size_ / 2;               // 除2计算block内的part1的范围
     }
     // 直接调用block的reducscatterhd算法
-    ReduceScatterHalvingDoubling tempAlg(blockSize_, dispatcher_, reduceAttr,
-        UserMemType::INPUT_MEM, UserMemType::OUTPUT_MEM);
-    CHK_RET(tempAlg.Prepare(inputMem_, outputMem_, outputMem_, count_, dataType_, stream_,
-        reductionOp_, root_, slices_, baseOffset_));
+    std::unique_ptr<AlgTemplateBase> tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_REDUCESCATTER_HD, dispatcher_);
+    CHK_SMART_PTR_NULL(tempAlg);
+    CHK_RET(tempAlg->Prepare(inputMem_, outputMem_, outputMem_, count_, dataType_, stream_,
+        reductionOp_, root_, slices_, baseOffset_, blockSize_, reduceAttr,
+        UserMemType::INPUT_MEM, UserMemType::OUTPUT_MEM));
 
-    CHK_RET(tempAlg.RegisterProfiler(profilerInput_.planeID, profilerInput_.stage, profilerInput_.step,
+    CHK_RET(tempAlg->RegisterProfiler(profilerInput_.planeID, profilerInput_.stage, profilerInput_.step,
         stream_));
 
     // 重新建立reducscatterscatter需要的链接
@@ -203,7 +210,7 @@ HcclResult AllReduceRecursiveHalvingDoubling::ReduceScatterInBlock(u32 rank, u32
     CHK_PRT_RET(subLinks.size() == 0,
         HCCL_ERROR("[AllReduceRecursiveHalvingDoubling][ReduceScatterInBlock]rank[%u] BuildSubLinks "\
             "failed", rank), HCCL_E_PARA);
-    CHK_RET(tempAlg.RunAsync(rankInBlock, blockSize_, subLinks));
+    CHK_RET(tempAlg->RunAsync(rankInBlock, blockSize_, subLinks));
 
     return HCCL_SUCCESS;
 }
@@ -220,11 +227,14 @@ HcclResult AllReduceRecursiveHalvingDoubling::AllGatherInBlock(u32 rank, u32 ran
         rankInBlock = rank - part1Size_ / 2;           // 除2计算block内的part1的范围
     }
     // 直接调用block的allgatherhd算法
-    AllGatherHalvingDoubling tempAlg(blockSize_, dispatcher_, UserMemType::OUTPUT_MEM, UserMemType::OUTPUT_MEM);
-    CHK_RET(tempAlg.Prepare(outputMem_, outputMem_, count_, dataType_, stream_,
+    std::unique_ptr<AlgTemplateBase> tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_ALL_GATHER_HALVING_DOUBLING, dispatcher_);
+    CHK_SMART_PTR_NULL(tempAlg);
+    CHK_RET(tempAlg->Prepare(blockSize_, UserMemType::OUTPUT_MEM, UserMemType::OUTPUT_MEM));
+    CHK_RET(tempAlg->Prepare(outputMem_, outputMem_, count_, dataType_, stream_,
         reductionOp_, root_, slices_, baseOffset_));
 
-    CHK_RET(tempAlg.RegisterProfiler(
+    CHK_RET(tempAlg->RegisterProfiler(
         profilerInput_.planeID, profilerInput_.stage, profilerInput_.step, stream_));
 
     // 重新建立allgather需要的链接
@@ -235,7 +245,7 @@ HcclResult AllReduceRecursiveHalvingDoubling::AllGatherInBlock(u32 rank, u32 ran
         HCCL_ERROR("[AllReduceRecursiveHalvingDoubling][AllGatherInBlock]rank[%u] build sub "\
             "links failed", rank), HCCL_E_PARA);
 
-    CHK_RET(tempAlg.RunAsync(rankInBlock, blockSize_, subLinks));
+    CHK_RET(tempAlg->RunAsync(rankInBlock, blockSize_, subLinks));
 
     return HCCL_SUCCESS;
 }
@@ -290,4 +300,5 @@ HcclResult AllReduceRecursiveHalvingDoubling::GatherInPartOne(u32 rank, const st
 
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_ALL_REDUCE_RECURSIVE_HALVING_DOUBLING, AllReduceRecursiveHalvingDoubling);
 }  // namespace hccl

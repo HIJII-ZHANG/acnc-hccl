@@ -14,9 +14,9 @@
 #include "p2p_mgmt_pub.h"
 #include "adapter_pub.h"
 #include "device_capacity.h"
-#include "nonuniform_hierarchical_ring_v1_base_pub.h"
 #include "search_path.h"
 #include "calc_p2p_transport_req.h"
+#include "mmpa_api.h"
 namespace hccl {
 
 CommFactory::CommFactory(const std::string &identifier, const u32 userRank, const u32 userRankSize,
@@ -171,7 +171,10 @@ HcclResult CommFactory::CreateCommPlane(const std::string &tag, const DeviceMem 
 
     switch (commParaInfo.commType) {
         case CommType::COMM_TAG_RING_INNER:
-        case CommType::COMM_TAG_RING_COMBINED: {
+        case CommType::COMM_TAG_RING_COMBINED:
+        case CommType::COMM_TAG_NONUNIFORM_BRUCK:
+        case CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING:
+        case CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING_V1:{
             ret = CreateCommRing(tag, inputMem, outputMem, commParaInfo, CommPlaneVector_[commParaInfo.commPlane],
                 isUsedRdma, commVec);
             break;
@@ -197,7 +200,7 @@ HcclResult CommFactory::CreateCommPlane(const std::string &tag, const DeviceMem 
                 commPlaneVec.push_back(CommPlaneVector_[commParaInfo.commPlane][0]);
                 ret = CreateCommMesh(tag, inputMem, outputMem, commParaInfo, commPlaneVec, isUsedRdma, commVec, expMem);
             } else {
-                ret = CreateCommMesh(tag, inputMem, outputMem, commParaInfo,  CommPlaneVector_[commParaInfo.commPlane],
+                ret = CreateCommMesh(tag, inputMem, outputMem, commParaInfo, CommPlaneVector_[commParaInfo.commPlane],
                     isUsedRdma, commVec, expMem);
             }
             break;
@@ -413,6 +416,8 @@ HcclResult CommFactory::CreateCommMesh(const std::string &tag, const DeviceMem &
 {
     u32 ringSize = commPlaneVec.size();
     commVec.resize(ringSize);
+    bool intraIsUseRdma = isUsedRdma;
+    bool isAlltoAllCommMesh = false;
 
     for (u32 ringIndex = 0; ringIndex < ringSize; ++ringIndex) {
         u32 rank = GetSubCollectiveRank(commPlaneVec[ringIndex]);
@@ -423,11 +428,24 @@ HcclResult CommFactory::CreateCommMesh(const std::string &tag, const DeviceMem &
 
         HCCL_INFO("[Create][CommMesh]comm is used %s. userRank = %u, rank = %u",
             isUsedRdma ? "rdma" : "sdma", userRank_, rank);
+        char* mmSysGetEnvValue = nullptr;
+        MM_SYS_GET_ENV(MM_ENV_HCCL_INTRA_PCIE_ENABLE, mmSysGetEnvValue);
+        std::string intraPcieEnableEnv = (mmSysGetEnvValue != nullptr) ? mmSysGetEnvValue : "EmptyString";
+        bool isMC2Hie = (intraPcieEnableEnv == "1") && (GetExternalInputIntraRoceSwitch() == 0)
+            && commVec[ringIndex]->IsSupportMC2(tag);
+        if (isMC2Hie) {
+            intraIsUseRdma = false;
+            isAlltoAllCommMesh = false;
+        } else if (commVec[ringIndex]->IsSupportMC2(tag)) {
+            intraIsUseRdma = true;
+        }
+        HCCL_INFO("[Create][CommMesh]comm is created by intraIsUseRdma = %u, isAlltoAllCommMesh = %u",
+            intraIsUseRdma, isAlltoAllCommMesh);
 
         commVec[ringIndex].reset(new (std::nothrow) CommMesh(identifier_, userRank_, userRankSize_,
             rank, commPlaneVec[ringIndex].size(), topoFlag_, dispatcher_, notifyPool_, netDevCtxMap_, exchangerNetwork,
-            commPlaneVec[ringIndex], inputMem, outputMem, isUsedRdma, transportResourceInfoAddr_,
-            transportResourceInfoSize_, tag, false, nicDeployInner_, false, commParaInfo.isAicpuModeEn,
+            commPlaneVec[ringIndex], inputMem, outputMem, intraIsUseRdma, transportResourceInfoAddr_,
+            transportResourceInfoSize_, tag, isAlltoAllCommMesh, nicDeployInner_, false, commParaInfo.isAicpuModeEn,
             isHaveCpuRank_, useSuperPodMode_, expMem));
 
         CHK_PRT_RET(!commVec[ringIndex], HCCL_ERROR("[Create][CommMesh]comm array[%u] reset failed",

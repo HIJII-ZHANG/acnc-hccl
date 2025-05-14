@@ -138,12 +138,6 @@ HcclResult SendReceive::BatchSendRunAsync()
     u64 length = inputMem_.size();
     u64 offset = 0;
     for (u64 sizeResidue = length; sizeResidue > 0; sizeResidue -= sizePerRound) {
-        if (retryEnable_) {
-            HcclResult ret = transLink_->TxPrepare(stream_);
-            CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[SendReceive][BatchSendRunAsync]tx ack run failed"), ret);
-            ret = transLink_->TxDone(stream_);
-            CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[SendReceive][BatchSendRunAsync]TxWaitDone failed"), ret);
-        }
         HcclResult ret = transLink_->TxPrepare(stream_);
         CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[SendReceive][BatchSendRunAsync]tx ack run failed"), ret);
 
@@ -176,13 +170,6 @@ HcclResult SendReceive::BatchReceiveRunAsync()
     u64 length = outputMem_.size();
     u64 offset = 0;
     for (u64 sizeResidue = length; sizeResidue > 0; sizeResidue -= sizePerRound) {
-        if (retryEnable_) {
-            HcclResult ret = transLink_->RxPrepare(stream_);
-            CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[SendReceive][BatchReceiveRunAsync]rx ack failed"), ret);
-            ret = transLink_->RxDone(stream_);
-            CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[SendReceive][BatchReceiveRunAsync]TxDataSignal offset[%llu]"\
-                "size[%llu] failed", offset, sizePerRound), ret);
-        }
         HcclResult ret = transLink_->RxPrepare(stream_);
         CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[SendReceive][BatchReceiveRunAsync]rx ack failed"), ret);
 

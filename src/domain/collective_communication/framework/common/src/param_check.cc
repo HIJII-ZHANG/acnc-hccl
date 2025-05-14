@@ -9,7 +9,7 @@
  */
 
 #include "log.h"
-
+#include <unordered_set>
 #include "base.h"
 #include "rank_consistentcy_checker.h"
 #include "topoinfo_ranktableParser_pub.h"
@@ -18,6 +18,29 @@
 
 using namespace std;
 using namespace hccl;
+
+const std::unordered_set<u32> HCCL_SUPPORT_DATA_TYPE = {
+    HCCL_DATA_TYPE_INT8,
+    HCCL_DATA_TYPE_INT16,
+    HCCL_DATA_TYPE_INT32,
+    HCCL_DATA_TYPE_FP16,
+    HCCL_DATA_TYPE_FP32,
+    HCCL_DATA_TYPE_INT64,
+    HCCL_DATA_TYPE_UINT64,
+    HCCL_DATA_TYPE_UINT8,
+    HCCL_DATA_TYPE_UINT16,
+    HCCL_DATA_TYPE_UINT32,
+    HCCL_DATA_TYPE_FP64,
+    HCCL_DATA_TYPE_BFP16,
+    HCCL_DATA_TYPE_INT128
+};
+
+const std::unordered_set<u32> HCCL_SUPPORT_REDUCE_OP = {
+    HCCL_REDUCE_SUM,
+    HCCL_REDUCE_PROD,
+    HCCL_REDUCE_MAX,
+    HCCL_REDUCE_MIN
+};
 
 HcclResult HcomGetRanktableRealPath(const char *rankTable, std::string &realFilePath)
 {
@@ -237,7 +260,7 @@ void HcomGetHashFromSendCountMatrix(u64 &sendCountMatrixHash, const void *sendCo
 
 HcclResult HcomCheckDataType(const HcclDataType dataType)
 {
-    if ((dataType >= HCCL_DATA_TYPE_RESERVED) || (dataType < HCCL_DATA_TYPE_INT8)) {
+    if (HCCL_SUPPORT_DATA_TYPE.find(dataType) == HCCL_SUPPORT_DATA_TYPE.end()) {
         HCCL_ERROR("[Check][DataType]errNo[0x%016llx] data type[%s] not supported",
             HCOM_ERROR_CODE(HCCL_E_NOT_SUPPORT), GetDataTypeEnumStr(dataType).c_str());
         return HCCL_E_NOT_SUPPORT;
@@ -260,7 +283,7 @@ HcclResult HcomCheckGroupName(const char *group)
 
 HcclResult HcomCheckReductionOp(const HcclReduceOp op)
 {
-    if ((op >= HCCL_REDUCE_RESERVED) || (op < HCCL_REDUCE_SUM)) {
+    if (HCCL_SUPPORT_REDUCE_OP.find(op) == HCCL_SUPPORT_REDUCE_OP.end()) {
         RPT_INPUT_ERR(true, "EI0003", std::vector<std::string>({"ccl_op", "parameter", "value", "tips"}),\
             std::vector<std::string>({ "HcomCheckReductionOp", "op", GetReduceOpEnumStr(op), "op not supported" }));
         HCCL_ERROR("[Check][ReductionOp]errNo[0x%016llx] Op:[%s] not supported", HCOM_ERROR_CODE(HCCL_E_PARA),

@@ -80,8 +80,8 @@ HcclResult CollReduceScatterMeshOpbasePipelineExecutor::RunLoop(OpParam &param, 
         execMem.inputPtr = curInputPtr;
         execMem.outputPtr = curOutputPtr;
 
-        std::unique_ptr<ReduceScatterPipeline> tempAlg;
-        tempAlg.reset(new (std::nothrow) ReduceScatterPipeline(dispatcher_, reduceAttr));
+        std::unique_ptr<AlgTemplateBase> tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_REDUCESCATTER_PIPELINE, dispatcher_);
         CHK_SMART_PTR_NULL(tempAlg);
 
         HcomCollOpInfo opInfo = {"", execMem.inputPtr, execMem.outputPtr, param.DataDes.count, param.DataDes.dataType,
@@ -89,7 +89,7 @@ HcclResult CollReduceScatterMeshOpbasePipelineExecutor::RunLoop(OpParam &param, 
 
         CHK_RET(tempAlg->Prepare(&opInfo, execMem.inputMem, curCount, bufferSize, curOffset, level0CommInfo,
             level1CommInfo, const_cast<Stream&>(param.stream), algResResp_->slaveStreams, algResResp_->notifiesMain,
-            algResResp_->notifiesAux));
+            algResResp_->notifiesAux, reduceAttr));
         CHK_RET(tempAlg->RunAsync());
 
         CHK_RET(LaunchTask(dispatcher_, const_cast<Stream&>(param.stream)));

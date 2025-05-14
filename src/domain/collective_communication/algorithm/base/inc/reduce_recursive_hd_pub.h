@@ -18,9 +18,12 @@
 namespace hccl {
 class ReduceRecursiveHalvingDoubling : public RecursiveHalvingDoublingBase {
 public:
-    explicit ReduceRecursiveHalvingDoubling(const HcclDispatcher dispatcher,
-        const u64 reduceAttrBitMap);
+    using AlgTemplateBase::Prepare;
+    explicit ReduceRecursiveHalvingDoubling(const HcclDispatcher dispatcher);
     ~ReduceRecursiveHalvingDoubling() override;
+
+    /* 新增的两段式构造函数，获取实例后要无脑调用实现构造函数功能,后续还要调用其它的基类Prepare函数实现其它成员变量初始化 */
+    HcclResult Prepare(u64 reduceAttrBitMap, HcomCollOpInfo *opInfo = nullptr) override;
 
     HcclResult RunAsync(
         const u32 rank, const u32 rankSize, const std::vector<std::shared_ptr<Transport> > &links) override;
@@ -39,7 +42,7 @@ private:
                                  u32 rankSize) const;
     std::vector<Slice> txSlices_;
     std::vector<Slice> rxSlices_;
-    const u64 reduceAttr;
+    u64 reduceAttr;
 
     std::unique_ptr<Sender> senderInfo_;
     std::unique_ptr<Reducer> reducerInfo_;

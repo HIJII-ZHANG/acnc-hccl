@@ -16,13 +16,7 @@
 namespace hccl {
 class AllGatherMeshAtomic : public AllGatherMesh {
 public:
-    explicit AllGatherMeshAtomic(const HcclDispatcher dispatcher,
-        std::vector<Stream> &meshStreams,
-        const std::vector<std::shared_ptr<LocalNotify>> &meshSignal,
-        const std::vector<std::shared_ptr<LocalNotify>> &meshSignalAux,
-        u32 interRank,       // 所有环里面的id
-        u32 interRankSize,
-        u32 userRank); // 所有大环的rank个数，commcombine提供接口
+    explicit AllGatherMeshAtomic(const HcclDispatcher dispatcher); // 所有大环的rank个数，commcombine提供接口
 
     ~AllGatherMeshAtomic() override;
 

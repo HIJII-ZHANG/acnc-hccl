@@ -137,13 +137,16 @@ HcclResult CollScatterRingFor91093Executor::KernelRunLevel2(const OpParam &param
         CHK_RET(GetRankByUserRank(COMM_LEVEL2, COMM_INDEX_0, param.root, planeRootSupperPod));
         std::unique_ptr<AlgTemplateBase> level2TempAlg;
         if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NB) {
-            level2TempAlg.reset(new (std::nothrow) ScatterNB(dispatcher_));
+            level2TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_SCATTER_NB, dispatcher_);
             HCCL_INFO("scatter ring: using nonuniform-bruck algo inter-superPod.");
         } else if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NHR) {
-            level2TempAlg.reset(new (std::nothrow) ScatterNHR(dispatcher_));
+            level2TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_SCATTER_NHR, dispatcher_);
             HCCL_INFO("scatter ring: using nonuniform-hierarchical-ring algo inter-superPod.");
         } else {
-            level2TempAlg.reset(new (std::nothrow) ScatterRing(dispatcher_));
+            level2TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_SCATTER_RING, dispatcher_);
             HCCL_INFO("scatter ring: using ring algo inter-superPod.");
         }
 
@@ -185,13 +188,16 @@ HcclResult CollScatterRingFor91093Executor::KernelRunLevel1(const OpParam &param
 
         std::unique_ptr<AlgTemplateBase> level1TempAlg;
         if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
-            level1TempAlg.reset(new (std::nothrow) ScatterNB(dispatcher_));
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_SCATTER_NB, dispatcher_);
             HCCL_INFO("scatter ring: using nonuniform-bruck algo inter-server.");
         } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
-            level1TempAlg.reset(new (std::nothrow) ScatterNHR(dispatcher_));
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_SCATTER_NHR, dispatcher_);
             HCCL_INFO("scatter ring: using nonuniform-hierarchical-ring algo inter-server.");
         } else {
-            level1TempAlg.reset(new (std::nothrow) ScatterRing(dispatcher_));
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_SCATTER_RING, dispatcher_);
             HCCL_INFO("scatter ring: using ring algo inter-server.");
         }
         CHK_SMART_PTR_NULL(level1TempAlg);

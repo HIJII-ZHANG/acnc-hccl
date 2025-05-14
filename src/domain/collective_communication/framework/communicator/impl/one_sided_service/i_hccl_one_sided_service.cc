@@ -27,21 +27,31 @@ HcclResult IHcclOneSidedService::Config(const HcclDispatcher &dispatcher,
 
     dispatcher_ = dispatcher;
     localRankInfo_ = localRankInfo;
+    localRankVnicInfo_ = localRankInfo;
     rankTable_ = rankTable;
 
     return HCCL_SUCCESS;
 }
 
-HcclResult IHcclOneSidedService::SetNetDevCtx(const HcclNetDevCtx &netDevCtx)
+HcclResult IHcclOneSidedService::SetNetDevCtx(const HcclNetDevCtx &netDevCtx, bool useRdma)
 {
-    netDevCtx_ = netDevCtx;
-    CHK_PTR_NULL(netDevCtx_);
+    if (useRdma) {
+        netDevRdmaCtx_ = netDevCtx;
+        CHK_PTR_NULL(netDevRdmaCtx_);
+    } else {
+        netDevIpcCtx_ = netDevCtx;
+        CHK_PTR_NULL(netDevIpcCtx_);
+    }
     return HCCL_SUCCESS;
 }
 
-HcclResult IHcclOneSidedService::GetNetDevCtx(HcclNetDevCtx &netDevCtx)
+HcclResult IHcclOneSidedService::GetNetDevCtx(HcclNetDevCtx &netDevCtx, bool useRdma)
 {
-    netDevCtx = netDevCtx_;
+    if (useRdma) {
+        netDevCtx = netDevRdmaCtx_;
+    } else {
+        netDevCtx = netDevIpcCtx_;
+    }
     return HCCL_SUCCESS;
 }
 

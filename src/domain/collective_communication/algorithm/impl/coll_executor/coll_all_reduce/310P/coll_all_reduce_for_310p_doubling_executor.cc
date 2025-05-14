@@ -79,8 +79,9 @@ HcclResult CollAllReduceFor310PDoublingExecutor::KernelRun(const OpParam &param,
     SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
 
     std::unique_ptr<AlgTemplateBase> tempAlg;
-    tempAlg.reset(new (std::nothrow) AllReduceDoubling(dispatcher_, reduceAttr));
+    tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_DOUBLING, dispatcher_);
     CHK_SMART_PTR_NULL(tempAlg);
+    CHK_RET(tempAlg->Prepare(reduceAttr));
 
     CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
         param.DataDes.dataType, param.stream, param.reduceType,

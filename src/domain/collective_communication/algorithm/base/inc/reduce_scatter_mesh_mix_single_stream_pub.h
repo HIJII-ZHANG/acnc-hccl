@@ -18,12 +18,11 @@
 namespace hccl {
 class ReduceScatterMeshMixSingleStream : public AlgTemplateBase {
 public:
-    explicit ReduceScatterMeshMixSingleStream(const HcclDispatcher dispatcher,
-                                const u64 reduceAttrBitMap,
-                                const u32 streamIndex = 0);
+    explicit ReduceScatterMeshMixSingleStream(const HcclDispatcher dispatcher);
 
     ~ReduceScatterMeshMixSingleStream() override;
 
+    HcclResult Prepare(u64 reduceAttrBitMap, u32 streamIndex) override;
     HcclResult RunAsync(const u32 rank, const u32 rankSize,
                                    const std::vector<std::shared_ptr<Transport> > &links) override;
 
@@ -55,8 +54,8 @@ private:
     std::unique_ptr<Sender> senderInfo_;
     std::unique_ptr<Reducer> reducerInfo_;
 
-    const u64 reduceAttr_;       /* 0x1:表示data_type + reduce_type支持inlinereduce  */
-    u32 streamIndex_;
+    u64 reduceAttr_ = 0;       /* 0x1:表示data_type + reduce_type支持inlinereduce  */
+    u32 streamIndex_ = 0;
 };
 }  // namespace hccl
 

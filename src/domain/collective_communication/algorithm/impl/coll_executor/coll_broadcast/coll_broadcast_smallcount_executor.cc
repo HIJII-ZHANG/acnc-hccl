@@ -78,14 +78,8 @@ HcclResult CollBroadcastSmallCountExecutor::KernelRun(const OpParam &param, Exec
     CHK_RET(ActiveSlaveStreams(param.stream));
     HcomCollOpInfo opInfoPtr = {"", execMem.inputPtr, nullptr, param.DataDes.count, param.DataDes.dataType, param.root};
 
-    std::unique_ptr<AlgTemplateBase> level0TempAlg;
-    level0TempAlg.reset(new (std::nothrow) BroadcastHD(dispatcher_,
-        algResResp_->slaveStreams,
-        algResResp_->notifiesMain,
-        algResResp_->notifiesAux,
-        level0CommInfo.localRank,
-        &opInfoPtr));
-
+    std::unique_ptr<AlgTemplateBase> level0TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_BROADCAST_HD, dispatcher_);
     CHK_SMART_PTR_NULL(level0TempAlg);
     CHK_RET(level0TempAlg->Prepare(execMem.inputMem,
         execMem.outputMem,
@@ -94,7 +88,12 @@ HcclResult CollBroadcastSmallCountExecutor::KernelRun(const OpParam &param, Exec
         param.DataDes.dataType,
         param.stream,
         HCCL_REDUCE_RESERVED,
-        param.root));
+        param.root,
+        algResResp_->slaveStreams,
+        algResResp_->notifiesMain,
+        algResResp_->notifiesAux,
+        level0CommInfo.localRank,
+        &opInfoPtr));
 
     CHK_RET(level0TempAlg->RegisterProfiler(
         (level0CommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level0CommInfo.localRank,

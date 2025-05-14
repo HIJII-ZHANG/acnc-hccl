@@ -9,28 +9,33 @@
  */
 
 #include "all_gather_mesh_direct.h"
+#include "alg_template_register.h"
 // userin -> dmaout -> userout
 namespace hccl {
-AllgatherMeshDirect::AllgatherMeshDirect(const HcclDispatcher dispatcher,
-    std::vector<Stream> &meshStreams, const std::vector<std::shared_ptr<LocalNotify>> &meshSignal,
-    const std::vector<std::shared_ptr<LocalNotify>> &meshSignalAux, u32 interRank,
-    u32 interRankSize, u32 userRank, HcomCollOpInfo *opInfo)
-    : AlgTemplateBase(dispatcher),
-      meshStreams_(meshStreams),
-      meshSignal_(meshSignal),
-      meshSignalAux_(meshSignalAux),
-      interRank_(interRank),
-      interRankSize_(interRankSize),
-      userRank_(userRank),
-      opInfo_(opInfo)
+AllgatherMeshDirect::AllgatherMeshDirect(const HcclDispatcher dispatcher)
+    : AlgTemplateBase(dispatcher)
 {}
 
 AllgatherMeshDirect::~AllgatherMeshDirect() {}
 
+HcclResult AllgatherMeshDirect::Prepare(std::vector<Stream> &meshStreams,
+    std::vector<std::shared_ptr<LocalNotify>> &meshSignal, std::vector<std::shared_ptr<LocalNotify>> &meshSignalAux,
+    u32 userRank, HcomCollOpInfo *opInfo, u32 interRank, u32 interRankSize)
+{
+    meshStreams_ = meshStreams;
+    meshSignal_ = &meshSignal;
+    meshSignalAux_ = &meshSignalAux;
+    opInfo_ = opInfo;
+    interRank_ = interRank;
+    interRankSize_ = interRankSize;
+    userRank_ = userRank;
+    return HCCL_SUCCESS;
+}
+
 HcclResult AllgatherMeshDirect::MainRecordSub()
 {
-    for (u32 signalIndex = 0; signalIndex < meshSignalAux_.size(); signalIndex++) {
-        CHK_RET(LocalNotify::Post(stream_, dispatcher_, meshSignalAux_[signalIndex],
+    for (u32 signalIndex = 0; signalIndex < (*meshSignalAux_).size(); signalIndex++) {
+        CHK_RET(LocalNotify::Post(stream_, dispatcher_, (*meshSignalAux_)[signalIndex],
             profilerInput_.stage));
     }
     return HCCL_SUCCESS;
@@ -38,8 +43,8 @@ HcclResult AllgatherMeshDirect::MainRecordSub()
 
 HcclResult AllgatherMeshDirect::SubWaitMain()
 {
-    for (u32 streamIndex = 0; streamIndex < meshSignalAux_.size(); streamIndex++) {
-        CHK_RET(LocalNotify::Wait(meshStreams_[streamIndex], dispatcher_, meshSignalAux_[streamIndex],
+    for (u32 streamIndex = 0; streamIndex < (*meshSignalAux_).size(); streamIndex++) {
+        CHK_RET(LocalNotify::Wait(meshStreams_[streamIndex], dispatcher_, (*meshSignalAux_)[streamIndex],
             profilerInput_.stage));
     }
     return HCCL_SUCCESS;
@@ -47,16 +52,16 @@ HcclResult AllgatherMeshDirect::SubWaitMain()
 
 HcclResult AllgatherMeshDirect::MainWaitSub()
 {
-    for (u32 signalIndex = 0; signalIndex < meshSignal_.size(); signalIndex++) {
-        CHK_RET(LocalNotify::Wait(stream_, dispatcher_, meshSignal_[signalIndex], profilerInput_.stage));
+    for (u32 signalIndex = 0; signalIndex < (*meshSignal_).size(); signalIndex++) {
+        CHK_RET(LocalNotify::Wait(stream_, dispatcher_, (*meshSignal_)[signalIndex], profilerInput_.stage));
     }
     return HCCL_SUCCESS;
 }
 
 HcclResult AllgatherMeshDirect::SubRecordMain()
 {
-    for (u32 streamIndex = 0; streamIndex < meshSignal_.size(); streamIndex++) {
-        CHK_RET(LocalNotify::Post(meshStreams_[streamIndex], dispatcher_, meshSignal_[streamIndex],
+    for (u32 streamIndex = 0; streamIndex < (*meshSignal_).size(); streamIndex++) {
+        CHK_RET(LocalNotify::Post(meshStreams_[streamIndex], dispatcher_, (*meshSignal_)[streamIndex],
             profilerInput_.stage));
     }
     return HCCL_SUCCESS;
@@ -167,4 +172,5 @@ HcclResult AllgatherMeshDirect::RunAsync(const u32 rank, const u32 rankSize, con
     HCCL_INFO("AllGatherMeshDirect finished: rank[%u]", rank);
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_ALL_GATHER_MESH_DIRECT, AllgatherMeshDirect);
 } // namespace hccl

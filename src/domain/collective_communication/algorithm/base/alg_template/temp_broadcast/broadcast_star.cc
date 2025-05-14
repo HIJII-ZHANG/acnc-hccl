@@ -8,16 +8,28 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "broadcast_star.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 // Gather的入口函数
-BroadcastStar::BroadcastStar(const HcclDispatcher dispatcher, u32 userRank)
-    : AlgTemplateBase(dispatcher), userRank_(userRank)
+BroadcastStar::BroadcastStar(const HcclDispatcher dispatcher)
+    : AlgTemplateBase(dispatcher)
 {
 }
 
 BroadcastStar::~BroadcastStar()
 {
+}
+
+HcclResult BroadcastStar::Prepare(DeviceMem &inputMem, DeviceMem &outputMem, DeviceMem &scratchMem,
+                                  const u64 count, const HcclDataType dataType, const Stream &stream,
+                                  const HcclReduceOp reductionOp, const u32 root,
+                                  const std::vector<Slice> &slices, const u64 baseOffset,
+                                  std::vector<u32> nicRankList, u32 userRank)
+{
+    userRank_ = userRank;
+    return AlgTemplateBase::Prepare(inputMem, outputMem, scratchMem, count, dataType, stream,
+        reductionOp, root, slices, baseOffset, nicRankList);
 }
 
 HcclResult BroadcastStar::RunAsync(const u32 rank, const u32 rankSize,
@@ -147,4 +159,5 @@ HcclResult BroadcastStar::ExecuteBarrierSrcRank(std::shared_ptr<Transport> link,
 
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_BROADCAST_STAR, BroadcastStar);
 }

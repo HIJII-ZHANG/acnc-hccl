@@ -9,6 +9,7 @@
  */
 
 #include "broadcast_ring.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 BroadcastRing::BroadcastRing(const HcclDispatcher dispatcher)
@@ -157,4 +158,5 @@ HcclResult BroadcastRing::RunAsync(const u32 rank, const u32 rankSize,
     HCCL_INFO("BroadcastRing finished: rank[%u] end count[%llu]", rank, count_);
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_BROADCAST_RING, BroadcastRing);
 }  // namespace hccl

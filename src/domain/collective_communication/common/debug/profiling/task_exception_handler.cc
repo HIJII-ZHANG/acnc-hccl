@@ -504,6 +504,7 @@ std::string GetTaskName(TaskType taskType, bool isAlgInfo)
 
     if (isAlgInfo){
         taskName = "Task AIV";
+        return taskName;
     }
 
     switch (taskType) {
@@ -617,7 +618,7 @@ string FFTSOpInfo::GetBaseInfoStr() // 防止tag字符串过长，base信息和p
     taskContent += "], taskID[";
     taskContent += std::to_string(taskID);
     taskContent += "], tag[";
-    taskContent += tag;
+    taskContent += std::string(tag);
     taskContent += "], ";
     taskContent += GetAlgTypeStr(algType);
     return taskContent;
@@ -828,8 +829,9 @@ bool TaskExceptionHandler::DealExceptionCtx(rtExceptionInfo *exceptionInfo)
 
 	u32 index = fftsOpInfo.index;
 	std::string groupRankContentInfo = "";
-	DealExceptionGroupRank(exceptionInfo, fftsOpInfo.tag, true, groupRankContentInfo);
-	DealExceptionOpData(exceptionInfo, fftsOpInfo.tag, true, index);
+    std::string tag(fftsOpInfo.tag);
+	DealExceptionGroupRank(exceptionInfo, tag, true, groupRankContentInfo);
+	DealExceptionOpData(exceptionInfo, tag, true, index);
 	std::string errMsg = GetAndPrintHeartbeatErr(exceptionInfo);
 	if (exceptionCtxInfo.taskType == TaskType::TASK_NOTIFY_WAIT) {
 		RPT_INPUT_ERR(true,
@@ -914,7 +916,7 @@ bool TaskExceptionHandler::ProcessContext(rtExceptionInfo *exceptionInfo)
     HCCL_ERROR("[TaskExceptionHandler][Callback]FFTS+ run failed, context base information is %s",
         exceptionCtxInfo.GetCtxBaseInfoStr().c_str());
     HCCL_ERROR("[TaskExceptionHandler][Callback]FFTS+ run failed, context para information is %s, tag[%s].",
-        exceptionCtxInfo.GetCtxParaInfoStr().c_str(), fftsOpInfo.tag.c_str());
+        exceptionCtxInfo.GetCtxParaInfoStr().c_str(), fftsOpInfo.tag);
 
     return true;
 }
@@ -945,8 +947,9 @@ bool TaskExceptionHandler::DealExceptionOp(rtExceptionInfo *exceptionInfo)
         exceptionOpInfo.GetBaseInfoStr().c_str());
     u32 index = exceptionOpInfo.index;
     std::string groupRankContentInfo = "";
-    DealExceptionGroupRank(exceptionInfo, exceptionOpInfo.tag, true, groupRankContentInfo);
-    DealExceptionOpData(exceptionInfo, exceptionOpInfo.tag, true, index);
+    std::string tag(exceptionOpInfo.tag);
+    DealExceptionGroupRank(exceptionInfo, tag, true, groupRankContentInfo);
+    DealExceptionOpData(exceptionInfo, tag, true, index);
     std::string errMsg = GetAndPrintHeartbeatErr(exceptionInfo);
     if (exceptionInfo->retcode == ACL_ERROR_RT_FFTS_PLUS_TIMEOUT) {
         RPT_INPUT_ERR(true,
@@ -1073,7 +1076,6 @@ bool TaskExceptionHandler::DealExceptionTask(rtExceptionInfo *exceptionInfo)
     if (!taskFound) {
         return false;
     }
-    queIt->pop_back();
 
     if (exceptionTaskInfo.isAlgInfo){
         PrintTaskAivBuffer(queIt);
@@ -1415,8 +1417,9 @@ HcclResult TaskExceptionHandler::InsertOpMap(u32 &streamID, u32 &taskID, string 
     u32 &index) const
 {
     FFTSOpInfo tmpOpPara;
+    CHK_SAFETY_FUNC_RET(memcpy_s(tmpOpPara.tag, sizeof(tmpOpPara.tag), tag.c_str(), tag.size()));
+    tmpOpPara.streamID = streamID;
     tmpOpPara.taskID = taskID;
-    tmpOpPara.tag = tag;
     tmpOpPara.algType = algType;
     tmpOpPara.index = index;
     std::unique_lock<std::mutex> lock(opMapMutex[deviceLogicId_]); // 防止存入和读取冲突
@@ -1440,8 +1443,9 @@ HcclResult TaskExceptionHandler::InsertOpCtxInfo(u32 &streamID, u32 &taskID, str
     AlgType &algType, u32 &index) const
 {
     FFTSOpInfo tmpOpInfo;
+    CHK_SAFETY_FUNC_RET(memcpy_s(tmpOpInfo.tag, sizeof(tmpOpInfo.tag), tag.c_str(), tag.size()));
+    tmpOpInfo.streamID = streamID;
     tmpOpInfo.taskID = taskID;
-    tmpOpInfo.tag = tag;
     tmpOpInfo.algType = algType;
     tmpOpInfo.index = index;
     std::shared_ptr<FFTSOpInfo> tmpOpInfoPtr = nullptr;

@@ -26,6 +26,15 @@ enum SocketLocation {
     SOCKET_NPU = 1
 };
 
+// 定义结构体封装环境变量配置参数
+struct EnvConfigParam {
+    std::string envName;    // 环境变量名
+    u32 defaultValue;       // 默认值
+    u32 minValue;           // 最小值
+    u32 maxValue;           // 最大值
+    u32 baseValue;          // 基数（可选，默认配置为0）
+};
+
 HcclResult InitEnvConfig();
 
 bool GetExternalInputHostPortSwitch();
@@ -47,14 +56,39 @@ struct EnvConfig {
     bool npuSocketPortSwitch; // HCCL_NPU_SOCKET_PORT_RANGE 环境变量配置则开启；否则关闭
     std::vector<HcclSocketPortRange> hostSocketPortRange;
     std::vector<HcclSocketPortRange> npuSocketPortRange;
+    u32 rdmaTrafficClass;
+    u32 rdmaServerLevel;
 
     EnvConfig()
     : hostSocketPortSwitch(false),
     npuSocketPortSwitch(false),
     hostSocketPortRange(),
-    npuSocketPortRange()
+    npuSocketPortRange(),
+    rdmaTrafficClass(HCCL_RDMA_TC_DEFAULT),
+    rdmaServerLevel(HCCL_RDMA_SL_DEFAULT)
     {
     }
+
+    static const u32 MAX_LEN_OF_DIGIT_ENV = 10;     // 数字环境变量最大长度
+
+    static const u32 HCCL_RDMA_TC_DEFAULT = 132;    // 默认的traffic class为132（33*4）
+    static const u32 HCCL_RDMA_TC_MIN = 0;
+    static const u32 HCCL_RDMA_TC_MAX = 255;
+    static const u32 HCCL_RDMA_TC_BASE = 4;         // RDMATrafficClass需要时4的整数倍
+
+    static const u32 HCCL_RDMA_SL_DEFAULT = 4;      // 默认的server level为4
+    static const u32 HCCL_RDMA_SL_MIN = 0;
+    static const u32 HCCL_RDMA_SL_MAX = 7;
+
+    // 解析RDMATrafficClass
+    HcclResult ParseRDMATrafficClass();
+    // 解析RDMAServerLevel
+    HcclResult ParseRDMAServerLevel();
+
+    static const u32& GetExternalInputRdmaTrafficClass();
+    static const u32& GetExternalInputRdmaServerLevel();
+
+    bool CheckEnvLen(const char *envStr, u32 envMaxLen);
 };
 
 HcclResult InitEnvParam();
@@ -69,4 +103,5 @@ HcclResult PortRangeSwitchOn(const SocketLocation &socketLoc);
 
 void PrintSocketPortRange(const std::string &envName, const std::vector<HcclSocketPortRange> &portRangeVec);
 
+HcclResult ParseEnvConfig(const EnvConfigParam& param, std::string& envValue, u32& resultValue);
 #endif // HCCL_ENV_INPUT_H

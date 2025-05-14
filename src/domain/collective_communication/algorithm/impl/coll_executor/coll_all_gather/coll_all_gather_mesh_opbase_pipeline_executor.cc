@@ -94,8 +94,8 @@ HcclResult CollAllGatherMeshOpbasePipelineExecutor::KernelRun(const OpParam &par
         "", execMem.inputPtr, execMem.outputPtr, param.DataDes.count, param.DataDes.dataType, 0, HCCL_REDUCE_RESERVED
     };
 
-    std::unique_ptr<AllGatherPipeline> tempAlg;
-    tempAlg.reset(new (std::nothrow) AllGatherPipeline(dispatcher_));
+    std::unique_ptr<AlgTemplateBase> tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_ALL_GATHER_PIPELINE, dispatcher_);
     CHK_SMART_PTR_NULL(tempAlg);
     CHK_RET(tempAlg->Prepare(&opInfo, topoAttr_.userRank, execMem.count, execMem.inputMem, execMem.outputMem,
         level0CommInfo, level1CommInfo, const_cast<Stream&>(param.stream),

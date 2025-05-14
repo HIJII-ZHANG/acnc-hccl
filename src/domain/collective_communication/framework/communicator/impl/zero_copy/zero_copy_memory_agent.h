@@ -79,6 +79,7 @@ public:
 
     static bool IsActivateCommMemoryAddr(void *virPtr, u64 length);
     static HcclResult GetRingBufferAddr(u64 &bufferPtr, u64 &headPtr, u64 &tailPtr);
+    static bool IsAddressMgrInited();
 
 private:
     // member functions
@@ -131,6 +132,7 @@ private:
 
     std::unique_ptr<std::thread> recvThread_;
     std::mutex socketMutex_;
+    std::mutex commRefCntLock_;
     std::unordered_map<u32, std::shared_ptr<HcclSocket> > mapDevPhyIdconnectedSockets_;
     std::unordered_set<u32> receivedBarrierCloseAck_;
     std::unordered_set<u32> receivedBarrierClose_{};
@@ -146,7 +148,7 @@ private:
     std::atomic<u32> reqMsgDeliverCnt_{};
     std::atomic<u32> reqMsgFinishCnt_{};
 
-    static ZeroCopyAddressMgr addressMgr_;
+    static std::unique_ptr<ZeroCopyAddressMgr> addressMgr_;
 };
 }
 

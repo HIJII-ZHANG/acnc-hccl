@@ -140,19 +140,20 @@ HcclResult CollAllGatherVFor310PExecutor::KernelRun(const OpParam &param, ExecMe
     HcomCollOpInfo opInfo = {"", execMem.inputPtr, execMem.outputPtr, 0, param.VDataDes.dataType, 
         param.root, param.reduceType};
     
-    std::unique_ptr<ExecutorBase> tempAlg;
-
+    std::unique_ptr<AlgTemplateBase> tempAlg;
     if (!IsHugeData(cclOffset)) {
-        tempAlg.reset(new (std::nothrow) AllGatherRingDirect(dispatcher_,
-            &opInfo, topoAttr_.userRank, outputSlices));
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_ALL_GATHER_RING_DIRECT, dispatcher_);
+        CHK_SMART_PTR_NULL(tempAlg);
+        CHK_RET(tempAlg->Prepare(&opInfo, topoAttr_.userRank, outputSlices));
     } else {
         std::vector<u32> rankOrder(rankSize, 0);
-        tempAlg.reset(new (std::nothrow) AllGatherRingConcurrentDirect(
-            dispatcher_, &opInfo, topoAttr_.userRank, algResResp_->slaveStreams,
-            algResResp_->notifiesMain, algResResp_->notifiesAux, rankOrder, outputSlices));
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_ALL_GATHER_RING_CONCURRENT_DIRECT, dispatcher_);
+        CHK_SMART_PTR_NULL(tempAlg);
+        CHK_RET(tempAlg->Prepare(&opInfo, topoAttr_.userRank, algResResp_->slaveStreams, algResResp_->notifiesMain,
+            algResResp_->notifiesAux, rankOrder, outputSlices));
     }
-
-    CHK_SMART_PTR_NULL(tempAlg);
 
     CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
         dataType, param.stream, param.reduceType, 0, inputSlices));

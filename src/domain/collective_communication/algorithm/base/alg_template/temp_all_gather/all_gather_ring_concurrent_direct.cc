@@ -8,21 +8,33 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "all_gather_ring_concurrent_direct.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 AllGatherRingConcurrentDirect::AllGatherRingConcurrentDirect(
-    const HcclDispatcher dispatcher, const HcomCollOpInfo *opInfo, const u32 userRank,
-    std::vector<Stream> &subStreams, const std::vector<std::shared_ptr<LocalNotify>> &mainSignals,
-    const std::vector<std::shared_ptr<LocalNotify>> &subSignals, const std::vector<u32> &ringsOrder,
-    const std::vector<Slice> &userMemOutputSlices, bool isSdma)
-    : AlgTemplateBase(dispatcher), opInfo_(opInfo), userRank_(userRank), subStreams_(subStreams),
-      mainSignals_(mainSignals), subSignals_(subSignals), ringsOrder_(ringsOrder),
-      userMemOutputSlices_(userMemOutputSlices), isSdma_(isSdma)
+    const HcclDispatcher dispatcher)
+    : AlgTemplateBase(dispatcher)
 {
 }
 
 AllGatherRingConcurrentDirect::~AllGatherRingConcurrentDirect()
 {
+}
+
+HcclResult AllGatherRingConcurrentDirect::Prepare(HcomCollOpInfo *opInfo, const u32 userRank,
+    std::vector<Stream> &subStreams, const std::vector<std::shared_ptr<LocalNotify>> &mainSignals,
+    const std::vector<std::shared_ptr<LocalNotify>> &subSignals, const std::vector<u32> &ringsOrder,
+    const std::vector<Slice> &userMemSlices, bool isSdma)
+{
+    opInfo_ = opInfo;
+    userRank_ = userRank;
+    subStreams_ = subStreams;
+    mainSignals_ = mainSignals;
+    subSignals_ = subSignals;
+    ringsOrder_ = ringsOrder;
+    userMemOutputSlices_ = userMemSlices;
+    isSdma_ = isSdma;
+    return HCCL_SUCCESS;
 }
 
 // 服务器间allgather的入口函数
@@ -192,7 +204,6 @@ HcclResult AllGatherRingConcurrentDirect::RunAllGather(const u32 rank, const u32
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
     CHK_RET(MainRecordSub()); // 主流通知从流开始通信
     CHK_RET(SubWaitMain());   // 从流等待主流通知
-
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem_, outputMem_, subStreams_[0], dispatcher_));
     u32 txSliceIdx = rank;
@@ -342,4 +353,5 @@ HcclResult AllGatherRingConcurrentDirect::SubRecordMain()
     }
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_ALL_GATHER_RING_CONCURRENT_DIRECT, AllGatherRingConcurrentDirect);
 } // namespace hccl

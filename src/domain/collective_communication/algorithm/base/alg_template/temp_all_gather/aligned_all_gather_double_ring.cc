@@ -8,21 +8,30 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "aligned_all_gather_double_ring.h"
+#include "alg_template_register.h"
 
 namespace hccl {
-AlignedAllGatherDoubleRing::AlignedAllGatherDoubleRing(
-    const HcclDispatcher dispatcher, const HcomCollOpInfo *opInfo, const u32 userRank,
-    std::vector<Stream> &subStreams, const std::vector<std::shared_ptr<LocalNotify>> &mainSignals,
-    const std::vector<std::shared_ptr<LocalNotify>> &subSignals, const std::vector<std::vector<u32>> &ringsOrders,
-    const std::vector<std::vector<Slice>> &userMemOutputSlicesOfDoubleRing)
-    : AlgTemplateBase(dispatcher), opInfo_(opInfo), userRank_(userRank), subStreams_(subStreams),
-      mainSignals_(mainSignals), subSignals_(subSignals), ringsOrders_(ringsOrders),
-      userMemOutputSlicesOfDoubleRing_(userMemOutputSlicesOfDoubleRing)
+AlignedAllGatherDoubleRing::AlignedAllGatherDoubleRing(const HcclDispatcher dispatcher) : AlgTemplateBase(dispatcher)
 {
 }
 
 AlignedAllGatherDoubleRing::~AlignedAllGatherDoubleRing()
 {
+}
+
+HcclResult AlignedAllGatherDoubleRing::Prepare(HcomCollOpInfo *opInfo, const u32 userRank,
+    std::vector<Stream> &subStreams, std::vector<std::shared_ptr<LocalNotify>> &mainSignals,
+    std::vector<std::shared_ptr<LocalNotify>> &subSignals, const std::vector<std::vector<u32>> &ringsOrders,
+    const std::vector<std::vector<Slice>> &userMemOutputSlicesOfDoubleRing)
+{
+    opInfo_ = opInfo;
+    userRank_ = userRank;
+    subStreams_ = subStreams;
+    mainSignals_ = mainSignals;
+    subSignals_ = subSignals;
+    ringsOrders_ = ringsOrders;
+    userMemOutputSlicesOfDoubleRing_ = userMemOutputSlicesOfDoubleRing;
+    return HCCL_SUCCESS;
 }
 
 // 服务器间allgather的入口函数
@@ -462,4 +471,5 @@ HcclResult AlignedAllGatherDoubleRing::SubRecordMain()
     }
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_ALIGNED_ALL_GATHER_DOUBLE_RING, AlignedAllGatherDoubleRing);
 } // namespace hccl

@@ -109,6 +109,10 @@ HcclResult CollRunAlltoAllStagedAivRdmaExecutor::RunAlltoAllStaged1InAIV(const O
 
     CHK_RET(PrepareAivBuffers(execMem.inputMem, execMem.scratchMem, dataBuffers, flagBuffers));
 
+    if (aivClearEnable_) {
+        ClearAivSyncBuf(flagBuffers, outerCommInfo_.localRank, outerCommInfo_.localRankSize, param.stream.ptr());
+    }
+
     AivOpArgs opArgs {
         HcclCMDType::HCCL_CMD_ALLTOALL, execMem.inputPtr, execMem.outputPtr, sendCount,
         param.All2AllDataDes.sendType, HCCL_REDUCE_RESERVED, 0, true
@@ -148,15 +152,16 @@ HcclResult CollRunAlltoAllStagedAivRdmaExecutor::RunAlltoAllStaged2(const OpPara
 
     CalcInterMeshAggregationAlltoAllMemInfo(param, sendAddrInfosInter, recvAddrInfosInter);
 
-    std::unique_ptr<AlltoAllVStagedBase> alltoallInner = nullptr;
     HcclOpMetaInfoDef opMeta = HcclOpMetaInfo::GetOneForAllToAll(CopyPattern::ZCOPY, algResResp_->paramInputMem.size(), 
         false, true);
     CHK_RET(InitTask(dispatcher_, const_cast<Stream&>(param.stream), opMeta.isEnableCache, opMeta.GetCacheKey()));
 
-    alltoallInner.reset(new (std::nothrow)AlltoAllVStagedPairwise(dispatcher_, const_cast<Stream&>(param.stream)));
+    std::unique_ptr<AlgTemplateBase> alltoallInner = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_ALL_2_ALL_V_STAGED_PAIRWISE, dispatcher_);
     CHK_SMART_PTR_NULL(alltoallInner);
 
-    CHK_RET(alltoallInner->Prepare(execMem.inputMem, execMem.outputMem, sendAddrInfosInter, recvAddrInfosInter, true));
+    CHK_RET(alltoallInner->Prepare(execMem.inputMem, execMem.outputMem, sendAddrInfosInter, recvAddrInfosInter,
+                                   true, const_cast<Stream&>(param.stream)));
 
     CHK_RET(RunAlltoAllVTemplateStaged(alltoallInner, innerCommInfo_));
     return HCCL_SUCCESS;
@@ -225,8 +230,8 @@ HcclResult CollRunAlltoAllStagedAivRdmaExecutor::KernelRun(const OpParam &param,
 HcclResult CollRunAlltoAllStagedAivRdmaExecutor::PrepareAivBuffers(DeviceMem &inputMem, DeviceMem &outputMem, void **dataBuffers, 
     void **flagBuffers)
 {
-    void *tmpCCLBufferData;
-    void *tmpCCLBufferFlag;
+    void *tmpCCLBufferData = nullptr;
+    void *tmpCCLBufferFlag = nullptr;
     for (u32 i = 0; i < outerCommInfo_.localRankSize; i++) {
         if (i != outerCommInfo_.localRank) {
             if (outerCommInfo_.links[i] != nullptr) {

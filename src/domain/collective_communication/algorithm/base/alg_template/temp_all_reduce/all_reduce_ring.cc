@@ -8,20 +8,24 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-
+#include "alg_template_register.h"
 #include "reduce_scatter_ring_pub.h"
 #include "all_gather_ring_pub.h"
 #include "all_reduce_ring.h"
 
 namespace hccl {
-AllReduceRing::AllReduceRing(const HcclDispatcher dispatcher,
-    const u64 reduceAttrBitMap)
-    : AlgTemplateBase(dispatcher), reduceAttr_(reduceAttrBitMap)
+AllReduceRing::AllReduceRing(const HcclDispatcher dispatcher) : AlgTemplateBase(dispatcher)
 {
 }
 
 AllReduceRing::~AllReduceRing()
 {
+}
+
+HcclResult AllReduceRing::Prepare(u64 reduceAttrBitMap, HcomCollOpInfo *opInfo)
+{
+    reduceAttr_ = reduceAttrBitMap;
+    return HCCL_SUCCESS;
 }
 
 // ringallreduce算法的函数入口
@@ -145,39 +149,45 @@ HcclResult AllReduceRing::RunReduceScatter(u32 rank, u32 rankSize, const std::ve
     }
 
     // 调用reducescattering算法
-    ReduceScatterRing tempAlg(dispatcher_, reduceAttr_);
+    std::unique_ptr<AlgTemplateBase> tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_REDUCESCATTER_RING, dispatcher_);
+    CHK_SMART_PTR_NULL(tempAlg);
+    tempAlg->Prepare(reduceAttr_);
     HCCL_INFO("rank[%u] tempAlg reducescattering inputMem[%p] outputMem[%p] mem_size[%llu] "\
         "count[%llu] planeID:[%d]", \
         rank, inputMem_.ptr(), outputMem_.ptr(), outputMem_.size(), count_, profilerInput_.planeID);
     if (!needBarrier) {
-        tempAlg.CloseBarrier();
+        tempAlg->CloseBarrier();
     }
-    CHK_RET(tempAlg.Prepare(inputMem_, inputMem_, outputMem_, count_, dataType_, stream_,
+    CHK_RET(tempAlg->Prepare(inputMem_, inputMem_, outputMem_, count_, dataType_, stream_,
         reductionOp_, root_, slices_, baseOffset_));
 
-    CHK_RET(tempAlg.RegisterProfiler(
+    CHK_RET(tempAlg->RegisterProfiler(
         profilerInput_.planeID, profilerInput_.stage, profilerInput_.step, stream_));
 
-    return tempAlg.RunAsync(rank, rankSize, links);
+    return tempAlg->RunAsync(rank, rankSize, links);
 }
 
 HcclResult AllReduceRing::RunAllGather(u32 rank, u32 rankSize, const std::vector<LINK> &links)
 {
-    AllGatherRing tempAlg(dispatcher_);
+    std::unique_ptr<AlgTemplateBase> tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_ALL_GATHER_RING, dispatcher_);
+    CHK_SMART_PTR_NULL(tempAlg);
     HCCL_INFO("rank[%u] tempAlg allgathering inputMem[%p] outputMem[%p] mem_size[%llu] "\
         "count[%llu] planeID:[%d]", rank, inputMem_.ptr(), outputMem_.ptr(), outputMem_.size(),
         count_, profilerInput_.planeID);
     // 判断是否关闭allgather的barrier
     if (!barrierSwitchOn_) {
-        tempAlg.CloseBarrier();
+        tempAlg->CloseBarrier();
     }
     // 调用allgatherring的算法执行
-    CHK_RET(tempAlg.Prepare(inputMem_, outputMem_, outputMem_, count_, dataType_, stream_,
+    CHK_RET(tempAlg->Prepare(inputMem_, outputMem_, outputMem_, count_, dataType_, stream_,
         reductionOp_, root_, slices_, baseOffset_));
 
-    CHK_RET(tempAlg.RegisterProfiler(
+    CHK_RET(tempAlg->RegisterProfiler(
         profilerInput_.planeID, profilerInput_.stage, profilerInput_.step, stream_));
 
-    return tempAlg.RunAsync(rank, rankSize, links);
+    return tempAlg->RunAsync(rank, rankSize, links);
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_ALL_REDUCE_RING, AllReduceRing);
 }  // namespace hccl

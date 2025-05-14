@@ -9,21 +9,36 @@
  */
 
 #include "aligned_reduce_scatter_double_ring.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 AlignedReduceScatterDoubleRing::AlignedReduceScatterDoubleRing(
-    const HcclDispatcher dispatcher, const u64 reduceAttrBitMap, const HcomCollOpInfo *opInfo,
-    const u32 userRank, std::vector<Stream> &subStreams, const std::vector<std::shared_ptr<LocalNotify>> &mainSignals,
-    const std::vector<std::shared_ptr<LocalNotify>> &subSignals, const std::vector<std::vector<u32>> &ringsOrders,
-    const std::vector<std::vector<Slice>> &userMemInputSlicesOfDoubleRing)
-    : AlgTemplateBase(dispatcher), reduceAttr_(reduceAttrBitMap), opInfo_(opInfo), userRank_(userRank),
-      subStreams_(subStreams), mainSignals_(mainSignals), subSignals_(subSignals), ringsOrders_(ringsOrders),
-      userMemInputSlicesOfDoubleRing_(userMemInputSlicesOfDoubleRing)
+    const HcclDispatcher dispatcher) : AlgTemplateBase(dispatcher)
 {
 }
 
 AlignedReduceScatterDoubleRing::~AlignedReduceScatterDoubleRing()
 {
+}
+
+HcclResult AlignedReduceScatterDoubleRing::Prepare(DeviceMem &inputMem, DeviceMem &outputMem,
+    DeviceMem &scratchMem, const u64 count, const HcclDataType dataType, const Stream &stream,
+    const std::vector<std::vector<Slice>> &multRingsSlices, const HcclReduceOp reductionOp, const u32 root,
+    const u64 baseOffset, const bool disableDMAReduce, const u64 reduceAttrBitMap, const HcomCollOpInfo *opInfo,
+    const u32 userRank, std::vector<Stream> &subStreams, const std::vector<std::shared_ptr<LocalNotify>> &mainSignals,
+    const std::vector<std::shared_ptr<LocalNotify>> &subSignals, const std::vector<std::vector<u32>> &ringsOrders,
+    const std::vector<std::vector<Slice>> &userMemInputSlicesOfDoubleRing)
+{
+    reduceAttr_ = reduceAttrBitMap;
+    opInfo_ = opInfo;
+    userRank_ = userRank;
+    subStreams_ = subStreams;
+    mainSignals_ = mainSignals;
+    subSignals_ = subSignals;
+    ringsOrders_ = ringsOrders;
+    userMemInputSlicesOfDoubleRing_ = userMemInputSlicesOfDoubleRing;
+    return AlgTemplateBase::Prepare(inputMem, outputMem, scratchMem, count, dataType, stream, multRingsSlices,
+        reductionOp, root, baseOffset, disableDMAReduce);
 }
 
 // reduce scatter ring direct算法的函数入口
@@ -701,4 +716,5 @@ HcclResult AlignedReduceScatterDoubleRing::SubRecordMain()
     }
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_REDUCESCATTER_DB_RING, AlignedReduceScatterDoubleRing);
 } // namespace hccl

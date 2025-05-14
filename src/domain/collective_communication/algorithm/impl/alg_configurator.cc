@@ -235,6 +235,9 @@ HcclResult AlgConfigurator::GetDefaultAlgoLevel1V1(u32 moduleNum, AlgTypeLevel1 
             AlgTypeLevel1::ALG_LEVEL1_RING :
             AlgTypeLevel1::ALG_LEVEL1_HD;
     }
+    if (algType == AlgTypeLevel1::ALG_LEVEL1_HD && topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
+        algType = AlgTypeLevel1::ALG_LEVEL1_NHR;
+    }
     HCCL_INFO("[AlgConfigurator][GetDefaultAlgoLevel1V1] algType[%u], moduleNum[%u]", algType, moduleNum);
     return HCCL_SUCCESS;
 }

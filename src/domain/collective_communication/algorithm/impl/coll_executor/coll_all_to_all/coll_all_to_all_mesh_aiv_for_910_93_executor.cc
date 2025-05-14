@@ -115,6 +115,10 @@ HcclResult CollAlltoAllMeshAivFor91093Executor::KernelRun(const OpParam &param, 
     buffersIn[0] = execMem.inputMem.ptr();
     buffersOut[0] = execMem.outputMem.ptr();
 
+    if (aivClearEnable_) {
+        ClearAivSyncBuf(buffersOut, localRank, localRankSize, param.stream.ptr());
+    }
+
     AivTopoArgs topoArgs { localRank, localRankSize, MAX_RANK_SIZE, 0, topoAttr_.serverNum, topoAttr_.deviceType };
     AivResourceArgs resourceArgs { param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size() };
     AivAlgArgs algArgs {};

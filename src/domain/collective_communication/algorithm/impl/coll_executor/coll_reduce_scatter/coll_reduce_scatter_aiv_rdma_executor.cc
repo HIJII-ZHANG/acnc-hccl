@@ -10,6 +10,7 @@
 
 #include "coll_reduce_scatter_aiv_rdma_executor.h"
 #include "alg_profiling.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 constexpr u32 A_X_SIZE = 16;
@@ -35,7 +36,7 @@ HcclResult CollReduceScatterAivRdmaExecutor::CalcScratchMemSize(u64& scratchMemS
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
         scratchMemSize = 0U;
     } else {
-        scratchMemSize = totalSize_ + CCE_REDUCE_ALIGN_FACTOR * CCE_REDUCE_ALIGN_SIZE;
+        scratchMemSize = totalSize_;
     }
     HCCL_INFO("[CollReduceScatterMeshExecutor][CalcScratchMemSize] tag[%s] scratchMemSize[%llu]",
         tag_.c_str(), scratchMemSize);
@@ -148,6 +149,10 @@ HcclResult CollReduceScatterAivRdmaExecutor::KernelRun(const OpParam &param, Exe
     CHK_RET(PrepareAivBuffers(intraRankSize, intraRankId, 0, execMem.inputMem, execMem.inputMem, intraLinks,
         dataBuffers, flagBuffers, UserMemType::INPUT_MEM, UserMemType::INPUT_MEM, 0, HCCL_MID_COUNT_32_MB));
 
+    if (aivClearEnable_) {
+        ClearAivSyncBuf(flagBuffers, intraRankId, intraRankSize, param.stream.ptr());
+    }
+
     u32 serverNum = innerCommInfo.localRankSize;
     // 先做本地拷贝到AIVIN再跨片拷贝；output统一为reduceScatterInput的位置，即buffer中原位
     AivOpArgs opArgs {
@@ -200,29 +205,45 @@ HcclResult CollReduceScatterAivRdmaExecutor::KernelRun(const OpParam &param, Exe
             dataSegsSlice[i].offset = (commIndex * innerRankSize + i) * perRankSize;
         }
         u64 count = param.DataDes.count;
-        DeviceMem inputMem = execMem.inputMem;
         u64 baseOffset = 0;
+        DeviceMem inputMem = execMem.inputMem;
+        DeviceMem scratchMem = execMem.scratchMem;
         if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
-            innerExecutor.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
+            innerExecutor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_REDUCESCATTER_RING, dispatcher_);
+            CHK_SMART_PTR_NULL(innerExecutor);
+            CHK_RET(innerExecutor->Prepare(reduceAttr));
             HCCL_INFO("reducescatter mesh: using ring algo inter-server.");
         } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
-            innerExecutor.reset(new (std::nothrow) ReduceScatterNHR(dispatcher_, reduceAttr));
+            innerExecutor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_REDUCESCATTER_NHR, dispatcher_);
+            CHK_SMART_PTR_NULL(innerExecutor);
+            CHK_RET(innerExecutor->Prepare(reduceAttr, false));
             HCCL_INFO("reducescatter mesh: using nhr algo inter-server.");
         } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
-            innerExecutor.reset(new (std::nothrow) ReduceScatterNHRV1(dispatcher_, reduceAttr));
+            innerExecutor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_REDUCESCATTER_NHR_V1, dispatcher_);
+            CHK_SMART_PTR_NULL(innerExecutor);
+            CHK_RET(innerExecutor->Prepare(reduceAttr));
             HCCL_INFO("reducescatter mesh: using nhr_v1 algo inter-server.");
         } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
-            innerExecutor.reset(new (std::nothrow) ReduceScatterNB(dispatcher_, reduceAttr));
+            innerExecutor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_REDUCESCATTER_NB, dispatcher_);
+            CHK_SMART_PTR_NULL(innerExecutor);
+            CHK_RET(innerExecutor->Prepare(reduceAttr));
             HCCL_INFO("reducescatter mesh: using nonuniform-bruck algo inter-server.");
         } else {
             count = count * innerRankSize;
             baseOffset = commIndex * innerRankSize * perRankSize;
             inputMem = execMem.inputMem.range(commIndex * innerRankSize * perRankSize, perRankSize * innerRankSize);
-            innerExecutor.reset(new (std::nothrow) ReduceScatterRecursiveHalvingDoubling(dispatcher_, reduceAttr));
+            scratchMem = execMem.scratchMem.range(commIndex * innerRankSize * perRankSize, perRankSize * innerRankSize);
+            innerExecutor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_REDUCESCATTER_RECURSIVE_HD, dispatcher_);
+            CHK_SMART_PTR_NULL(innerExecutor);
+            CHK_RET(innerExecutor->Prepare(reduceAttr));
             HCCL_INFO("reducescatter mesh: using halving-doubling algo inter-server.");
         }
-        CHK_SMART_PTR_NULL(innerExecutor);
-        CHK_RET(innerExecutor->Prepare(inputMem, inputMem, execMem.scratchMem, count,
+        CHK_RET(innerExecutor->Prepare(inputMem, inputMem, scratchMem, count,
             param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID, dataSegsSlice, baseOffset));
         CHK_RET(innerExecutor->RegisterProfiler(
             (innerRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + innerCommInfo.localRank,

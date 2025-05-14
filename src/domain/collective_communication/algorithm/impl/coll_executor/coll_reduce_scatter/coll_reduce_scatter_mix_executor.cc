@@ -9,6 +9,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "coll_reduce_scatter_mix_executor.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 CollReduceScatterMixExecutor::CollReduceScatterMixExecutor(const HcclDispatcher dispatcher,
@@ -55,9 +56,9 @@ HcclResult CollReduceScatterMixExecutor::CalcScratchMemSize(u64& scratchMemSize)
 {
     if (scratchMemFlag_) {
         if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-            scratchMemSize = inCCLbufferSize_ + CCE_REDUCE_ALIGN_FACTOR * CCE_REDUCE_ALIGN_SIZE;
+            scratchMemSize = inCCLbufferSize_;
         } else {
-            scratchMemSize = totalSize_ + CCE_REDUCE_ALIGN_FACTOR * CCE_REDUCE_ALIGN_SIZE;
+            scratchMemSize = totalSize_;
         }
     } else {
         scratchMemSize = 0U;
@@ -333,14 +334,14 @@ HcclResult CollReduceScatterMixExecutor::KernelRun(const OpParam &param, ExecMem
         if (opInfoPtr != nullptr) {
             u64 reduceAttr = GetReduceAttr(execMem.inputMem, execMem.scratchMem, param.DataDes.dataType,
                 param.reduceType);
-            std::unique_ptr<AlgTemplateBase> level0Executor;
-            level0Executor.reset(new (std::nothrow) ReduceScatterMeshMix(dispatcher_, reduceAttr,
-                algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
-                serverIndex, level1RankSize, opInfoPtr));
+            std::unique_ptr<AlgTemplateBase> level0Executor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_REDUCESCATTER_MESH_MIX, dispatcher_);
 
             CHK_SMART_PTR_NULL(level0Executor);
             CHK_RET(level0Executor->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, execMem.count,
-                param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID, dataSegsSlice, 0));
+                param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID, dataSegsSlice, 0,
+                reduceAttr, algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
+                serverIndex, level1RankSize, opInfoPtr));
             CHK_RET(level0Executor->RegisterProfiler((level0RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + commIndex,
                 PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, param.stream));
             CHK_RET(RunTemplate(level0Executor, level0CommInfo));
@@ -369,16 +370,21 @@ HcclResult CollReduceScatterMixExecutor::KernelRun(const OpParam &param, ExecMem
     CHK_RET(CalLevel1DataSegsSlice(execMem, commIndex, sliceNum, level1RankSize, level1DataSegsSlice));
 
     if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
-        level1Executor.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
+        level1Executor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_REDUCESCATTER_RING, dispatcher_);
+        CHK_SMART_PTR_NULL(level1Executor);
+        CHK_RET(level1Executor->Prepare(reduceAttr));
         HCCL_INFO("[CollReduceScatterMixExecutor][KernelRun]reducescatter mix: using ring algo inter-server.");
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
-        level1Executor.reset(new (std::nothrow) ReduceScatterNHR(dispatcher_, reduceAttr));
+        level1Executor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_REDUCESCATTER_NHR, dispatcher_);
+        CHK_SMART_PTR_NULL(level1Executor);
+        CHK_RET(level1Executor->Prepare(reduceAttr, false));
         HCCL_INFO("[CollReduceScatterMixExecutor][KernelRun]reducescatter mix: using nhr algo inter-server.");
     } else {
         HCCL_ERROR("[CollReduceScatterMixExecutor][KernelRun]reducescatter mix: algType[%u] is not supported.", algType_.algoLevel1);
         return HCCL_E_NOT_SUPPORT;
     }
-    CHK_SMART_PTR_NULL(level1Executor);
 
     CHK_RET(level1Executor->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, execMem.count,
         param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID, level1DataSegsSlice));

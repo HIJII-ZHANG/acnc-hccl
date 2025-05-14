@@ -23,7 +23,7 @@ namespace hccl {
 constexpr int HEAD = 0;
 constexpr int TAIL = 1;
 
-HcclResult StarsCounter(const HcclDispatcher &dispatcher, Stream &stream, int flag);
+HcclResult StarsCounter(const HcclDispatcher &dispatcher, Stream &stream, int flag, bool isAicpuMode, bool isRetry);
 HcclResult FftsHeadCounter(const HcclDispatcher &dispatcher, Stream &stream);
 HcclResult FftsTailCounter(const HcclDispatcher &dispatcher, Stream &stream);
 HcclResult GetOpCountInfo(OpCounterInfo &opCounterInfo);

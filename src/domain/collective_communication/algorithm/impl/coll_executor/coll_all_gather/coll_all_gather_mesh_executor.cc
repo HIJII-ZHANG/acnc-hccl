@@ -109,16 +109,15 @@ HcclResult CollAllGatherMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
 
     std::unique_ptr<AlgTemplateBase> level0TempAlg;
     if (topoAttr_.deviceType == DevType::DEV_TYPE_910B) {
-        level0TempAlg.reset(
-            new (std::nothrow) AllGatherMeshAtomic(dispatcher_, algResResp_->slaveStreams,
-            algResResp_->notifiesMain, algResResp_->notifiesAux, commIndex, level0RankSize,
-            topoAttr_.userRank));
+        level0TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_GATHER_MESH_ATOMIC,
+                                                                       dispatcher_);
     } else {
-        level0TempAlg.reset(
-            new (std::nothrow) AllGatherMesh(dispatcher_, algResResp_->slaveStreams, algResResp_->notifiesMain,
-                algResResp_->notifiesAux, commIndex, level0RankSize, topoAttr_.userRank));
+        level0TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_GATHER_MESH,
+                                                                       dispatcher_);
     }
     CHK_SMART_PTR_NULL(level0TempAlg);
+    CHK_RET(level0TempAlg->Prepare(algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
+        topoAttr_.userRank, nullptr, commIndex, level0RankSize));
     CHK_RET(level0TempAlg->Prepare(currentOutputMem, currentOutputMem, execMem.inputMem,
         execMem.count * level0RankSize, param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED,
         LEVEL0_BRIDGE_RANK_ID, dataSegsSlice, baseOffset));
@@ -135,19 +134,24 @@ HcclResult CollAllGatherMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
     std::unique_ptr<AlgTemplateBase> level1TempAlg;
     if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING || (topoAttr_.isDiffDeviceModule && topoAttr_.serverNum == 1)) {
         // 1-单server-SDMA
-        level1TempAlg.reset(new (std::nothrow) AllGatherRing(dispatcher_));
+        level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_ALL_GATHER_RING, dispatcher_);
         HCCL_INFO("allgather mesh: using ring algo inter-server.");
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
-        level1TempAlg.reset(new (std::nothrow) AllGatherNHR(dispatcher_));
+        level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_ALL_GATHER_NHR, dispatcher_);
         HCCL_INFO("allgather mesh: using nhr algo inter-server.");
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
-        level1TempAlg.reset(new (std::nothrow) AllGatherNHRV1(dispatcher_));
+        level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_ALL_GATHER_NHRV1, dispatcher_);
         HCCL_INFO("allgather mesh: using nhr_v1 algo inter-server.");
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
-        level1TempAlg.reset(new (std::nothrow) AllGatherNB(dispatcher_));
+        level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_ALL_GATHER_NB, dispatcher_);
         HCCL_INFO("allgather mesh: using nonuniform-bruck algo inter-server.");
     } else {
-        level1TempAlg.reset(new (std::nothrow) AllGatherRecursiveHalvingDoubling(dispatcher_));
+        level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_ALL_GATHER_RECURSIVE_HALVING_DOUBLING, dispatcher_);
         HCCL_INFO("allgather mesh: using halving-doubling algo inter-server.");
     }
     CHK_SMART_PTR_NULL(level1TempAlg);

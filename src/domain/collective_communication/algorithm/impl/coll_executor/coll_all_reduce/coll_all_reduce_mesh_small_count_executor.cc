@@ -184,8 +184,9 @@ HcclResult CollAllReduceMeshSmallCountExecutor::KernelRun(const OpParam &param, 
     if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
         bool aicpu = true;
         aicpu = false;
-        level0TempAlg.reset(new (std::nothrow) AllReduceHDOptim(dispatcher_,
-            reduceAttr, algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
+        level0TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_HD_OPTIM, dispatcher_);
+        CHK_SMART_PTR_NULL(level0TempAlg);
+        CHK_RET(level0TempAlg->Prepare(reduceAttr, algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
             level0CommInfo.localRank, &opInfo, aicpu));
     } else if (!topoMatcher_->GetExternalInputHcclDeterministic()) {
         isUsedRegister = true;
@@ -193,13 +194,19 @@ HcclResult CollAllReduceMeshSmallCountExecutor::KernelRun(const OpParam &param, 
             TemplateType::TEMPLATE_ALL_REDUCE_REDUCE_BCAST, dispatcher_);
     } else if (topoAttr_.deviceNumPerAggregation == DEVICE_EIGHT) {
         if (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE || aicpuUnfoldMode_) {
-            level0TempAlg.reset(new (std::nothrow) AllReduceDoubling(dispatcher_, reduceAttr));
+            level0TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_DOUBLING, 
+                dispatcher_);
+            CHK_SMART_PTR_NULL(level0TempAlg);
+            CHK_RET(level0TempAlg->Prepare(reduceAttr));
         } else {
-            level0TempAlg.reset(new (std::nothrow) AllReduceDoublingDirect(dispatcher_, reduceAttr, &opInfo));
+            level0TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_DOUBLING_DIRECT, dispatcher_);
+            CHK_SMART_PTR_NULL(level0TempAlg);
+            CHK_RET(level0TempAlg->Prepare(reduceAttr, &opInfo));
         }
     } else {
-        level0TempAlg.reset(new (std::nothrow) AllReduceLocalReduceBcast(dispatcher_,
-            reduceAttr, algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
+        level0TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_LOCAL_REDUCE_BCAST, dispatcher_);
+        CHK_SMART_PTR_NULL(level0TempAlg);
+        CHK_RET(level0TempAlg->Prepare(reduceAttr, algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
             level0CommInfo.localRank, level0CommInfo.localRankSize, topoAttr_.userRank, &opInfo));
     }
     CHK_SMART_PTR_NULL(level0TempAlg);

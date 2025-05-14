@@ -72,9 +72,10 @@ HcclResult CollReduceCommExecutor::KernelRun(const OpParam &param, ExecMem &exec
     u64 reduceAttr = GetReduceAttr(execMem.inputMem, execMem.outputMem, param.DataDes.dataType, param.reduceType);
 
     std::unique_ptr<AlgTemplateBase> tempAlg;
-    tempAlg.reset(new (std::nothrow) ReduceRing(dispatcher_, reduceAttr));
+    tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_REDUCE_RING, dispatcher_);
     HCCL_INFO("Reduce comm: using ring algo inter-server.");
     CHK_SMART_PTR_NULL(tempAlg);
+    CHK_RET(tempAlg->Prepare(reduceAttr));
 
     // 获取root
     u32 root = 0;

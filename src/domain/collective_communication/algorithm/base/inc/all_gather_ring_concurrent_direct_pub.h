@@ -18,15 +18,15 @@
 namespace hccl {
 class AllGatherRingConcurrentDirect : public AlgTemplateBase {
 public:
-    explicit AllGatherRingConcurrentDirect(const HcclDispatcher dispatcher, const HcomCollOpInfo *opInfo,
-                                           const u32 userRank, std::vector<Stream> &subStreams,
-                                           const std::vector<std::shared_ptr<LocalNotify>> &mainSignals,
-                                           const std::vector<std::shared_ptr<LocalNotify>> &subSignals,
-                                           const std::vector<u32>                          &ringsOrder,
-                                           const std::vector<Slice>                        &userMemOutputSlices,
-                                           bool isSdma = true);
+    explicit AllGatherRingConcurrentDirect(const HcclDispatcher dispatcher);
 
     ~AllGatherRingConcurrentDirect() override;
+
+    // should be called soon after template AllGatherMeshDirect instance created
+    HcclResult Prepare(HcomCollOpInfo *opInfo, const u32 userRank, std::vector<Stream> &subStreams, 
+        const std::vector<std::shared_ptr<LocalNotify>> &mainSignals, 
+        const std::vector<std::shared_ptr<LocalNotify>> &subSignals, const std::vector<u32> &ringsOrder, 
+        const std::vector<Slice> &userMemSlices, bool isSdma = true) override;
 
     HcclResult RunAsync(const u32 rank, const u32 rankSize, const std::vector<LINK> &links) override;
 
@@ -46,13 +46,13 @@ private:
     LINK leftLink_;
     LINK rightLink_;
 
-    const HcomCollOpInfo                     *opInfo_;
-    const u32                                 userRank_;
+    HcomCollOpInfo                     *opInfo_{nullptr};
+    u32                                 userRank_;
     std::vector<Stream>                       subStreams_;
     std::vector<std::shared_ptr<LocalNotify>> mainSignals_;
     std::vector<std::shared_ptr<LocalNotify>> subSignals_;
-    const std::vector<u32>                    ringsOrder_;
-    const std::vector<Slice>                  userMemOutputSlices_;
+    std::vector<u32>                    ringsOrder_;
+    std::vector<Slice>                  userMemOutputSlices_;
     std::vector<Slice>                        inputSlices_; // 需要吗？
     bool                                      isSdma_;
 };

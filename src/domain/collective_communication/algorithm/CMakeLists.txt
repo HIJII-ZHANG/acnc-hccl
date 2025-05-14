@@ -11,7 +11,7 @@ target_include_directories(hccl_alg PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/base/inc
     ${HCCL_BASE_DIR}/pub_inc
     ${HCCL_BASE_DIR}/pub_inc/hccl
-    ${HCCL_BASE_DIR}/algorithm/alg_research/aiv
+    ${HCCL_BASE_DIR}/algorithm/alg_research/alg_template
     ${HCCL_BASE_DIR}/inc
     ${HCCL_BASE_DIR}/inc/adapter
     ${TOP_DIR}/inc
@@ -19,6 +19,7 @@ target_include_directories(hccl_alg PRIVATE
     ${TOP_DIR}/abl/msprof/inc
     ${TOP_DIR}/ace/npuruntime/inc
     ${TOP_DIR}/ace/npuruntime/acl/inc/external
+    ${CMAKE_CURRENT_SOURCE_DIR}/base/alg_aiv_template
     ${CMAKE_CURRENT_SOURCE_DIR}/base/alg_template
     ${CMAKE_CURRENT_SOURCE_DIR}/base/alg_template/component/inc
     ${CMAKE_CURRENT_SOURCE_DIR}/base/mc2_handler
@@ -59,9 +60,13 @@ target_include_directories(hccl_alg PRIVATE
     ${TOP_DIR}/ace/comop/inc/external/hccl
     ${TOP_DIR}/ace/comop/inc/hccl
     ${TOP_DIR}/ace/comop/hccl/whole/hccl/algorithm/alg_research/pub_inc
+    ${TOP_DIR}/ace/comop/hccl/whole/hccl/platform/inc/adapter/
+    ${TOP_DIR}/ace/comop/hccl/whole/hccl/platform/inc
+    ${TOP_DIR}/drivers/network/inc
 )
 
 if(BUILD_OPEN_PROJECT)
+    add_dependencies(hccl_alg hccl_aiv_op_ascend910B)
     target_compile_definitions(hccl_alg PRIVATE
         OPEN_BUILD_PROJECT
         LOG_CPP)
@@ -80,6 +85,7 @@ if(BUILD_OPEN_PROJECT)
         ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/slog/
         ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/runtime/external
         ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/slog/toolchain
+        ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/mmpa
     )
 
     target_link_directories(hccl_alg PRIVATE
@@ -94,6 +100,7 @@ else()
         ${TOP_DIR}/metadef/inc/external/
         ${TOP_DIR}/abl/slog/inc/toolchain
         ${TOP_DIR}/abl/atrace/inc/utrace
+        ${TOP_DIR}/abl/mmpa/inc/mmpa
     )
 endif()
 
@@ -131,12 +138,15 @@ else()
         $<BUILD_INTERFACE:slog_headers>
         $<BUILD_INTERFACE:msprof_headers>
         $<BUILD_INTERFACE:runtime_headers> #runtime/rt_error_codes.h
+        $<BUILD_INTERFACE:mmpa_headers>
         -Wl,--no-as-needed
         c_sec
         slog
+        mmpa
         -Wl,--no-as-needed
         hccl_alg_research
         hccl_plf
+        ofed_headers
     )
 endif()
 

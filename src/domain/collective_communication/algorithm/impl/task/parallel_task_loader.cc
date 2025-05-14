@@ -61,9 +61,8 @@ HcclResult ParallelTaskLoader::StartTaskLoad()
         // 获取线程ID
         tidInfo_[streamIndex] = streamTaskLoader_[streamIndex]->GetTid();
     }
-#ifndef OPEN_HCCL_TEST
+
     CHK_RET(hccl::ProfilingManagerPub::CallMsprofReportMultiThreadInfo(tidInfo_));
-#endif
 
     // 通知流线程执行
     for (u32 streamIndex = 0; streamIndex < streamsPtr_.size(); streamIndex++) {

@@ -160,7 +160,8 @@ u64 RankConsistentcyChecker::GetRankConsistentDataLength()
 
 void RankConsistentcyChecker::RecordProtocolType(ProtocolType protocolType)
 {
-    HCCL_INFO("[RankConsistentcyChecker][RecordProtocolType]protocolType set to [%d]", static_cast<s32>(protocolType));
+    HCCL_INFO("[RankConsistentcyChecker][RecordProtocolType]protocolType set to [%d].",
+        static_cast<s32>(protocolType));
     protocolType_ = protocolType;
     return;
 }
@@ -239,7 +240,7 @@ HcclResult RankConsistentcyChecker::CalcStringCrc(const char *str, u32 &crc)
         HCCL_ERROR("[RankConsistentcyChecker][CalcStringCrc] errNo[0x%016llx] calc string crc error",
         HCCL_ERROR_CODE(HCCL_E_INTERNAL)), HCCL_E_INTERNAL);
 
-    HCCL_DEBUG("[RankConsistentcyChecker][CalcStringCrc] result crc[%u]", crc);
+    HCCL_DEBUG("[RankConsistentcyChecker][CalcStringCrc] result crc[%u].", crc);
     return HCCL_SUCCESS;
 }
 
@@ -251,7 +252,7 @@ HcclResult RankConsistentcyChecker::CalcRawDataCrc(const void *ptr, u64 length, 
         HCCL_ERROR("[RankConsistentcyChecker][CalcRawDataCrc] errNo[0x%016llx] calc string crc error",
         HCCL_ERROR_CODE(HCCL_E_INTERNAL)), HCCL_E_INTERNAL);
 
-    HCCL_DEBUG("[RankConsistentcyChecker][CalcRawDataCrc] result crc[%u]", crc);
+    HCCL_DEBUG("[RankConsistentcyChecker][CalcRawDataCrc] result crc[%u].", crc);
     return HCCL_SUCCESS;
 }
 
@@ -370,7 +371,7 @@ HcclResult RankConsistentcyChecker::GenerateCheckFrame(HcclCheckInfo &checkInfo,
     // 添加拉远通信传输类型校验
     // 910* 不会配置isTcpMode，因此910*在此处的待校验值是一致的
     checkInfo.protocolType = protocolType_;
-    HCCL_INFO("loc protocolType is [%d]", checkInfo.protocolType);
+    HCCL_INFO("loc protocolType is [%d].", checkInfo.protocolType);
 
     return HCCL_SUCCESS;
 }
@@ -493,13 +494,13 @@ bool RankConsistentcyChecker::CompareFrame(HcclCheckInfo &checkInfo, HcclCheckIn
 {
     bool bIsDiff = false;
     if (CompareCrcInfo(checkInfo.cmdInfo.tag, checkInfo.crcInfoGlobal, checkInfoRecv.crcInfoGlobal)) {
-        HCCL_ERROR("[RankConsistentcyChecker][CompareFrame]errNo[0x%016llx] CRC check fail.please check the "
-            "rankTable file and hccl_congif file.", HCCL_ERROR_CODE(HCCL_E_INTERNAL));
+        HCCL_ERROR("[RankConsistentcyChecker][CompareFrame]errNo[0x%016llx] CRC check fail, please check the "
+            "rankTable file and hccl_config file.", HCCL_ERROR_CODE(HCCL_E_INTERNAL));
         bIsDiff = true;
     }
     if (CompareCrcInfo(checkInfo.cmdInfo.tag, checkInfo.crcInfoOp, checkInfoRecv.crcInfoOp)) {
-        HCCL_ERROR("[RankConsistentcyChecker][CompareFrame]errNo[0x%016llx] Op CRC check fail.please check the op"
-            " paramaters, rankTable file and hccl_congif file.", HCCL_ERROR_CODE(HCCL_E_INTERNAL));
+        HCCL_ERROR("[RankConsistentcyChecker][CompareFrame]errNo[0x%016llx] Op CRC check fail, please check the op"
+            " paramaters, rankTable file and hccl_config file.", HCCL_ERROR_CODE(HCCL_E_INTERNAL));
         bIsDiff = true;
     }
     if (!CompareSection(reinterpret_cast<char_t *>(&checkInfo.cmdInfo),
@@ -509,7 +510,8 @@ bool RankConsistentcyChecker::CompareFrame(HcclCheckInfo &checkInfo, HcclCheckIn
             HCCL_ERROR_CODE(HCCL_E_INTERNAL));
         bIsDiff = true;
     }
-    HCCL_INFO("loc protocolType is [%d], rem protocolType is [%d]", checkInfo.protocolType, checkInfoRecv.protocolType);
+    HCCL_INFO("loc protocolType is [%d], rem protocolType is [%d].",
+        checkInfo.protocolType, checkInfoRecv.protocolType);
     if (checkInfo.protocolType != checkInfoRecv.protocolType) {
         HCCL_ERROR("[RankConsistentcyChecker][CompareFrame]errNo[0x%016llx] ProtocolType check fail",
             HCCL_ERROR_CODE(HCCL_E_INTERNAL));
@@ -537,9 +539,9 @@ bool RankConsistentcyChecker::CompareFrame(HcclCheckInfo &checkInfo, HcclCheckIn
 
 HcclResult RankConsistentcyChecker::AddCrc(const u32 crcValue)
 {
-    HCCL_DEBUG("crcValue[%u]", crcValue);
+    HCCL_DEBUG("crcValue[%u].", crcValue);
     crcTable_.push_back(crcValue);
-    HCCL_DEBUG("num[%llu]", crcTable_.size());
+    HCCL_DEBUG("num[%llu].", crcTable_.size());
     return HCCL_SUCCESS;
 }
 
@@ -556,7 +558,7 @@ HcclResult RankConsistentcyChecker::ClearCrcInfo(void)
 HcclResult RankConsistentcyChecker::GetCrc(u32 num, u32 *crcAddr)
 {
     CHK_PTR_NULL(crcAddr);
-    HCCL_DEBUG("num[%u], crc[%u]", num, *crcAddr);
+    HCCL_DEBUG("num[%u], crc[%u].", num, *crcAddr);
 
     if (num == 0) {
         HCCL_ERROR("[Get][Crc]errNo[0x%016llx] In get crc the value of num is 0", HCCL_ERROR_CODE(HCCL_E_PARA));

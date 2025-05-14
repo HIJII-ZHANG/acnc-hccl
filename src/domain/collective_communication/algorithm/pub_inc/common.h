@@ -16,6 +16,7 @@
 #include "hccl_common.h"
 #include "transport_pub.h"
 #include "externalinput_pub.h"
+#include "common_pub.h"
 
 // sub stream 相关
 constexpr s64 HCCL_SUB_STREAM_NUM_ZERO = 0;  // subStream 数量为0
@@ -153,7 +154,6 @@ public:
 };
 
 constexpr s64 HCCL_SMALL_COUNT_128_KB = 128 * 1024;  // hccl 910B/310P duo卡单算子小数据量标准，暂定128kb
-constexpr s64 HCCL_SMALL_COUNT_32_KB = 32 * 1024;  // hccl小数据量标准，暂定512KB
 constexpr s64 HCCL_SMALL_COUNT_GRAPH_64_KB = 64 * 1024;  // hccl图模式小数据量标准，暂定64KB
 constexpr s64 HCCL_MEDIUM_COUNT_GRAPH_4_MB = 4 * 1024 * 1024;     // hccl图模式中数据量标准，暂定4MB
 constexpr s64 HCCL_SMALL_COUNT_256_KB = 256 * 1024;  // 910B/310p V卡hccl小数据量标准，暂定256KB
@@ -217,13 +217,6 @@ const std::map<AlgTypeLevel2, std::string> HCCL_ALGO_LEVEL2_NAME_MAP = {
     {AlgTypeLevel2::ALG_LEVEL2_RESERVED, "null"},
 };
 
-struct SubCommInfo {
-    u32 localRank;
-    u32 localRankSize;
-    std::vector<LINK> links;
-    std::vector<LINK> virtualLinks; // for alltoall 多线程性能提升使用
-};
-
 const std::map<AlgTypeLevel0, std::string> HCCL_ALGO_LEVEL0_MAP = {
     {AlgTypeLevel0::ALG_LEVEL0_NP_DOUBLE_RING, "RING"},
     {AlgTypeLevel0::ALG_LEVEL0_WHOLE_RING, "RING"},
@@ -281,24 +274,6 @@ inline std::string TransferAlgType(AlgType algType)
     return algTypeStr;
 }
 }  // namespace hccl
-
-struct SendRecvInfo {
-    // 存放数据长度和偏移长度
-    std::vector<u64> sendLength;
-    std::vector<u64> sendOffset;
-    std::vector<u64> recvLength;
-    std::vector<u64> recvOffset;
-    // 存放数据个数和偏移个数
-    std::vector<u64> sendCounts;
-    std::vector<u64> sendDispls;
-    std::vector<u64> recvCounts;
-    std::vector<u64> recvDispls;
-};
-
-struct Slice {
-    u64 offset{0}; // Slice相对于input/output的偏移字节数，gather类操作取output，scatter类操作取input
-    u64 size{0};    // Slice的数据大小，单位：字节
-};
 
 enum class TopoType {
     TOPO_TYPE_COMMON = 0,           // 普通拓扑类型 ，default单层拓扑使用

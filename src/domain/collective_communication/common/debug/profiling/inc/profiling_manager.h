@@ -91,7 +91,8 @@ public:
     HcclResult ReportStoragedCompactInfo();
     HcclResult ClearStoragedProfilingInfo();
     HcclResult ReportStoragedFftsInfo();
-
+    HcclResult CallMsprofReportNodeInfo(uint64_t beginTime, uint64_t endTime,
+        const std::string profName, uint32_t threadId);
     void SetMsprofReporterCallback(MsprofReporterCallback func)
     {
         reporterCallback_ = func;
@@ -144,8 +145,9 @@ public:
             StartHostApiSubscribe();
         }
 
-        // aicpu模式下 开启L0就上报task打点
-        if (GetExternalInputHcclAicpuUnfold() && (profconfig & PROF_TASK_TIME) != 0) {
+        // aicpu模式下 开启L0就上报task打点; 其他场景开启L1才上报
+        if ((GetExternalInputHcclAicpuUnfold() && (profconfig & PROF_TASK_TIME) != 0) ||
+            ((profconfig & PROF_TASK_TIME_L1) != 0) || ((profconfig & PROF_HCCL_TRACE_MASK) != 0)) {
             StartTaskApiSubscribe();
         }
 
@@ -163,7 +165,6 @@ public:
         }
         // L1打开时, 上报task粒度的打点和子task的详细信息
         if (((profconfig & PROF_TASK_TIME_L1) != 0) || ((profconfig & PROF_HCCL_TRACE_MASK) != 0)) {
-            StartTaskApiSubscribe();
             StartAddtionInfoSubscribe();
         } else {
             HCCL_RUN_INFO("[Profiling][CommandHandle] profSwitch is[%u]", profconfig);
@@ -203,9 +204,6 @@ public:
     {
         // profconfig同步到platform
         SetProfConfig(profconfig);
-        ReportStoragedTaskApi();
-        ReportStoragedAdditionInfo();
-        ReportStoragedCompactInfo();
         isHostApiSubscribe_ = HCCL_E_NOT_SUPPORT;
         isHostHcclOpSubscribe_ = HCCL_E_NOT_SUPPORT;
         isTaskApiSubscribe_ = HCCL_E_NOT_SUPPORT;
@@ -245,6 +243,7 @@ public:
     }
     void SetFftsDispatcherMode();
     void ReSetFftsDispatcherMode();
+    void SetCaptureStatus(bool isCapture);
 private:
     MsprofReporterCallback reporterCallback_;
     HcclResult isHostApiSubscribe_ = HCCL_E_NOT_SUPPORT;
@@ -258,7 +257,10 @@ private:
     static std::array<std::queue<MsprofCompactInfo>, MAX_MODULE_DEVICE_NUM> storageCompactInfo_;
     static std::array<std::mutex, MAX_MODULE_DEVICE_NUM> reportCompactInfoMutex_;
     static std::mutex reportDataQueueMutex_;
+    static std::array<std::queue<MsprofAdditionalInfo>, MAX_MODULE_DEVICE_NUM> storageAdditionInfoFftsCapture_;
+    static std::array<std::mutex, MAX_MODULE_DEVICE_NUM> reportAddInfoFftsCaptureMutex_;
     std::atomic<bool> isFftsDispatcher_{false};
+    thread_local static bool isCapture_;
 };
 } // namespace hccl
 #endif // COMMON_PROFILING_PROFILING_MANAGER_H

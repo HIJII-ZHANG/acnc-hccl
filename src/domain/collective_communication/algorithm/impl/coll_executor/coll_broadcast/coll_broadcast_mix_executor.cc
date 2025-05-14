@@ -9,6 +9,7 @@
  */
 
 #include "coll_broadcast_mix_executor.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 
@@ -126,10 +127,10 @@ HcclResult CollBroadCastMix::KernelRun(const OpParam &param, ExecMem &execMem)
                 param.DataDes.dataType, mulRingSlice, param.root, param.stream, scatterOpInfoPtr));
         }
     } else if (topoAttr_.deviceType == DevType::DEV_TYPE_910B) {
-        std::unique_ptr<AlgTemplateBase> level0Executor;
-        level0Executor.reset(
-            new (std::nothrow) ScatterMesh(dispatcher_, level0CommInfo.localRank, level0CommInfo.localRankSize));
+        std::unique_ptr<AlgTemplateBase> level0Executor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_SCATTER_MESH, dispatcher_);
         CHK_SMART_PTR_NULL(level0Executor);
+        CHK_RET(level0Executor->Prepare(level0CommInfo.localRank, level0CommInfo.localRankSize));
         level0Executor->CloseBarrier();
 
         /* 节点内执行器 stage0 */
@@ -169,9 +170,11 @@ HcclResult CollBroadCastMix::KernelRun(const OpParam &param, ExecMem &execMem)
         HCCL_DEBUG("[CollBroadCastMix][KernelRun] curSize[%llu] deviceNumPerAggregation[%u] commLevel0Size[%u]",
             curSize, topoAttr_.deviceNumPerAggregation, level0CommInfo.localRankSize);
         if (curSize / topoAttr_.deviceNumPerAggregation <= NHR_BCAST_SMALL_SIZE) {
-            level1Executor.reset(new (std::nothrow) BroadcastNHROneshot(dispatcher_));
+            level1Executor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_NHR_ONESHOT, dispatcher_);
         } else {
-            level1Executor.reset(new (std::nothrow) BroadcastNHR(dispatcher_));
+            level1Executor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_NHR, dispatcher_);
         }
         HCCL_INFO("[CollBroadCastMix][KernelRun]broadcast mix: using nhr algo inter-server.");
     } else {
@@ -210,13 +213,11 @@ HcclResult CollBroadCastMix::KernelRun(const OpParam &param, ExecMem &execMem)
         CHK_RET(MultiRingAllGather(param.tag, execMem.inputMem, execMem.outputMem, level1DataCount, param.DataDes.dataType,
             mulRingSlice, param.stream, PROF_STAGE_2, 0, allgatherOpInfoPtr));
     } else if (topoAttr_.deviceType == DevType::DEV_TYPE_910B) {
-        std::unique_ptr<AlgTemplateBase> level0Executor;
-        level0Executor.reset(
-            new (std::nothrow) AllGatherMeshAtomic(dispatcher_, algResResp_->slaveStreams,
-            algResResp_->notifiesMain, algResResp_->notifiesAux, level0CommInfo.localRank, level0CommInfo.localRankSize,
-            topoAttr_.userRank));
-
+        std::unique_ptr<AlgTemplateBase> level0Executor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_ALL_GATHER_MESH_ATOMIC, dispatcher_);
         CHK_SMART_PTR_NULL(level0Executor);
+        CHK_RET(level0Executor->Prepare(algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
+            topoAttr_.userRank, nullptr, level0CommInfo.localRank, level0CommInfo.localRankSize));
 
         if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB) { // offline
             for (u32 streamIndex = 0; streamIndex < algResResp_->slaveStreams.size(); streamIndex++) {
@@ -276,12 +277,13 @@ HcclResult CollBroadCastMix::DoubleRingScatter(const std::string &tag, DeviceMem
         CHK_RET(GetRankOrder(multiRingsOrder, ringIndex, rankOrder));
         doubleRingsOrders.push_back(rankOrder);
     }
-    std::unique_ptr<AlgTemplateBase> executor;
-    executor.reset(new (std::nothrow) ScatterDoubleRingDirect(dispatcher_, opInfo, topoAttr_.userRank,
-        level0CommInfo1.localRank, algResResp_->slaveStreams, algResResp_->notifiesMain,
-        algResResp_->notifiesAux, doubleRingsOrders, multRingsSliceZero, doubleRingUserMemInputSlices));
-
+    std::unique_ptr<AlgTemplateBase> executor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_SCATTER_DOUBLE_RING_DIRECT, dispatcher_);
     CHK_SMART_PTR_NULL(executor);
+
+    CHK_RET(executor ->Prepare(const_cast<HcomCollOpInfo *>(opInfo), topoAttr_.userRank, level0CommInfo1.localRank,
+        algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux, 
+        doubleRingsOrders, multRingsSliceZero, doubleRingUserMemInputSlices));
 
     u32 rootRank = 0;
     ret = GetRankByUserRank(COMM_LEVEL0, COMM_INDEX_0, root, rootRank);

@@ -123,6 +123,10 @@ HcclResult CollAlltoAllMeshAivExecutor::KernelRun(const OpParam &param, ExecMem 
         }
     }
 
+    if (aivClearEnable_) {
+        ClearAivSyncBuf(buffersOut, localRank, localRankSize, param.stream.ptr());
+    }
+
     ExtraArgs extraArgs;
     bool isOpbase = (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
     HcclResult ret;

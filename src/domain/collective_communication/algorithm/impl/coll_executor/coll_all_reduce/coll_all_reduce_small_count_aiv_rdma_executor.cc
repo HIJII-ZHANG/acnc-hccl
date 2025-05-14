@@ -10,6 +10,8 @@
 
 #include "coll_all_reduce_small_count_aiv_rdma_executor.h"
 #include "alg_profiling.h"
+#include "sender.h"
+#include "reducer.h"
 
 namespace hccl {
 constexpr s32 INTRA_RS_STEP = 0;
@@ -117,7 +119,7 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::Orchestrate(OpParam& param, A
         HCCL_ERROR("[CollAllReduceSmallCountAivRdmaExecutor]errNo[0x%016llx] tag[%s] excutor kernel run failed",
             HCCL_ERROR_CODE(ret), param.tag.c_str()), ret);
 
-    HCCL_INFO("tag[%s], AllReduce executor orchestrate success, take time [%lld]us",
+    HCCL_INFO("tag[%s], AllReduce executor orchestrate success, take time [%lld]us.",
         param.tag.c_str(), DURATION_US(TIME_NOW() - startut));
     return HCCL_SUCCESS;
 }
@@ -127,7 +129,7 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::InterServerHDOneshot(const Op
     std::vector<LINK> &interLinks)
 {
     u64 reduceAttr = GetReduceAttr(execMem.inputMem, execMem.outputMem, param.DataDes.dataType, param.reduceType);
-    HCCL_INFO("[CollAllReduceSmallCountAivRdmaExecutor][InterServerHDOneshot]reduceAttr is [%llu]", reduceAttr);
+    HCCL_INFO("[CollAllReduceSmallCountAivRdmaExecutor][InterServerHDOneshot]reduceAttr is [%llu].", reduceAttr);
     std::unique_ptr<Sender> senderInfo;
     std::unique_ptr<Reducer> reducerInfo;
     senderInfo.reset(new (std::nothrow) Sender(param.DataDes.dataType, param.reduceType, reduceAttr));
@@ -145,67 +147,33 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::InterServerHDOneshot(const Op
         u32 peerMask = 1 << (step - 1);
         u32 peer = interRankId ^ peerMask;
         HCCL_INFO("[CollAllReduceSmallCountAivRdmaExecutor][InterServerHDOneshot] Step %u, peer %u.", step, peer);
-        if (step == 1 && interLinks[peer]->GetLinkType() == LinkType::LINK_PCIE) {
-            // a+x单机，走PCIE
-            void *dataBuffers[MAX_RANK_SIZE];
-            void *flagBuffers[MAX_RANK_SIZE];
-            void* arOutput = static_cast<u8 *>(execMem.inputMem.ptr()) + HCCL_SMALL_COUNT_2_MB + sliceSize + dbOffset;
-            CHK_RET(PrepareAivBuffers(A_X_AGGR_SIZE, interRankId % A_X_AGGR_SIZE,
-                interRankId - interRankId % A_X_AGGR_SIZE, execMem.inputMem, execMem.inputMem, interLinks, dataBuffers,
-                flagBuffers, UserMemType::INPUT_MEM, UserMemType::INPUT_MEM, HCCL_SMALL_COUNT_2_MB + dbOffset, HCCL_MID_COUNT_32_MB));
-
-            AivOpArgs opArgs {
-                HcclCMDType::HCCL_CMD_ALLREDUCE, nullptr, arOutput, sliceCount,
-                param.DataDes.dataType, param.reduceType, 0, isOpbase
-            };
-            AivTopoArgs topoArgs {
-                interRankId % A_X_AGGR_SIZE, A_X_AGGR_SIZE,
-                topoAttr_.isDiffDeviceModule ? topoAttr_.devicePhyId : A_X_SIZE
-            };
-            AivResourceArgs resourceArgs {
-                param.tag, param.stream.ptr(), dataBuffers, flagBuffers, execMem.inputMem.size()
-            };
-            AivAlgArgs algArgs { INTER_AR_STEP, true };
-            struct AivProfilingInfo aivProfilingInfo;
-            
-            if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
-                HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
-                HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
-            }
-
-            CHK_RET(ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, aivProfilingInfo));
-
-            TaskAivProfiler(opArgs.cmdType, aivProfilingInfo.tag, opArgs.count * sizeof(opArgs.dataType),
-                aivProfilingInfo.blockDim, topoArgs.rankSize, resourceArgs.buffersOut[topoArgs.rank],
-                resourceArgs.stream, algArgs.step, aivProfilingInfo.beginTime);
-            blockDim_ = aivProfilingInfo.blockDim;
-            if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){ 
-                HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());
-                HCCL_PROFILER_DEL_TAG(param.tag);
-            }
+        u32 sliceForReadOffset = HCCL_SMALL_COUNT_2_MB + (step - 1) * sliceSize + dbOffset;
+        u32 sliceForWriteOffset = HCCL_SMALL_COUNT_2_MB + step * sliceSize + dbOffset;
+        DeviceMem src = execMem.inputMem.range(sliceForReadOffset, sliceSize);
+        DeviceMem dst = execMem.inputMem.range(sliceForWriteOffset, sliceSize);
+        CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dst, src, const_cast<Stream&>(param.stream)));
+        interLinks[peer]->TxAck(const_cast<Stream&>(param.stream));
+        interLinks[peer]->RxAck(const_cast<Stream&>(param.stream));
+        if (interLinks[peer]->IsSupportTransportWithReduce() && 
+            ((interLinks[peer]->GetLinkType() == LinkType::LINK_STANDARD_ROCE) ||
+            (RDMA_REDUCE_BITMASK & reduceAttr))) {
+            HCCL_INFO("[CollAllReduceSmallCountAivRdmaExecutor][InterServerHDOneshot] inter use RDMA");
+            CHK_RET(senderInfo->run(interLinks[peer], sliceForWriteOffset, src, const_cast<Stream&>(param.stream),
+                UserMemType::INPUT_MEM));
+            CHK_RET(reducerInfo->run(dispatcher_, interLinks[peer], 0, src, src, src, 
+                const_cast<Stream&>(param.stream), DstMemType::RESULT_INPUT_MEM, UserMemType::INPUT_MEM));
+        } else if (interLinks[peer]->IsSpInlineReduce() && (INLINE_REDUCE_BITMASK & reduceAttr)) {
+            HCCL_INFO("[CollAllReduceSmallCountAivRdmaExecutor][InterServerHDOneshot] inter use SDMA");
+            CHK_RET(senderInfo->run(interLinks[peer], sliceForWriteOffset, src, const_cast<Stream&>(param.stream),
+                UserMemType::INPUT_MEM));
+            CHK_RET(reducerInfo->run(dispatcher_, interLinks[peer], sliceForReadOffset, dst, dst, dst, 
+                const_cast<Stream&>(param.stream), DstMemType::RESULT_INPUT_MEM, UserMemType::INPUT_MEM));
         } else {
-            // 其他情况走RDMA
-            u32 sliceForReadOffset = HCCL_SMALL_COUNT_2_MB + (step - 1) * sliceSize + dbOffset;
-            u32 sliceForWriteOffset = HCCL_SMALL_COUNT_2_MB + step * sliceSize + dbOffset;
-            DeviceMem src = execMem.inputMem.range(sliceForReadOffset, sliceSize);
-            DeviceMem dst = execMem.inputMem.range(sliceForWriteOffset, sliceSize);
-            CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dst, src, const_cast<Stream&>(param.stream)));
-            interLinks[peer]->TxAck(const_cast<Stream&>(param.stream));
-            interLinks[peer]->RxAck(const_cast<Stream&>(param.stream));
-            if (interLinks[peer]->IsSupportTransportWithReduce() && 
-                ((interLinks[peer]->GetLinkType() == LinkType::LINK_STANDARD_ROCE) ||
-                (RDMA_REDUCE_BITMASK & reduceAttr))) {
-                CHK_RET(senderInfo->run(interLinks[peer], sliceForWriteOffset, src, const_cast<Stream&>(param.stream),
-                    UserMemType::INPUT_MEM));
-                CHK_RET(reducerInfo->run(dispatcher_, interLinks[peer], 0, src, src, src, 
-                    const_cast<Stream&>(param.stream), DstMemType::RESULT_INPUT_MEM, UserMemType::INPUT_MEM));
-            } else {
-                CHK_RET(interLinks[peer]->TxAsync(UserMemType::INPUT_MEM, HALF_OFFSET + sliceForWriteOffset, 
-                    src.ptr(), src.size(), const_cast<Stream&>(param.stream)));
-                DeviceMem localSrc = execMem.inputMem.range(HALF_OFFSET + sliceForWriteOffset, sliceSize);
-                CHK_RET(reducerInfo->run(dispatcher_, interLinks[peer], 0, localSrc, dst, src, 
-                    const_cast<Stream&>(param.stream), DstMemType::RESULT_INPUT_MEM, UserMemType::INPUT_MEM));
-            }
+            CHK_RET(interLinks[peer]->TxAsync(UserMemType::INPUT_MEM, HALF_OFFSET + sliceForWriteOffset, 
+                src.ptr(), src.size(), const_cast<Stream&>(param.stream)));
+            DeviceMem localSrc = execMem.inputMem.range(HALF_OFFSET + sliceForWriteOffset, sliceSize);
+            CHK_RET(reducerInfo->run(dispatcher_, interLinks[peer], 0, localSrc, dst, src, 
+                const_cast<Stream&>(param.stream), DstMemType::RESULT_INPUT_MEM, UserMemType::INPUT_MEM));
         }
     }
     CHK_RET(LaunchTask(dispatcher_, const_cast<Stream&>(param.stream)));
@@ -249,6 +217,10 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::KernelRun(const OpParam &para
         dataBuffers, flagBuffers, UserMemType::INPUT_MEM, UserMemType::INPUT_MEM, 0, HCCL_MID_COUNT_32_MB));
     // RS总数据量最大1m，rs的结果存储到2m处
     void* rsOutput = static_cast<u8 *>(execMem.inputMem.ptr()) + HCCL_SMALL_COUNT_2_MB;
+
+    if (aivClearEnable_) {
+        ClearAivSyncBuf(flagBuffers, intraRankId, intraRankSize, param.stream.ptr());
+    }
 
     AivOpArgs opArgs {
         HcclCMDType::HCCL_CMD_ALLREDUCE, execMem.inputPtr, rsOutput, execMem.count,
@@ -301,7 +273,7 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::KernelRun(const OpParam &para
     }
     blockDim_ = aivProfilingInfo.blockDim;
 
-    HCCL_INFO("[CollAllReduceSmallCountAivRdmaExecutor][KernelRun]allreduce aiv run success");
+    HCCL_INFO("[CollAllReduceSmallCountAivRdmaExecutor][KernelRun]allreduce aiv run success.");
     return HCCL_SUCCESS;
 }
 

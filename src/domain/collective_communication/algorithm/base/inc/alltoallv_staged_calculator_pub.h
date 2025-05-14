@@ -16,48 +16,10 @@
 #include "common.h"
 
 namespace hccl {
-
-struct RemoteMem {
-    DeviceMem remoteScratchPingMem;
-    DeviceMem remoteScratchPongMem;
-};
-
-struct SendDataBlock {
-    u64 sendLen;
-    u64 userInOffset;
-    u64 scratchOffset;
-};
-
-struct ReadDataBlock {
-    u64 recvLen;
-    u64 remoteOffset;
-    u64 recvOffset;
-};
-
-struct RecvDataBlock {
-    u64 recvOffset;
-    u64 recvLen;
-    u64 scratchOffset;
-};
-
-struct AlltoallSendRecvInfo {
-    std::vector<SendDataBlock> sendInfo;
-    std::vector<ReadDataBlock> readInfo;
-};
-
-struct OneSendRecvAddrInfo {
-    u64 localOffset;
-    u64 localLength;
-    u64 remoteOffset;
-    u64 remoteLength;
-};
-
 struct AlltoAllUserRankInfo {
     u32 userRankSize;
     u32 userRank;
 };
-
-using StageAlltoAllVAddrInfo = std::map<u32, std::list<OneSendRecvAddrInfo>>; // key: remote rank in local communicator
 
 class AlltoAllVStagedCalculator {
 public:

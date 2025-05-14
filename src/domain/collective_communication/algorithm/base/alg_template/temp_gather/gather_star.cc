@@ -8,17 +8,23 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "gather_star.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 // Gather的入口函数
-GatherStar::GatherStar(const HcclDispatcher dispatcher, u32 userRank)
-    : AlgTemplateBase(dispatcher),
-      userRank_(userRank)
+GatherStar::GatherStar(const HcclDispatcher dispatcher)
+    : AlgTemplateBase(dispatcher)
 {
 }
 
 GatherStar::~GatherStar()
 {
+}
+
+HcclResult GatherStar::Prepare(u32 userRank)
+{
+    userRank_ = userRank;
+    return HCCL_SUCCESS;
 }
 
 HcclResult GatherStar::RunAsync(const u32 rank, const u32 rankSize,
@@ -178,4 +184,5 @@ HcclResult GatherStar::ExecuteBarrierSrcRank(std::shared_ptr<Transport> link, St
 
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_GATHER_STAR, GatherStar);
 }

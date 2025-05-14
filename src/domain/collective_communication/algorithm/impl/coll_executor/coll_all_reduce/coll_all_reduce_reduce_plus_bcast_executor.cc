@@ -82,8 +82,9 @@ HcclResult CollAllReduceReducePlusBcastExecutor::KernelRun(const OpParam &param,
     u64 reduceAttr = GetReduceAttr(execMem.inputMem, execMem.outputMem, param.DataDes.dataType, param.reduceType);
 
     std::unique_ptr<AlgTemplateBase> reduceTempAlg;
-    reduceTempAlg.reset(new (std::nothrow) ReduceRecursiveHalvingDoubling(dispatcher_, reduceAttr));
+    reduceTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_REDUCE_RECURSIVE_HALVING_DOUBLING, dispatcher_);
     CHK_SMART_PTR_NULL(reduceTempAlg);
+    CHK_RET(reduceTempAlg->Prepare(reduceAttr));
 
     std::vector<u32> nicRankList{0, 1};
     CHK_RET(reduceTempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.inputMem, execMem.count,
@@ -106,39 +107,55 @@ HcclResult CollAllReduceReducePlusBcastExecutor::KernelRun(const OpParam &param,
     if (topoAttr_.devicePhyId == 0) {
         std::unique_ptr<AlgTemplateBase> allreduceTempAlg = nullptr;
         if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
-            allreduceTempAlg.reset(new (std::nothrow) AllReduceRing(dispatcher_, reduceAttr));
+            allreduceTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_ALL_REDUCE_RING, dispatcher_);
             HCCL_INFO("allreduce ring: using ring algo inter-server.");
+            CHK_SMART_PTR_NULL(allreduceTempAlg);
+            CHK_RET(allreduceTempAlg->Prepare(reduceAttr));
         } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
             u64 curSize = execMem.count * SIZE_TABLE[param.DataDes.dataType]; // 单位 byte
             HCCL_DEBUG("allreduce recursive hd: curSize[%llu] deviceNumPerAggregation[%u] commLevel0Size[%u]",
                 curSize, topoAttr_.deviceNumPerAggregation, level0CommInfo.localRankSize);
             if (curSize / topoAttr_.deviceNumPerAggregation <= NHR_ALLREDUCE_SMALL_SIZE) {
-                allreduceTempAlg.reset(new (std::nothrow) AllReduceNHROneshot(dispatcher_, reduceAttr));
+                allreduceTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_NHR_ONESHOT, dispatcher_);
             } else {
-                allreduceTempAlg.reset(new (std::nothrow) AllReduceNHR(dispatcher_, reduceAttr));
+                allreduceTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_NHR, dispatcher_);
             }
             HCCL_INFO("allreduce recursive hd: using nhr algo inter-server.");
+            CHK_SMART_PTR_NULL(allreduceTempAlg);
+            CHK_RET(allreduceTempAlg->Prepare(reduceAttr));
         } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
-            allreduceTempAlg.reset(new (std::nothrow) AllReduceNHRV1(dispatcher_, reduceAttr));
+            allreduceTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_NHR_V1, dispatcher_);
             HCCL_INFO("allreduce recursive hd: using nhr_v1 algo inter-server.");
+            CHK_SMART_PTR_NULL(allreduceTempAlg);
+            CHK_RET(allreduceTempAlg->Prepare(reduceAttr));
         } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC) {
             // 获取通信域分组信息
-            std::vector<std::vector<std::vector<u32>>> globalSubGroups;
-            CHK_RET(topoMatcher_->GetGlobalSubGroups(commPlaneLevel1, globalSubGroups));
-            allreduceTempAlg.reset(new (std::nothrow) AllReduceAHC(dispatcher_, reduceAttr, execMem.count, globalSubGroups[0]));
+            std::vector<std::vector<std::vector<u32>>> gloableSubGroups;
+            CHK_RET(topoMatcher_->GetGlobalSubGroups(commPlaneLevel1, gloableSubGroups));
+            allreduceTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_AHC, dispatcher_);
             HCCL_INFO("allreduce recursive hd: using ahc algo inter-server.");
+            CHK_SMART_PTR_NULL(allreduceTempAlg);
+            CHK_RET(allreduceTempAlg->Prepare(reduceAttr, execMem.count, gloableSubGroups[0]));
         } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE) {
             // 获取通信域分组信息
-            std::vector<std::vector<std::vector<u32>>> globalSubGroups;
-            CHK_RET(topoMatcher_->GetGlobalSubGroups(commPlaneLevel1, globalSubGroups));
-            allreduceTempAlg.reset(new (std::nothrow) AllReduceAHCBroke(dispatcher_, reduceAttr, execMem.count, globalSubGroups[0]));
+            std::vector<std::vector<std::vector<u32>>> gloableSubGroups;
+            CHK_RET(topoMatcher_->GetGlobalSubGroups(commPlaneLevel1, gloableSubGroups));
+            allreduceTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_AHC_BROKE, dispatcher_);
             HCCL_INFO("allreduce recursive hd: using ahc-broke algo inter-server.");
+            CHK_SMART_PTR_NULL(allreduceTempAlg);
+            CHK_RET(allreduceTempAlg->Prepare(reduceAttr, execMem.count, gloableSubGroups[0]));
         } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
-            allreduceTempAlg.reset(new (std::nothrow) AllReduceNB(dispatcher_, reduceAttr));
+            allreduceTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_ALL_REDUCE_NB, dispatcher_);
             HCCL_INFO("allreduce recursive hd: using nb algo inter-server.");
+            CHK_SMART_PTR_NULL(allreduceTempAlg);
+            CHK_RET(allreduceTempAlg->Prepare(reduceAttr));
         } else {
-            allreduceTempAlg.reset(new (std::nothrow) AllReduceRecursiveHalvingDoubling(dispatcher_, reduceAttr));
+            allreduceTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_RECURSIVE_HALVING_DOUBLING, dispatcher_);
             HCCL_INFO("allreduce recursive hd: using halving-doubling algo inter-server.");
+            CHK_SMART_PTR_NULL(allreduceTempAlg);
+            CHK_RET(allreduceTempAlg->Prepare(reduceAttr));
         }
 
         CHK_SMART_PTR_NULL(allreduceTempAlg);
@@ -153,7 +170,7 @@ HcclResult CollAllReduceReducePlusBcastExecutor::KernelRun(const OpParam &param,
 
     // 执行server内broadcast
     std::unique_ptr<AlgTemplateBase> bcastTempAlg;
-    bcastTempAlg.reset(new (std::nothrow) BroadcastRing(dispatcher_));
+    bcastTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_BROADCAST_RING, dispatcher_);
     CHK_SMART_PTR_NULL(bcastTempAlg);
     CHK_RET(bcastTempAlg->Prepare(execMem.outputMem, execMem.outputMem, execMem.inputMem, execMem.count,
         param.DataDes.dataType, param.stream, param.reduceType, 0));

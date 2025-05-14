@@ -265,7 +265,8 @@ HcclResult CollAllGatherExecutor::AllGatherLevel2(const std::string &tag, Device
     u32 level1ServerIndex = level1CommInfo.localRank;
 
     std::unique_ptr<AlgTemplateBase> level2AGExecutor;
-    level2AGExecutor.reset(new (std::nothrow) AllGatherRing(dispatcher_));
+    level2AGExecutor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_ALL_GATHER_RING, dispatcher_);
     HCCL_INFO("allgather ring: using ring algo inter-server.");
     CHK_SMART_PTR_NULL(level2AGExecutor);
 
@@ -296,13 +297,16 @@ HcclResult CollAllGatherExecutor::AllGatherLevel2(const std::string &tag, Device
     if (level1RankSize > 1) {
         std::unique_ptr<AlgTemplateBase> level1AGExecutor;
         if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
-            level1AGExecutor.reset(new (std::nothrow) AllGatherRing(dispatcher_));
+            level1AGExecutor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_ALL_GATHER_RING, dispatcher_);
             HCCL_INFO("allgather ring: using ring algo inter-server.");
         } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
-            level1AGExecutor.reset(new (std::nothrow) AllGatherNB(dispatcher_));
+            level1AGExecutor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_ALL_GATHER_NB, dispatcher_);
             HCCL_INFO("allgather ring: using nonuniform-bruck algo inter-server.");
         } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
-            level1AGExecutor.reset(new (std::nothrow) AllGatherNHR(dispatcher_));
+            level1AGExecutor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_ALL_GATHER_NHR, dispatcher_);
             HCCL_INFO("allgather ring: using nonuniform-hierarchical-ring algo inter-server.");
         } else {
             HCCL_ERROR("allgather ring: unsupported algtype [%s].", AlgTypeToStr(algType_).c_str());

@@ -87,6 +87,8 @@ HcclResult HcclDeviceRefresh(void);
 
 HcclResult HcclSetIfProfile(void);
 
+void HcclResetIfProfile(void);
+
 void PrintCountsAndDispls(const u32 length, const void *counts, const void *displs, const std::string &tag);
 
 void CheckCountsAndDispls(const u32 length, const void *counts, const void *displs, const std::string &tag);

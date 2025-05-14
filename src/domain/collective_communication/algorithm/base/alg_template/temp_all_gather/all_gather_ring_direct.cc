@@ -8,18 +8,26 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "all_gather_ring_direct.h"
+#include "alg_template_register.h"
 
 namespace hccl {
-AllGatherRingDirect::AllGatherRingDirect(
-    const HcclDispatcher dispatcher, const HcomCollOpInfo *opInfo, const u32 userRank,
-    const std::vector<Slice> &userMemOutputSlices, bool isSdma)
-    : AlgTemplateBase(dispatcher), opInfo_(opInfo), userRank_(userRank),
-      userMemOutputSlices_(userMemOutputSlices), isSdma_(isSdma)
+AllGatherRingDirect::AllGatherRingDirect(const HcclDispatcher dispatcher)
+    : AlgTemplateBase(dispatcher)
 {
 }
 
 AllGatherRingDirect::~AllGatherRingDirect()
 {
+}
+
+HcclResult AllGatherRingDirect::Prepare(HcomCollOpInfo *opInfo, u32 userRank,
+    const std::vector<Slice> &userMemOutputSlices, bool isSdma)
+{
+    opInfo_ = opInfo;
+    userRank_ = userRank;
+    userMemOutputSlices_ = userMemOutputSlices;
+    isSdma_ = isSdma;
+    return HCCL_SUCCESS;
 }
 
 // allgather的入口函数
@@ -313,5 +321,5 @@ HcclResult AllGatherRingDirect::RunAllGather(const u32 rank, const u32 rankSize)
 
     return HCCL_SUCCESS;
 }
-
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_ALL_GATHER_RING_DIRECT, AllGatherRingDirect);
 } // namespace hccl

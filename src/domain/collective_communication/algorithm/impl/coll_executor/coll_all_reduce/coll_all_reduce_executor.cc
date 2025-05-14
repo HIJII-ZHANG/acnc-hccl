@@ -363,8 +363,8 @@ HcclResult CollAllReduceExecutor::PrepareAivBuffers(u32 rankSize, u32 rankId, u3
     DeviceMem &inputMem, DeviceMem &outputMem, std::vector<LINK> &links, void **dataBuffers, void **flagBuffers,
     UserMemType dataMemType, UserMemType flagMemType, u32 dataMemOffset, u32 flagMemOffset)
 {
-    void *tmpCCLBufferData;
-    void *tmpCCLBufferFlag;
+    void *tmpCCLBufferData = nullptr;
+    void *tmpCCLBufferFlag = nullptr;
     for (u32 i = 0; i < rankSize; i++) {
         if (i != rankId) {
             if (links[i + rankOffset] != nullptr) {

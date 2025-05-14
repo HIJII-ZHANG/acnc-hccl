@@ -17,6 +17,7 @@
 #include "workflow_pub.h"
 #include "externalinput_pub.h"
 #include "common.h"
+#include "common_pub.h"
 
 namespace hccl {
 enum class ExecutorType {

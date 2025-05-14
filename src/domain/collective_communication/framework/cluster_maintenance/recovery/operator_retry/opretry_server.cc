@@ -204,13 +204,17 @@ HcclResult OpRetryServerHandleError::ProcessEvent(RetryContext* retryCtx)
                 //sendrecv没有下边那两字段
                 auto remoteSendTag = std::string(reinterpret_cast<const char*>(remoteOpId.bsrInfo[HCCL_SEND].bsrTag));
                 auto remoteRecvTag = std::string(reinterpret_cast<const char*>(remoteOpId.bsrInfo[HCCL_RECV].bsrTag));
-                HCCL_RUN_INFO("[OpRetry][Server]curRank[%u] tag[%s] index[%u]"\
-                               "remoteRank[%u] remotetag[%s] remoteindex[%u]"\
+                HCCL_RUN_INFO("[OpRetry][Server]curRank[%u], tag[%s], index[%u], startTaskComplete[%d]"\
+                               "remoteRank[%u], remotetag[%s], remoteindex[%u], remoteStartTaskComplete[%d]"\
                                "Sendtag[%s], sendindex[%u]"\
                                "Recvtag[%s], recvindex[%u]",
-                    rank, curTag.c_str(), curOpId.index, remoteRank, remoteTag.c_str(), remoteOpId.index,
+                    rank, curTag.c_str(), curOpId.index, curOpId.isBsrTaskStart,
+                    remoteRank, remoteTag.c_str(), remoteOpId.index, remoteOpId.isBsrTaskStart,
                     remoteSendTag.c_str(), remoteOpId.bsrInfo[HCCL_SEND].index,
                     remoteRecvTag.c_str(), remoteOpId.bsrInfo[HCCL_RECV].index);
+                if (curOpId.opType == HcclCMDType::HCCL_CMD_BATCH_SEND_RECV && !remoteOpId.isBsrTaskStart) {
+                	continue;
+                }
                 // 如果对端也停在同一个send/recv算子，则触发该算子的重执行
                 if ((curTag == remoteSendTag && curOpId.index == remoteOpId.bsrInfo[HCCL_SEND].index) || 
                     (curTag == remoteRecvTag && curOpId.index == remoteOpId.bsrInfo[HCCL_RECV].index) ||
@@ -284,6 +288,7 @@ HcclResult OpRetryServerHandleError::SetNeedRetryServerRank(RetryContext* retryC
     } else {
         // 其余场景下需要对所有rank进行重执行
         for (auto &it : retryCtx->serverSockets_) {
+            retryCtx->curFaultOpId = opId;
             retryCtx->needRetryServerRanks_.push_back(it.first);
         }
         HCCL_DEBUG("[OpRetry][Server]set needRetryServerRank[%u] success", retryCtx->needRetryServerRanks_.size());

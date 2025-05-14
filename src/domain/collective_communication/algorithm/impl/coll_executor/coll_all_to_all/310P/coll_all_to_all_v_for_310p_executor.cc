@@ -109,15 +109,13 @@ HcclResult CollRunAlltoAllVFor310PExecutor::KernelRun(const OpParam &param, Exec
     CHK_RET(AddSubStreamToProfiling());
 
     // 执行
-    std::unique_ptr<AlltoAllVFor310P> executor = nullptr;
-    executor.reset(new (std::nothrow) AlltoAllVFor310P(dispatcher_, const_cast<Stream&>(param.stream),
-        algResResp_->slaveStreams, outerCommInfo.links, topoAttr_.userRank, topoAttr_.userRankSize, 
-        allMeshAggregationSendRecvInfo_));
-
+    std::unique_ptr<AlgTemplateBase> executor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_ALL_2_ALL_V_FOR310P, dispatcher_);
     CHK_SMART_PTR_NULL(executor);
-
     CHK_RET(executor->Prepare(algResResp_->paramInputMem, algResResp_->paramOutputMem, execMem.inputMem,
-        execMem.outputMem, algResResp_->notifiesMain, algResResp_->notifiesAux));
+        execMem.outputMem, algResResp_->notifiesMain, algResResp_->notifiesAux,
+        const_cast<Stream&>(param.stream), algResResp_->slaveStreams, outerCommInfo.links,
+        topoAttr_.userRank, topoAttr_.userRankSize, allMeshAggregationSendRecvInfo_));
 
     u32 rankSize = outerCommInfo.localRankSize;
     CHK_RET(executor->RegisterProfiler((rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + outerCommInfo.localRank,

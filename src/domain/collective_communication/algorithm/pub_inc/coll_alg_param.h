@@ -24,6 +24,7 @@
 #include "common.h"
 #include "threadManage.h"
 #include "transport_common.h"
+#include "common_pub.h"
 
 namespace hccl {
 using RankId = u32;
@@ -81,20 +82,6 @@ enum class BatchSendRecvCurMode {
     SEND_RECV_RESERVED
 };
 
-// InplaceSupportRetry算法枚举
-enum class InplaceSupportRetryStatus {
-    AG_BD_CASE = 0,
-    RETRY_1_ALLOW_NO_DMA_REDUCE_CASE1 = 1, // executor需要成非DMA削减模式
-    RETRY_0_NOT_ALLOW_NO_DMA_REDUCE_CASE1 = 2,
-    ALWAYS_NO_DMA_REDUCE = 3,
-    RETRY_1_ALLOW_NO_DMA_REDUCE_CASE2 = 4, // executor需要成非DMA削减模式
-    RETRY_0_NOT_ALLOW_NO_DMA_REDUCE_CASE2 = 5,
-    UNKONWN_EXECUTOR = 6,
-    USER_LARGER_THAN_CCL = 7,
-    NOT_BASIC_OP_CASE = 8,
-    INPLACE_STATUS_END
-};
-
 struct OpParam {
     std::string tag = "";
     Stream stream;
@@ -140,31 +127,6 @@ struct OpParam {
     HcclCMDType opType = HcclCMDType::HCCL_CMD_INVALID;
     bool isZeroCopy = false;
     u32 index = 0;
-};
-
-struct OpRetryHandler {
-    bool inplaceSupportRetry = false;
-    bool retryEnable = false;
-    InplaceSupportRetryStatus inPlaceSupportRetryStatus = InplaceSupportRetryStatus::INPLACE_STATUS_END;
-    bool isInplacePreSync = false;
-    bool isPostSync = false;
-};
-
-struct Mc2Handler {
-    u64 version = 0;        // Mc2Handler 版本标记
-    u64 commitAddr = 0;     // mc2 条件算子的监听地址
-    u64 finishAddr = 0;     // mc2 写任务的地址
-    u64 valueAddr = 0;
-    u32 rankSize = 0;       // mc2 作用的卡数
-    u32 repeatCnt = 0;      // 一次通信消息可下发多轮通信，标记为通信的轮数
-    u8 stepSize = 0;        // 细粒度通信下的通信步长
-    u8 skipLocalRankCopy = 0;    // 跳过本卡拷贝
-    u8 skipBufferWindowCopy = 0; // 跳过user in到 cclbuffer 的拷贝
-};
-
-struct AlgOpContext {
-    OpRetryHandler opRetryHandler;
-    Mc2Handler mc2Handler;
 };
 }   // namespace hccl
 #endif

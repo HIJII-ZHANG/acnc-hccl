@@ -38,12 +38,13 @@ private:
     HcclResult GetServerList(const nlohmann::json &obj, RankTable_t &clusterInfo);
     HcclResult GetSingleServer(const nlohmann::json &serverListObj, u32 objIndex, RankTable_t &clusterInfo);
     HcclResult GetDeviceList(const nlohmann::json &serverListObj, u32 objIndex, RankTable_t &clusterInfo,
-        std::string &serverId, u32 &serverIdx, HcclIpAddress &hostIp, u32 hostPort);
+        std::string &serverId, u32 &serverIdx, HcclIpAddress &hostIp);
     HcclResult GetSingleDevice(const nlohmann::json &deviceListObj, u32 objIndex,
-        RankTable_t &clusterInfo, std::string &serverId, u32 &serverIdx, HcclIpAddress &hostIp, u32 hostPort);
+        RankTable_t &clusterInfo, std::string &serverId, u32 &serverIdx, HcclIpAddress &hostIp);
     HcclResult GetSingleDeviceIp(const nlohmann::json &deviceListObj, u32 objIndex,
-        RankTable_t &clusterInfo, RankInfo_t &rankinfo, bool invalidHostIp = true);
+        RankTable_t &clusterInfo, RankInfo_t &rankinfo, DevType deviceType, bool invalidHostIp = true);
     HcclResult GetSingleBackupDeviceIp(const nlohmann::json &deviceListObj, u32 objIndex, RankInfo_t &rankinfo);
+    HcclResult GetSingleDeviceHostPort(const nlohmann::json &deviceListObj, u32 objIndex, RankInfo_t &rankinfo);
     HcclResult GetSingleDevicePort(const nlohmann::json &deviceListObj, u32 objIndex, RankInfo_t &rankinfo);
     HcclResult GetSingleBackupDevicePort(const nlohmann::json &deviceListObj, u32 objIndex, RankInfo_t &rankinfo);
     HcclResult VerifyBackupDeviceIpAndPort(std::vector<RankInfo_t> &rankList, u32 devIndex);

@@ -25,7 +25,10 @@ std::array<std::queue<MsprofAdditionalInfo>, MAX_MODULE_DEVICE_NUM> ProfilingMan
 std::array<std::mutex, MAX_MODULE_DEVICE_NUM> ProfilingManager::reportAddInfoMutex_;
 std::array<std::queue<MsprofCompactInfo>, MAX_MODULE_DEVICE_NUM> ProfilingManager::storageCompactInfo_;
 std::array<std::mutex, MAX_MODULE_DEVICE_NUM> ProfilingManager::reportCompactInfoMutex_;
+std::array<std::queue<MsprofAdditionalInfo>, MAX_MODULE_DEVICE_NUM> ProfilingManager::storageAdditionInfoFftsCapture_;
+std::array<std::mutex, MAX_MODULE_DEVICE_NUM> ProfilingManager::reportAddInfoFftsCaptureMutex_;
 std::mutex ProfilingManager::reportDataQueueMutex_;
+thread_local bool ProfilingManager::isCapture_ = false;
 
 ProfilingManager::ProfilingManager()
     : reporterCallback_(nullptr), isHostApiSubscribe_(HCCL_E_NOT_SUPPORT),
@@ -118,8 +121,35 @@ HcclResult ProfilingManager::CallMsprofReportHostNodeApi(
     reporterData.endTime = endTime;
     reporterData.itemId = itemId;
 
+    // 静态图场景或者acl graph场景, 一次下发，多次执行; 如果订阅开关没有开，缓存对应数据
+    auto mode = GetWorkflowMode();
+    if ((isHostApiSubscribe_ != HCCL_SUCCESS && mode == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB) || isCapture_) {
+        HCCL_INFO("CallMsprofReportTaskApi, storageTaskApi");
+        std::unique_lock<std::mutex> lock(reportDataQueueMutex_);
+        storageTaskApi_.push(reporterData);
+        if (isHostApiSubscribe_ != HCCL_SUCCESS) {
+            return HCCL_SUCCESS;
+        }
+    }
+
     HCCL_INFO("CallMsprofReportHostNodeApi, HostNodeApiType[%u]", MSPROF_REPORT_NODE_LAUNCH_TYPE);
     CHK_RET(hrtMsprofReportApi(1, &reporterData));
+    return HCCL_SUCCESS;
+}
+
+HcclResult ProfilingManager::CallMsprofReportNodeInfo(uint64_t beginTime, uint64_t endTime,
+    const std::string profName, uint32_t threadId)
+{
+    uint64_t itemId = hrtMsprofGetHashId(profName.c_str(), profName.length());
+    auto mode = GetWorkflowMode();
+    // hostapi开关 1) 开启: 单算子、静态图模式均上报; 关闭: 静态图模式或者acl graph场景缓存, 单算子不上报
+    if (isHostApiSubscribe_ == HCCL_SUCCESS || mode == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB || isCapture_) {
+        CHK_RET(CallMsprofReportHostNodeApi(beginTime, endTime, itemId, threadId));
+    }
+    // additionInfo开关 1) 开启: 单算子、静态图模式均上报; 关闭: 静态图或者acl graph场景模式缓存, 单算子不上报
+    if (isAddtionInfoSubscribe_ == HCCL_SUCCESS || mode == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB || isCapture_) {
+        CHK_RET(CallMsprofReportHostNodeBasicInfo(endTime, itemId, threadId, threadId));
+    }
     return HCCL_SUCCESS;
 }
 
@@ -137,7 +167,9 @@ HcclResult ProfilingManager::CallMsprofReportHostApi(HcclCMDType cmdType, uint64
     if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && IsLaunchKernelMode() != true) {
         CHK_RET(CallMsprofReportHostAclApi(type, beginTime, endTime, itemId, threadId));
         CHK_RET(CallMsprofReportHostNodeApi(beginTime, endTime, itemId, threadId));
-        CHK_RET(CallMsprofReportHostNodeBasicInfo(endTime, itemId, threadId, blockDim));
+        if (isAddtionInfoSubscribe_ == HCCL_SUCCESS || isCapture_) {
+            CHK_RET(CallMsprofReportHostNodeBasicInfo(endTime, itemId, threadId));
+        }
     }
     std::string algTypeStr = TransferAlgType(algType);
     CHK_RET(CallMsprofReportHostHcclOpInfo(endTime, threadId, count, dataType, algTypeStr, groupName));
@@ -172,14 +204,16 @@ HcclResult ProfilingManager::ReportTaskApi(
     const std::string taskName(GetProfTaskOpName(taskType));
     reporterData.itemId = hrtMsprofGetHashId(taskName.c_str(), taskName.length());
 
-    // 2、图下沉场景，如果订阅开关没有开，缓存对应数据
-    if ((isTaskApiSubscribe_ != HCCL_SUCCESS) &&
-        (mode == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB)) {
+    // 2、图下沉场景或者acl graph场景，如果订阅开关没有开，缓存对应数据
+    if (((isTaskApiSubscribe_ != HCCL_SUCCESS) &&
+        (mode == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB)) || isCapture_) {
         // 缓存对应数据
         HCCL_INFO("CallMsprofReportTaskApi, storageTaskApi");
         std::unique_lock<std::mutex> lock(reportDataQueueMutex_);
         storageTaskApi_.push(reporterData);
-        return HCCL_SUCCESS;
+        if (isTaskApiSubscribe_ != HCCL_SUCCESS) {
+            return HCCL_SUCCESS;
+        }
     }
 
     HCCL_INFO("CallMsprofReportTaskApi, isMainStrem[%u], taskType[%d], taskName[%s]",
@@ -209,10 +243,6 @@ HcclResult ProfilingManager::CallMsprofReportHostAclApi(
 HcclResult ProfilingManager::CallMsprofReportHostNodeBasicInfo(
     uint64_t timeStamp, uint64_t itemId, uint32_t threadId, u32 blockDim) const
 {
-    // Host Basic Info L1打开的时候上报即可
-    if (isAddtionInfoSubscribe_ != HCCL_SUCCESS) {
-        return HCCL_SUCCESS;
-    }
     MsprofCompactInfo reporterData{};
 
     reporterData.level = MSPROF_REPORT_NODE_LEVEL;
@@ -226,6 +256,22 @@ HcclResult ProfilingManager::CallMsprofReportHostNodeBasicInfo(
     reporterData.data.nodeBasicInfo.opType = itemId;
     reporterData.data.nodeBasicInfo.blockDim = blockDim;
     reporterData.data.nodeBasicInfo.opFlag = 0;
+    
+    // 图下沉场景或者acl graph场景，如果订阅开关没有开，缓存对应数据
+    auto mode = GetWorkflowMode();
+    if ((isAddtionInfoSubscribe_ != HCCL_SUCCESS && mode == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB) || isCapture_) {
+        s32 deviceLogicId = -1;
+        CHK_RET(hrtGetDevice(&deviceLogicId));
+        HCCL_INFO("CallMsprofReportHostNodeBasicInfo, storageCompactInfo, The used deviceLogicId is [%d]", deviceLogicId);
+        CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= MAX_MODULE_DEVICE_NUM,
+            HCCL_ERROR("[ReportHostNodeBasicInfo]deviceLogicId_[%u] is bigger than HCCL_AISERVER_DEVICE_NUM[%u]",
+            static_cast<u32>(deviceLogicId), MAX_MODULE_DEVICE_NUM), HCCL_E_INTERNAL);
+        std::unique_lock<std::mutex> lock(reportCompactInfoMutex_[deviceLogicId]);
+        storageCompactInfo_[deviceLogicId].push(reporterData);
+        if (isAddtionInfoSubscribe_ != HCCL_SUCCESS) {
+            return HCCL_SUCCESS;
+        }
+    }
     HCCL_INFO("CallMsprofReportHostNodeBasicInfo, HostNodeBasicInfoType[%u]", MSPROF_REPORT_NODE_BASIC_INFO_TYPE);
     CHK_RET(hrtMsprofReportCompactInfo(1, &reporterData, sizeof(MsprofCompactInfo)));
     return HCCL_SUCCESS;
@@ -281,9 +327,9 @@ HcclResult ProfilingManager::CallMsprofReportHostHcclOpInfo(
     reporterData.data.hcclopInfo.count = count;
     reporterData.data.hcclopInfo.groupName = groupName;
 
-    // 图下沉场景，如果订阅开关没有开，缓存对应数据
-    if ((isHostApiSubscribe_ != HCCL_SUCCESS) &&
-        (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB)) {
+    // 图下沉场景或者acl graph场景，如果订阅开关没有开，缓存对应数据
+    if (((isHostApiSubscribe_ != HCCL_SUCCESS) &&
+        (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB)) || isCapture_) {
         // 缓存对应数据
         s32 deviceLogicId = -1;
         CHK_RET(hrtGetDevice(&deviceLogicId));
@@ -293,7 +339,9 @@ HcclResult ProfilingManager::CallMsprofReportHostHcclOpInfo(
             static_cast<u32>(deviceLogicId), MAX_MODULE_DEVICE_NUM), HCCL_E_INTERNAL);
         std::unique_lock<std::mutex> lock(reportCompactInfoMutex_[deviceLogicId]);
         storageCompactInfo_[deviceLogicId].push(reporterData);
-        return HCCL_SUCCESS;
+        if (isHostApiSubscribe_ != HCCL_SUCCESS) {
+            return HCCL_SUCCESS;
+        }
     }
 
     HCCL_INFO("CallMsprofReportHostHcclOpInfo, hcclopInfoType[%u]", MSPROF_REPORT_NODE_HCCL_OP_INFO_TYPE);
@@ -426,6 +474,12 @@ HcclResult ProfilingManager::ClearStoragedProfilingInfo()
     std::unique_lock<std::mutex> lockCompactInfo(reportCompactInfoMutex_[deviceLogicId]);
     std::queue<MsprofCompactInfo> emptyCompactInfo;
     std::swap(storageCompactInfo_[deviceLogicId], emptyCompactInfo);
+
+    HCCL_INFO("[ClearStorageAdditionInfoFftsCapture_] The size of the storageAdditionInfoFftsCapture_[%d] is [%u]",
+        deviceLogicId, storageAdditionInfoFftsCapture_[deviceLogicId].size());
+    std::unique_lock<std::mutex> lockAddInfoCapture(reportAddInfoFftsCaptureMutex_[deviceLogicId]);
+    std::queue<MsprofAdditionalInfo> emptyAdditionCapture;
+    std::swap(storageAdditionInfoFftsCapture_[deviceLogicId], emptyAdditionCapture);
     return HCCL_SUCCESS;
 }
 
@@ -449,9 +503,9 @@ HcclResult ProfilingManager::ReportAdditionInfo(
     s32 sret = memcpy_s(reporterData.data, sizeof(reporterData.data), data, len);
     CHK_PRT_RET(sret != EOK, HCCL_ERROR("memcpy failed. errorno[%d]:", sret), HCCL_E_MEMORY);
 
-    // 2、图下沉场景，如果订阅开关没有开，缓存对应数据
+    // 2、图下沉场景或者acl graph场景，如果订阅开关没有开，缓存对应数据
     if (((isAddtionInfoSubscribe_ != HCCL_SUCCESS) &&
-        (mode == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB)) ||
+        (mode == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB)) || isCapture_ ||
         (isFftsDispatcher_.load() &&  // 3、FFTS+下发场景，addition开关打开，缓存对应数据
         (mode == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) &&
         (isAddtionInfoSubscribe_ == HCCL_SUCCESS))) {
@@ -464,7 +518,9 @@ HcclResult ProfilingManager::ReportAdditionInfo(
             static_cast<u32>(deviceLogicId), MAX_MODULE_DEVICE_NUM), HCCL_E_INTERNAL);
         std::unique_lock<std::mutex> lock(reportAddInfoMutex_[deviceLogicId]);
         storageAdditionInfo_[deviceLogicId].push(reporterData);
-        return HCCL_SUCCESS;
+        if (!isCapture_ || isFftsDispatcher_ || isAddtionInfoSubscribe_ != HCCL_SUCCESS) {
+            return HCCL_SUCCESS;
+        }
     }
 
     // 4、开关开启，非子图下发场景，直接上报对应数据
@@ -630,6 +686,19 @@ HcclResult ProfilingManager::ReportStoragedAdditionInfo()
                 CHK_RET(hrtMsprofReportAdditionalInfo(0, &reportData, sizeof(MsprofAdditionalInfo)));
             }
         }
+        // acl graph ffts+场景下， 一次下发多次执行， 执行时上报保存的task信息
+        std::unique_lock<std::mutex> lockCapture(reportAddInfoFftsCaptureMutex_[i]);
+        HCCL_INFO("[ReportStoragedAdditionInfo] The size of the storageAdditionInfoFftsCapture_[%u] is [%u]",
+            i, storageAdditionInfoFftsCapture_[i].size());
+        if (!storageAdditionInfoFftsCapture_[i].empty()) {
+            std::queue<MsprofAdditionalInfo> tempTaskAdditionalInfo = storageAdditionInfoFftsCapture_[i];
+            lockCapture.unlock();
+            while (!tempTaskAdditionalInfo.empty()) {
+                MsprofAdditionalInfo reportData = tempTaskAdditionalInfo.front();
+                tempTaskAdditionalInfo.pop();
+                CHK_RET(hrtMsprofReportAdditionalInfo(0, &reportData, sizeof(MsprofAdditionalInfo)));
+            }
+        }
     }
     return HCCL_SUCCESS;
 }
@@ -673,6 +742,12 @@ HcclResult ProfilingManager::ReportStoragedFftsInfo()
         MsprofAdditionalInfo reportData = storageAdditionInfo_[deviceLogicId].front();
         storageAdditionInfo_[deviceLogicId].pop();
         reportData.timeStamp = ts;
+        if (isCapture_) {
+            // acl graph ffts+ 场景下， 下发的task信息进行保存以便后续多次使用
+            std::unique_lock<std::mutex> lockCapture(reportAddInfoFftsCaptureMutex_[deviceLogicId]);
+            storageAdditionInfoFftsCapture_[deviceLogicId].push(reportData);
+            lockCapture.unlock();
+        }
         CHK_RET(hrtMsprofReportAdditionalInfo(0, &reportData, sizeof(MsprofAdditionalInfo)));
     }
     return HCCL_SUCCESS;
@@ -803,6 +878,11 @@ void ProfilingManager::SetFftsDispatcherMode()
 void ProfilingManager::ReSetFftsDispatcherMode()
 {
     isFftsDispatcher_.store(false);
+}
+
+void ProfilingManager::SetCaptureStatus(bool isCapture)
+{
+    isCapture_ = isCapture;
 }
 
 }  // namespace hccl

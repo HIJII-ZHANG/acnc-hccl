@@ -111,9 +111,14 @@ HcclResult AllGatherVMeshAivExecutor::KernelRun(const OpParam &param, ExecMem &e
             extraArgs.maxCount = extraArgs.recvCounts[i];
         }
     }
+
+    if (aivClearEnable_) {
+        ClearAivSyncBuf(buffersOut, localRank, localRankSize, param.stream.ptr());
+    }
+    
     bool isOpbase = (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
     AivOpArgs opArgs {
-        HcclCMDType::HCCL_CMD_ALLGATHER_V, execMem.inputPtr, execMem.outputPtr, execMem.count,
+        HcclCMDType::HCCL_CMD_ALLGATHER_V, execMem.inputPtr, execMem.outputPtr, extraArgs.maxCount,
         param.VDataDes.dataType, param.reduceType, param.root, isOpbase
     };
     AivTopoArgs topoArgs { localRank, localRankSize };

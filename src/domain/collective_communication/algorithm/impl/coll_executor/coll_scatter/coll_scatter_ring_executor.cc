@@ -88,8 +88,8 @@ HcclResult CollScatterRingExecutor::KernelRun(const OpParam &param, ExecMem &exe
     DeviceMem scatterRingOutput = execMem.inputMem.range(serverSliceOffset, serverSliceSize);
     CHK_SMART_PTR_NULL(scatterRingOutput);
 
-    std::unique_ptr<AlgTemplateBase> level0TempAlg;
-    level0TempAlg.reset(new (std::nothrow) ScatterRing(dispatcher_));
+    std::unique_ptr<AlgTemplateBase> level0TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_SCATTER_RING, dispatcher_);
     CHK_SMART_PTR_NULL(level0TempAlg);
 
     // 偏移需要带入prepare

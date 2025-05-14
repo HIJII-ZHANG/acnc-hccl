@@ -10,6 +10,7 @@
 
 #include "all_gather_recursive_hd.h"
 #include "all_gather_halving_doubling_pub.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 AllGatherRecursiveHalvingDoubling::AllGatherRecursiveHalvingDoubling(const HcclDispatcher dispatcher)
@@ -215,12 +216,14 @@ HcclResult AllGatherRecursiveHalvingDoubling::AllGatherInBlock(u32 rank, u32 ran
         rankInBlock = rank - part1Size_ / 2;           // rank在part2中，用原始rank减part1除2，计算出在block内的rank号
     }
 
-    AllGatherHalvingDoubling tempAlg(blockSize_, dispatcher_, UserMemType::OUTPUT_MEM, UserMemType::OUTPUT_MEM);
-
-    CHK_RET(tempAlg.Prepare(outputMem_, outputMem_, count_, dataType_, stream_,
+    std::unique_ptr<AlgTemplateBase> tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_ALL_GATHER_HALVING_DOUBLING, dispatcher_);
+    CHK_SMART_PTR_NULL(tempAlg);
+    CHK_RET(tempAlg->Prepare(blockSize_, UserMemType::OUTPUT_MEM, UserMemType::OUTPUT_MEM));
+    CHK_RET(tempAlg->Prepare(outputMem_, outputMem_, count_, dataType_, stream_,
         reductionOp_, root_, slices_, baseOffset_));
 
-    CHK_RET(tempAlg.RegisterProfiler(
+    CHK_RET(tempAlg->RegisterProfiler(
         profilerInput_.planeID, profilerInput_.stage, profilerInput_.step, stream_));
 
     std::vector<LINK> subLinks;
@@ -230,7 +233,8 @@ HcclResult AllGatherRecursiveHalvingDoubling::AllGatherInBlock(u32 rank, u32 ran
         HCCL_ERROR("[AllGatherRecursiveHalvingDoubling][AllGatherInBlock]rank[%u] BuildSubLinks failed",
             rank), HCCL_E_PARA);
 
-    CHK_RET(tempAlg.RunAsync(rankInBlock, blockSize_, subLinks));
+    CHK_RET(tempAlg->RunAsync(rankInBlock, blockSize_, subLinks));
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_ALL_GATHER_RECURSIVE_HALVING_DOUBLING, AllGatherRecursiveHalvingDoubling);
 }  // namespace hccl

@@ -3,6 +3,7 @@ set(src_list
     ${CMAKE_CURRENT_SOURCE_DIR}/topo_matcher.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/coll_alg_utils.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/alg_configurator.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/hccl_aiv.cc
 )
 
 target_sources(hccl_alg PRIVATE

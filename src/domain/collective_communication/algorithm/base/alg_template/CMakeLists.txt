@@ -1,5 +1,4 @@
 set(src_list_pub
-    ${CMAKE_CURRENT_SOURCE_DIR}/alg_template_base.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/recursive_halvingdoubling_base.cc
 )
 

@@ -9,26 +9,36 @@
  */
 
 #include "scatter_double_ring_direct.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 
 constexpr u32 RANK_SIZE_THREE = 3;
 
-ScatterDoubleRingDirect::ScatterDoubleRingDirect(const HcclDispatcher dispatcher, const HcomCollOpInfo *opInfo,
-    const u32 userRank, const u32 subRingRank, std::vector<Stream> &subStreams,
-    const std::vector<std::shared_ptr<LocalNotify>> &mainSignals,
-    const std::vector<std::shared_ptr<LocalNotify>> &subSignals,
-    const std::vector<std::vector<u32>> &ringsOrders,
-    const std::vector<std::vector<Slice>> &multiRingSlices,
-    const std::vector<std::vector<Slice>> &userMemInputSlices)
-    : AlgTemplateBase(dispatcher), opInfo_(opInfo), userRank_(userRank), subRingRank_(subRingRank),
-      subStreams_(subStreams), mainSignals_(mainSignals), subSignals_(subSignals),
-      ringsOrders_(ringsOrders), multiRingSlices_(multiRingSlices), userMemInputSlices_(userMemInputSlices)
+ScatterDoubleRingDirect::ScatterDoubleRingDirect(const HcclDispatcher dispatcher)
+    : AlgTemplateBase(dispatcher)
 {
 }
 
 ScatterDoubleRingDirect::~ScatterDoubleRingDirect()
 {
+}
+
+HcclResult ScatterDoubleRingDirect::Prepare(HcomCollOpInfo *opInfo, const u32 userRank, const u32 subRingRank,
+    std::vector<Stream> &subStreams, const std::vector<std::shared_ptr<LocalNotify>> &mainSignals,
+    const std::vector<std::shared_ptr<LocalNotify>> &subSignals, const std::vector<std::vector<u32>> &ringsOrders,
+    const std::vector<std::vector<Slice>> &multiRingSlices, const std::vector<std::vector<Slice>> &userMemInputSlices)
+{
+    opInfo_ = opInfo;
+    userRank_ = userRank;
+    subRingRank_ = subRingRank;
+    subStreams_ = subStreams;
+    mainSignals_ = mainSignals;
+    subSignals_ = subSignals;
+    ringsOrders_ = ringsOrders;
+    multiRingSlices_ = multiRingSlices;
+    userMemInputSlices_ = userMemInputSlices;
+    return HCCL_SUCCESS;
 }
 
 // reduce scatter ring direct算法的函数入口
@@ -362,4 +372,5 @@ HcclResult ScatterDoubleRingDirect::MainWaitSub()
     CHK_RET(ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_SCATTER_DOUBLE_RING_DIRECT, ScatterDoubleRingDirect);
 } // namespace hccl

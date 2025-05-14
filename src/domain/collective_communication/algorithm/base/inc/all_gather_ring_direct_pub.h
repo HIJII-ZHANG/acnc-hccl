@@ -18,13 +18,12 @@
 namespace hccl {
 class AllGatherRingDirect : public AlgTemplateBase {
 public:
-    explicit AllGatherRingDirect(const HcclDispatcher dispatcher, const HcomCollOpInfo *opInfo,
-                                        const u32                                       userRank,                                   
-                                        const std::vector<Slice>            &userMemOutputSlices,
-                                        bool isSdma = true);
+    explicit AllGatherRingDirect(const HcclDispatcher dispatcher);
 
     ~AllGatherRingDirect() override;
 
+    HcclResult Prepare(HcomCollOpInfo *opInfo, u32 userRank,
+                       const std::vector<Slice> &userMemOutputSlices, bool isSdma = true) override;
     HcclResult RunAsync(const u32 rank, const u32 rankSize, const std::vector<LINK> &links) override;
 
 protected:
@@ -45,9 +44,9 @@ private:
     std::vector<DeviceMem> finalSrc_;
     std::vector<DeviceMem> finalDst_;
 
-    const HcomCollOpInfo                     *opInfo_;
-    const u32                                 userRank_;
-    const std::vector<Slice>                  userMemOutputSlices_;
+    HcomCollOpInfo                     *opInfo_{nullptr};
+    u32                                 userRank_;
+    std::vector<Slice>                  userMemOutputSlices_;
     std::vector<Slice>                        inputSlices_;
     bool                                      isSdma_;
 };

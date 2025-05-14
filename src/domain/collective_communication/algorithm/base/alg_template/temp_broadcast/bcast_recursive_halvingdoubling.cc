@@ -10,6 +10,7 @@
 
 #include "bcast_recursive_halvingdoubling.h"
 #include <cmath>
+#include "alg_template_register.h"
 
 namespace hccl {
 BcastRecursiveHalvingDoubling::BcastRecursiveHalvingDoubling(const HcclDispatcher dispatcher)
@@ -288,4 +289,5 @@ HcclResult BcastRecursiveHalvingDoubling::OddNumberRankProcess(const u32 rank,
     return HCCL_SUCCESS;
 }
 
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_BROADCAST_RECURSIVE_HD, BcastRecursiveHalvingDoubling);
 }  // namespace hccl

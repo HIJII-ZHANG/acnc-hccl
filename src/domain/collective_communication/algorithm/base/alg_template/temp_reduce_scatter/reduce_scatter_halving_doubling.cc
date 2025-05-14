@@ -9,20 +9,29 @@
  */
 
 #include "reduce_scatter_halving_doubling.h"
+#include "alg_template_register.h"
 
 namespace hccl {
-ReduceScatterHalvingDoubling::ReduceScatterHalvingDoubling(const u32 blockSize,
-                                                           const HcclDispatcher dispatcher,
-                                                           const u64 reduceAttrBitMap,
-                                                           const UserMemType hdInputMemType,
-                                                           const UserMemType hdOutputMemType)
-    : AlgTemplateBase(dispatcher), blockSize_(blockSize), reduceAttr_(reduceAttrBitMap),
-      hdInputMemType_(hdInputMemType), hdOutputMemType_(hdOutputMemType)
+ReduceScatterHalvingDoubling::ReduceScatterHalvingDoubling(const HcclDispatcher dispatcher)
+    : AlgTemplateBase(dispatcher)
 {
 }
 
 ReduceScatterHalvingDoubling::~ReduceScatterHalvingDoubling()
 {
+}
+
+HcclResult ReduceScatterHalvingDoubling::Prepare(DeviceMem &inputMem, DeviceMem &outputMem, DeviceMem &scratchMem,
+    const u64 count, const HcclDataType dataType, const Stream &stream, const HcclReduceOp reductionOp,
+    const u32 root, const std::vector<Slice> &slices, const u64 baseOffset, const u32 blockSize,
+    const u64 reduceAttrBitMap, const UserMemType hdInputMemType, const UserMemType hdOutputMemType)
+{
+    blockSize_ = blockSize;
+    reduceAttr_ = reduceAttrBitMap;
+    hdInputMemType_ = hdInputMemType;
+    hdOutputMemType_ = hdOutputMemType;
+    return AlgTemplateBase::Prepare(inputMem, outputMem, scratchMem, count, dataType, stream, reductionOp,
+        root, slices, baseOffset);
 }
 
 u32 ReduceScatterHalvingDoubling::GetBlockStep(u32 blocksize) const
@@ -227,4 +236,5 @@ HcclResult ReduceScatterHalvingDoubling::RunReduceScatter(const u32 rank, const 
 
     return ret;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_REDUCESCATTER_HD, ReduceScatterHalvingDoubling);
 }  // namespace hccl

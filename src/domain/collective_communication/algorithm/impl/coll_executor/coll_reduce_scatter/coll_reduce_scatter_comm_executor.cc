@@ -9,6 +9,7 @@
  */
 
 #include "coll_reduce_scatter_comm_executor.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 
@@ -40,9 +41,9 @@ HcclResult CollReduceScatterCommExecutor::CalcScratchMemSize(u64& scratchMemSize
 {
     if (scratchMemFlag_) {
         if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-            scratchMemSize = inCCLbufferSize_ + CCE_REDUCE_ALIGN_FACTOR * CCE_REDUCE_ALIGN_SIZE;
+            scratchMemSize = inCCLbufferSize_;
         } else {
-            scratchMemSize = totalSize_ + CCE_REDUCE_ALIGN_FACTOR * CCE_REDUCE_ALIGN_SIZE;
+            scratchMemSize = totalSize_;
         }
     } else {
         scratchMemSize = 0U;
@@ -146,30 +147,38 @@ HcclResult CollReduceScatterCommExecutor::KernelRun(const OpParam &param, ExecMe
     // 构造ring algorithm对应的reduce-scatter实例
     std::unique_ptr<AlgTemplateBase> tempAlg;
     if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
-        tempAlg.reset(new (std::nothrow) ReduceScatterNHR(dispatcher_, reduceAttr));
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_REDUCESCATTER_NHR, dispatcher_);
         HCCL_INFO("reducescatter comm: using nhr algo inter-server.");
         CHK_SMART_PTR_NULL(tempAlg);
+        CHK_RET(tempAlg->Prepare(reduceAttr, false));
         CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.scratchMem, execMem.count,
             param.DataDes.dataType, param.stream, param.reduceType));
         CHK_RET(RunTemplate(tempAlg, combinedCommInfo));
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
-        tempAlg.reset(new (std::nothrow) ReduceScatterNHRV1(dispatcher_, reduceAttr));
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_REDUCESCATTER_NHR_V1, dispatcher_);
         HCCL_INFO("reducescatter comm: using nhr_v1 algo inter-server.");
         CHK_SMART_PTR_NULL(tempAlg);
+        CHK_RET(tempAlg->Prepare(reduceAttr));
         CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.scratchMem, execMem.count,
             param.DataDes.dataType, param.stream, param.reduceType));
         CHK_RET(RunTemplate(tempAlg, combinedCommInfo));
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
-        tempAlg.reset(new (std::nothrow) ReduceScatterNB(dispatcher_, reduceAttr));
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_REDUCESCATTER_NB, dispatcher_);
         HCCL_INFO("reducescatter comm: using nonuniform-bruck algo inter-server.");
         CHK_SMART_PTR_NULL(tempAlg);
+        CHK_RET(tempAlg->Prepare(reduceAttr));
         CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.scratchMem, execMem.count,
             param.DataDes.dataType, param.stream, param.reduceType));
         CHK_RET(RunTemplate(tempAlg, combinedCommInfo));
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_HD) {
-        tempAlg.reset(new (std::nothrow) ReduceScatterRecursiveHalvingDoubling(dispatcher_, reduceAttr));
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_REDUCESCATTER_RECURSIVE_HD, dispatcher_);
         HCCL_INFO("reducescatter comm: using halving-doubling algo inter-server.");
         CHK_SMART_PTR_NULL(tempAlg);
+        CHK_RET(tempAlg->Prepare(reduceAttr));
         DeviceMem scratchMem = execMem.scratchMem.range(0, execMem.inputMem.size());
         u64 inputDataCount = execMem.inputMem.size() / SIZE_TABLE[param.DataDes.dataType];
         CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.inputMem, scratchMem, inputDataCount,
@@ -180,9 +189,11 @@ HcclResult CollReduceScatterCommExecutor::KernelRun(const OpParam &param, ExecMe
         DeviceMem dstMem = execMem.outputMem.range(0, dataSize);
         CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dstMem, srcMem, const_cast<Stream&>(param.stream)));
     } else {
-        tempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_REDUCESCATTER_RING, dispatcher_);
         HCCL_INFO("reducescatter comm: using ring algo inter-server.");
         CHK_SMART_PTR_NULL(tempAlg);
+        CHK_RET(tempAlg->Prepare(reduceAttr));
         CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, execMem.count,
             param.DataDes.dataType, param.stream, param.reduceType));
         CHK_RET(RunTemplate(tempAlg, combinedCommInfo));

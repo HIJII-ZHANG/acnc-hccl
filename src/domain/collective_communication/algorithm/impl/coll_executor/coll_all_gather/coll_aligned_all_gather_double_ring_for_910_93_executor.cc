@@ -54,11 +54,11 @@ HcclResult CollAlignedAllGatherDoubleRingFor91093Executor::DoubleRingAllGather(
     std::vector<std::vector<u32>> rankOrders;
     CHK_RET(CollectMultiRingsRankOrder(ringNum, multiRingsOrder, rankOrders));
     // 初始化executor
-    std::unique_ptr<AlgTemplateBase> tempAlg;
-    tempAlg.reset(new (std::nothrow) AlignedAllGatherDoubleRing(dispatcher_,
-        opInfo, topoAttr_.userRank, algResResp_->slaveStreams, algResResp_->notifiesMain,
-        algResResp_->notifiesAux, rankOrders, userMemOutputSlicesOfDoubleRing));
+    std::unique_ptr<AlgTemplateBase> tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_ALIGNED_ALL_GATHER_DOUBLE_RING, dispatcher_);
     CHK_SMART_PTR_NULL(tempAlg);
+    CHK_RET(tempAlg->Prepare(const_cast<HcomCollOpInfo *>(opInfo), topoAttr_.userRank, algResResp_->slaveStreams,
+        algResResp_->notifiesMain, algResResp_->notifiesAux, rankOrders, userMemOutputSlicesOfDoubleRing));
 
     ret = tempAlg->Prepare(outputMem, outputMem, inputMem, count, dataType, stream, multRingsSliceZero,
         HCCL_REDUCE_RESERVED, LEVEL0_BRIDGE_RANK_ID, baseOffset);

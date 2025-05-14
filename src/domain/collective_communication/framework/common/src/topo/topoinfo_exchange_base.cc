@@ -113,11 +113,11 @@ HcclResult TopoInfoExchangeBase::parseJsonBuff(const char buff[], u32 buffLen, n
 
 HcclResult TopoInfoExchangeBase::Json2Struct(const nlohmann::json& jClusterJson, RankTable_t &clusterInfo) const
 {
-    clusterInfo.nicDeploy = jClusterJson[PROP_DEPLOY_MODE];
-    clusterInfo.deviceNum = jClusterJson[PROP_DEV_NUM];
-    clusterInfo.serverNum = jClusterJson[PROP_SRV_NUM];
-    clusterInfo.superPodNum = jClusterJson[PROP_SUPER_POD_NUM];
-    clusterInfo.rankNum = jClusterJson[PROP_RANK_NUM];
+    CHK_RET(SetClusterDeploy(jClusterJson,clusterInfo));  //deploymode为枚举类变量 需单独处理判断
+    CHK_RET(JsonUtils::GetJsonProperty(jClusterJson,PROP_DEV_NUM,clusterInfo.deviceNum));
+    CHK_RET(JsonUtils::GetJsonProperty(jClusterJson,PROP_SRV_NUM,clusterInfo.serverNum));
+    CHK_RET(JsonUtils::GetJsonProperty(jClusterJson,PROP_SUPER_POD_NUM,clusterInfo.superPodNum));
+    CHK_RET(JsonUtils::GetJsonProperty(jClusterJson,PROP_RANK_NUM,clusterInfo.rankNum));
     for (auto& rankInfoJson : jClusterJson[PROP_RANK_LIST]) {
         RankInfo_t rankInfo;
         rankInfo.rankId = rankInfoJson[PROP_RANK_ID];
@@ -257,4 +257,16 @@ HcclResult TopoInfoExchangeBase::TransformRankListToJson(const RankTable_t &clus
     }
     return HCCL_SUCCESS;
 }
+
+HcclResult TopoInfoExchangeBase::SetClusterDeploy (const nlohmann::json& jClusterJson, RankTable_t &clusterInfo ) 
+const  
+{
+    if(!jClusterJson.contains(PROP_DEPLOY_MODE)) {
+        HCCL_ERROR("[SetClusterDeploy]PROP_DEPLOY_MODE is invalid");
+        return HCCL_E_INTERNAL;
+    }
+    clusterInfo.nicDeploy = jClusterJson[PROP_DEPLOY_MODE];
+    return HCCL_SUCCESS;
+}
+
 }  // namespace hccl

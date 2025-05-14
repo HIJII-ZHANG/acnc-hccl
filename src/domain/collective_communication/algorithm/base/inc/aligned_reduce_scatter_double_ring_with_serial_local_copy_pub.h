@@ -16,14 +16,9 @@
 namespace hccl {
 class AlignedReduceScatterDoubleRingWithSerialLocalCopy : public AlignedReduceScatterDoubleRing {
 public:
-    explicit AlignedReduceScatterDoubleRingWithSerialLocalCopy(const HcclDispatcher dispatcher,
-                                               const u64 reduceAttrBitMap, const HcomCollOpInfo *opInfo,
-                                               const u32 userRank, std::vector<Stream> &subStreams,
-                                               const std::vector<std::shared_ptr<LocalNotify>> &mainSignals,
-                                               const std::vector<std::shared_ptr<LocalNotify>> &subSignals,
-                                               const std::vector<std::vector<u32>> &ringsOrders,
-                                               const std::vector<std::vector<Slice>> &userMemInputSlicesOfDoubleRing);
+    explicit AlignedReduceScatterDoubleRingWithSerialLocalCopy(const HcclDispatcher dispatcher);
     ~AlignedReduceScatterDoubleRingWithSerialLocalCopy() override;
+    
     virtual HcclResult RunAsync(const u32 rank, const u32 rankSize, const std::vector<LINK> &links) override;
 
 protected:

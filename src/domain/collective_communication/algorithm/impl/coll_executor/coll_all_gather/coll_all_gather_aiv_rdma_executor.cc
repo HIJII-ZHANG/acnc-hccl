@@ -131,19 +131,24 @@ HcclResult CollAllGatherAivRdmaExecutor::KernelRun(const OpParam &param, ExecMem
     std::unique_ptr<ExecutorBase> innerExecutor;
     if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING || (topoAttr_.isDiffDeviceModule && topoAttr_.serverNum == 1)) {
         // 1-单server-SDMA
-        innerExecutor.reset(new (std::nothrow) AllGatherRing(dispatcher_));
+        innerExecutor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_ALL_GATHER_RING, dispatcher_);
         HCCL_INFO("allgather mesh: using ring algo inter-server.");
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
-        innerExecutor.reset(new (std::nothrow) AllGatherNHR(dispatcher_));
+        innerExecutor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_ALL_GATHER_NHR, dispatcher_);
         HCCL_INFO("allgather mesh: using nhr algo inter-server.");
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
-        innerExecutor.reset(new (std::nothrow) AllGatherNHRV1(dispatcher_));
+        innerExecutor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_ALL_GATHER_NHRV1, dispatcher_);
         HCCL_INFO("allgather mesh: using nhr_v1 algo inter-server.");
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
-        innerExecutor.reset(new (std::nothrow) AllGatherNB(dispatcher_));
+        innerExecutor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_ALL_GATHER_NB, dispatcher_);
         HCCL_INFO("allgather mesh: using nonuniform-bruck algo inter-server.");
     } else {
-        innerExecutor.reset(new (std::nothrow) AllGatherRecursiveHalvingDoubling(dispatcher_));
+        innerExecutor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_ALL_GATHER_RECURSIVE_HALVING_DOUBLING, dispatcher_);
         HCCL_INFO("allgather mesh: using halving-doubling algo inter-server.");
     }
     CHK_SMART_PTR_NULL(innerExecutor);
@@ -190,6 +195,11 @@ HcclResult CollAllGatherAivRdmaExecutor::KernelRun(const OpParam &param, ExecMem
             buffersOut[i] = static_cast<u8 *>(execMem.outputMem.ptr()) + HCCL_MID_COUNT_32_MB;
         }
     }
+
+    if (aivClearEnable_) {
+        ClearAivSyncBuf(buffersOut, localRank, localRankSize, param.stream.ptr());
+    }
+    
     u32 serverNum = innerCommInfo.localRankSize;
 
     AivOpArgs opArgs {

@@ -85,17 +85,17 @@ HcclResult CollReduceScatterSemiRingExecutor::DoubleRingMidCountReduceScatter(
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
     SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
 
-    // 执行
-    std::unique_ptr<ReduceScatterUnifiedMarch> executor = nullptr;
     //此处计算reduceAttr计算outputmem使用scratchmem
     u64 reduceAttr = GetReduceAttr(inputMem, outputMem, dataType, reductionOp);
-    executor.reset(new (std::nothrow) ReduceScatterUnifiedMarch(dispatcher_, reduceAttr));
+    // 执行
+    std::unique_ptr<AlgTemplateBase> executor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_REDUCESCATTER_UNIFIED_MARCH, dispatcher_);
     CHK_SMART_PTR_NULL(executor);
 
     CHK_RET(executor->Prepare(stream, level0CommInfo,
         algResResp_->paramInputMem, algResResp_->paramOutputMem, inputMem,
         outputMem, count, algResResp_->slaveStreams, algResResp_->notifiesMain,
-        algResResp_->notifiesAux, dataType, reductionOp, multRingsUserMemSlice));
+        algResResp_->notifiesAux, dataType, reductionOp, multRingsUserMemSlice, reduceAttr));
 
     HcclResult ret = executor->RegisterProfiler(
         ((COMM_INDEX_0 + 1) << PROF_RINGINDEX_OFFSET_OF_PLANEID) +

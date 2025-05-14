@@ -52,7 +52,7 @@ struct AivTaskPara {
 };
 
 
-HcclResult RegisterAlgCallBack(void* userPtr, TaskCallBack callback);
+HcclResult RegisterAlgCallBack(void* userPtr, TaskCallBack callback, s32 deviceLogicID);
 
 HcclResult TaskAivProfiler(HcclCMDType cmdType, u32 tag, u64 size, u32 blockDim, u32 rankSize,
     void* flagMem, rtStream_t stream, s32 aivRdmaStep, uint64_t beginTime);

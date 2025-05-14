@@ -49,10 +49,6 @@ HcclResult ProfilingManagerPub::CallMsprofReportMc2CommInfo(uint64_t timeStamp, 
 HcclResult ProfilingManagerPub::CallMsprofReportHostNodeApi(uint64_t beginTime, uint64_t endTime,
     const std::string profName, uint32_t threadId)
 {
-    if (ProfilingManager::Instance().GetAllState()) {
-        return HCCL_SUCCESS;
-    }
-
     uint64_t itemId = hrtMsprofGetHashId(profName.c_str(), profName.length());
 
     return ProfilingManager::Instance().CallMsprofReportHostNodeApi(beginTime, endTime, itemId, threadId);
@@ -66,6 +62,12 @@ HcclResult ProfilingManagerPub::CallMsprofReportHostNodeBasicInfo(uint64_t endTi
     return ProfilingManager::Instance().CallMsprofReportHostNodeBasicInfo(endTime, itemId, threadId);
 }
 
+HcclResult ProfilingManagerPub::CallMsprofReportNodeInfo(uint64_t beginTime, uint64_t endTime,
+        const std::string profName, uint32_t threadId)
+{
+    return ProfilingManager::Instance().CallMsprofReportNodeInfo(beginTime, endTime, profName, threadId);
+}
+
 bool ProfilingManagerPub::GetAllState()
 {
     return ProfilingManager::Instance().GetAllState();
@@ -75,4 +77,10 @@ HcclResult ProfilingManagerPub::ClearStoragedProfilingInfo()
 {
     return ProfilingManager::Instance().ClearStoragedProfilingInfo();
 }
+
+void ProfilingManagerPub::SetCaptureStatus(bool isCapture)
+{
+    ProfilingManager::Instance().SetCaptureStatus(isCapture);
+}
+
 }

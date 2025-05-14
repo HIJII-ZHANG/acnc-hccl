@@ -8,18 +8,24 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include "alg_template_register.h"
 #include "reduce_recursive_hd.h"
 #include "reduce_scatter_halving_doubling_pub.h"
 
 namespace hccl {
-ReduceRecursiveHalvingDoubling::ReduceRecursiveHalvingDoubling(
-    const HcclDispatcher dispatcher, const u64 reduceAttrBitMap)
-    : RecursiveHalvingDoublingBase(dispatcher), reduceAttr(reduceAttrBitMap)
+ReduceRecursiveHalvingDoubling::ReduceRecursiveHalvingDoubling(const HcclDispatcher dispatcher)
+    : RecursiveHalvingDoublingBase(dispatcher)
 {
 }
 
 ReduceRecursiveHalvingDoubling::~ReduceRecursiveHalvingDoubling()
 {
+}
+
+HcclResult ReduceRecursiveHalvingDoubling::Prepare(u64 reduceAttrBitMap, HcomCollOpInfo *opInfo)
+{
+    reduceAttr = reduceAttrBitMap;
+    return HCCL_SUCCESS;
 }
 
 // 算法的主入口
@@ -157,12 +163,14 @@ HcclResult ReduceRecursiveHalvingDoubling::ReduceScatterInBlock(u32 rank, u32 ra
         rankInBlock = rank - part1Size_ / 2;               // 除2计算block内的part1的范围
     }
     // 直接调用block的reducscatterhd算法
-    ReduceScatterHalvingDoubling executor(blockSize_, dispatcher_, reduceAttr,
-        UserMemType::INPUT_MEM, UserMemType::OUTPUT_MEM);
-    CHK_RET(executor.Prepare(inputMem_, outputMem_, outputMem_, count_, dataType_, stream_,
-        reductionOp_, -1, slices_, baseOffset_));
+    std::unique_ptr<AlgTemplateBase> executor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_REDUCESCATTER_HD, dispatcher_);
+    CHK_SMART_PTR_NULL(executor);
+    CHK_RET(executor->Prepare(inputMem_, outputMem_, outputMem_, count_, dataType_, stream_,
+        reductionOp_, -1, slices_, baseOffset_, blockSize_, reduceAttr,
+        UserMemType::INPUT_MEM, UserMemType::OUTPUT_MEM));
 
-    CHK_RET(executor.RegisterProfiler(profilerInput_.planeID, profilerInput_.stage, profilerInput_.step,
+    CHK_RET(executor->RegisterProfiler(profilerInput_.planeID, profilerInput_.stage, profilerInput_.step,
         stream_));
 
     // 重新建立reducscatterscatter需要的链接
@@ -172,7 +180,7 @@ HcclResult ReduceRecursiveHalvingDoubling::ReduceScatterInBlock(u32 rank, u32 ra
     CHK_PRT_RET(subLinks.size() == 0, HCCL_ERROR("[ReduceRecursiveHalvingDoubling][ReduceScatterInBlock]rank[%u] "\
         "BuildSubLinks failed", rank), HCCL_E_PARA);
 
-    CHK_RET(executor.RunAsync(rankInBlock, blockSize_, subLinks));
+    CHK_RET(executor->RunAsync(rankInBlock, blockSize_, subLinks));
 
     return HCCL_SUCCESS;
 }
@@ -304,4 +312,5 @@ HcclResult ReduceRecursiveHalvingDoubling::GatherInBlock(u32 rank, u32 rankSize,
 
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_REDUCE_RECURSIVE_HALVING_DOUBLING, ReduceRecursiveHalvingDoubling);
 }  // namespace hccl

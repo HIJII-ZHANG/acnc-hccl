@@ -111,10 +111,14 @@ HcclResult CollReduceScatterVMeshAivSmallCountExecutor::KernelRun(const OpParam 
             i, extraArgs.sendCounts[i], extraArgs.sendDispls[i]);
     }
 
+    if (aivClearEnable_) {
+        ClearAivSyncBuf(buffersOut, localRank, localRankSize, param.stream.ptr());
+    }
+
     bool isOpbase = (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
 
     AivOpArgs opArgs {
-        HcclCMDType::HCCL_CMD_REDUCE_SCATTER_V, execMem.inputPtr, execMem.outputPtr, execMem.count,
+        HcclCMDType::HCCL_CMD_REDUCE_SCATTER_V, execMem.inputPtr, execMem.outputPtr, extraArgs.maxCount,
         param.VDataDes.dataType, param.reduceType, 0, isOpbase
     };
     AivTopoArgs topoArgs { localRank, localRankSize };

@@ -9,6 +9,7 @@
  */
 
 #include "coll_broadcast_ring_for_910_93_executor.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 
@@ -152,9 +153,11 @@ HcclResult CollBroadCastRingFor91093::KernelRun(const OpParam &param, ExecMem &e
             HCCL_DEBUG("broadcast ring: curSize[%llu] deviceNumPerAggregation[%u] commLevel0Size[%u]",
                 curSize, topoAttr_.deviceNumPerAggregation, level0CommInfo.localRankSize);
             if (curSize / topoAttr_.deviceNumPerAggregation <= NHR_BCAST_SMALL_SIZE) {
-                level1TempAlg.reset(new (std::nothrow) BroadcastNHROneshot(dispatcher_));
+                level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_BROADCAST_NHR_ONESHOT, dispatcher_);
             } else {
-                level1TempAlg.reset(new (std::nothrow) BroadcastNHR(dispatcher_));
+                level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_BROADCAST_NHR, dispatcher_);
             }
             HCCL_INFO("broadcast ring: using nhr algo inter-server.");
         } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
@@ -166,13 +169,16 @@ HcclResult CollBroadCastRingFor91093::KernelRun(const OpParam &param, ExecMem &e
             const u32 level1RankSize = level1CommInfo.localRankSize;
             if (ShouldUseBinaryBroadcastOfNB(curSize / topoAttr_.deviceNumPerAggregation, level1RankSize,
                                              topoAttr_.userRankSize, topoAttr_.deviceNumPerAggregation)) {
-                level1TempAlg.reset(new (std::nothrow) BroadcastNBBinary(dispatcher_));
+                level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_BROADCAST_NB_BINARY, dispatcher_);
             } else {
-                level1TempAlg.reset(new (std::nothrow) BroadcastNB(dispatcher_));
+                level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_BROADCAST_NB, dispatcher_);
             }
             HCCL_INFO("broadcast ring: using nonuniform-bruck algo inter-server.");
         } else {
-            level1TempAlg.reset(new (std::nothrow) BcastRecursiveHalvingDoubling(dispatcher_));
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_RECURSIVE_HD, dispatcher_);
             HCCL_INFO("broadcast ring: using Recursive halving-doubling algo inter-server.");
         }
         CHK_SMART_PTR_NULL(level1TempAlg);
@@ -225,10 +231,12 @@ HcclResult CollBroadCastRingFor91093::KernelRun(const OpParam &param, ExecMem &e
         if (level1RankSize > 1) {
             std::unique_ptr<AlgTemplateBase> level1TempAlg;
             if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
-                level1TempAlg.reset(new (std::nothrow) ScatterNHR(dispatcher_));
+                level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_SCATTER_NHR, dispatcher_);
                 HCCL_INFO("broadcast ring: using nhr algo inter-server.");
             } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
-                level1TempAlg.reset(new (std::nothrow) ScatterNB(dispatcher_));
+                level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_SCATTER_NB, dispatcher_);
                 HCCL_INFO("broadcast ring: using nonuniform-bruck algo inter-server.");
             } else {
                 HCCL_ERROR("broadcast level1 only supports NB/NHR algo. not support algType_[%u]", algType_.algoLevel1);
@@ -273,13 +281,16 @@ HcclResult CollBroadCastRingFor91093::KernelRun(const OpParam &param, ExecMem &e
 
         std::unique_ptr<AlgTemplateBase> level2TempAlg;
         if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NB) {
-            level2TempAlg.reset(new (std::nothrow) BroadcastNB(dispatcher_));
+            level2TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_NB, dispatcher_);
             HCCL_INFO("[superpod]Broadcast level2-broadcast: using nonuniform-bruck algo inter-superPod.");
         } else if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NHR) {
-            level2TempAlg.reset(new (std::nothrow) BroadcastNHR(dispatcher_));
+            level2TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_NHR, dispatcher_);
             HCCL_INFO("[superpod]Broadcast level2-broadcast: using nonuniform-hierarchical-ring algo inter-superPod.");
         } else {
-            level2TempAlg.reset(new (std::nothrow) BcastRecursiveHalvingDoubling(dispatcher_));
+            level2TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_RECURSIVE_HD, dispatcher_);
             HCCL_INFO("[superpod]Broadcast level2-broadcast: using Recursive halving-doubling algo inter-superPod.");
         }
         CHK_SMART_PTR_NULL(level2TempAlg);
@@ -302,10 +313,12 @@ HcclResult CollBroadCastRingFor91093::KernelRun(const OpParam &param, ExecMem &e
         if (level1RankSize > 1) {
             std::unique_ptr<AlgTemplateBase> level1AGTempAlg;
             if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
-                level1AGTempAlg.reset(new (std::nothrow) AllGatherNB(dispatcher_));
+                level1AGTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_ALL_GATHER_NB, dispatcher_);
                 HCCL_INFO("allgather ring: using nonuniform-bruck algo inter-server.");
             } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
-                level1AGTempAlg.reset(new (std::nothrow) AllGatherNHR(dispatcher_));
+                level1AGTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_ALL_GATHER_NHR, dispatcher_);
                 HCCL_INFO("allgather ring: using nonuniform-hierarchical-ring algo inter-server.");
             } else {
                 HCCL_ERROR("allgather ring: algType_[%u] is not supported.", algType_.algoLevel1);
@@ -373,12 +386,13 @@ HcclResult CollBroadCastRingFor91093::DoubleRingScatter(const std::string &tag, 
         CHK_RET(GetRankOrder(multiRingsOrder, ringIndex, rankOrder));
         doubleRingsOrders.push_back(rankOrder);
     }
-    std::unique_ptr<AlgTemplateBase> tempAlg;
-    tempAlg.reset(new (std::nothrow) ScatterDoubleRingDirect(dispatcher_, opInfo, topoAttr_.userRank,
-        level0CommInfo1.localRank, algResResp_->slaveStreams, algResResp_->notifiesMain,
-        algResResp_->notifiesAux, doubleRingsOrders, multRingsSliceZero, doubleRingUserMemInputSlices));
-
+    std::unique_ptr<AlgTemplateBase> tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_SCATTER_DOUBLE_RING_DIRECT, dispatcher_);
     CHK_SMART_PTR_NULL(tempAlg);
+
+    CHK_RET(tempAlg ->Prepare(const_cast<HcomCollOpInfo *>(opInfo), topoAttr_.userRank, level0CommInfo1.localRank,
+        algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux, 
+        doubleRingsOrders, multRingsSliceZero, doubleRingUserMemInputSlices));
 
     u32 rootRank = 0;
     ret = GetRankByUserRank(COMM_LEVEL0, COMM_INDEX_0, root, rootRank);

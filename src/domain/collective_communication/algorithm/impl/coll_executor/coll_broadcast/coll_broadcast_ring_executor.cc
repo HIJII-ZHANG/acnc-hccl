@@ -128,9 +128,11 @@ HcclResult CollBroadcastRingExecutor::KernelRun(const OpParam &param, ExecMem &e
             HCCL_DEBUG("broadcast ring: curSize[%llu] deviceNumPerAggregation[%u] commLevel0Size[%u]",
                 curSize, topoAttr_.deviceNumPerAggregation, level0CommInfo.localRankSize);
             if (curSize / topoAttr_.deviceNumPerAggregation <= NHR_BCAST_SMALL_SIZE) {
-                level1TempAlg.reset(new (std::nothrow) BroadcastNHROneshot(dispatcher_));
+                level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_BROADCAST_NHR_ONESHOT, dispatcher_);
             } else {
-                level1TempAlg.reset(new (std::nothrow) BroadcastNHR(dispatcher_));
+                level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_BROADCAST_NHR, dispatcher_);
             }
             HCCL_INFO("broadcast ring: using nhr algo inter-server.");
         } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
@@ -142,13 +144,16 @@ HcclResult CollBroadcastRingExecutor::KernelRun(const OpParam &param, ExecMem &e
             const u32 level1RankSize = level1CommInfo.localRankSize;
             if (ShouldUseBinaryBroadcastOfNB(curSize / topoAttr_.deviceNumPerAggregation, level1RankSize,
                                              topoAttr_.userRankSize, topoAttr_.deviceNumPerAggregation)) {
-                level1TempAlg.reset(new (std::nothrow) BroadcastNBBinary(dispatcher_));
+                level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_BROADCAST_NB_BINARY, dispatcher_);
             } else {
-                level1TempAlg.reset(new (std::nothrow) BroadcastNB(dispatcher_));
+                level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_BROADCAST_NB, dispatcher_);
             }
             HCCL_INFO("broadcast ring: using nonuniform-bruck algo inter-server.");
         } else {
-            level1TempAlg.reset(new (std::nothrow) BcastRecursiveHalvingDoubling(dispatcher_));
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_RECURSIVE_HD, dispatcher_);
             HCCL_INFO("broadcast ring: using Recursive halving-doubling algo inter-server.");
         }
         CHK_SMART_PTR_NULL(level1TempAlg);

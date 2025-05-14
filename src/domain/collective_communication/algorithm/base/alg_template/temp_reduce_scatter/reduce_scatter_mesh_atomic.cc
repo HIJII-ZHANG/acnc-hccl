@@ -10,25 +10,35 @@
 
 #include "reduce_scatter_mesh_atomic.h"
 #include "externalinput_pub.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 using namespace std;
 
-ReduceScatterMeshAtomic::ReduceScatterMeshAtomic(const HcclDispatcher dispatcher,
-    const u64 reduceAttrBitMap, std::vector<Stream> &meshStreams,
-    const std::vector<std::shared_ptr<LocalNotify>> &meshSignal,
-    const std::vector<std::shared_ptr<LocalNotify>> &meshSignalAux, u32 userRank)
-    : AlgTemplateBase(dispatcher),
-      reduceAttr_(reduceAttrBitMap),
-      localRank_(0),
-      localRankSize_(0),
-      userRank_(userRank),
-      meshStreams_(meshStreams),
-      meshSignal_(meshSignal),
-      meshSignalAux_(meshSignalAux)
+ReduceScatterMeshAtomic::ReduceScatterMeshAtomic(const HcclDispatcher dispatcher)
+    : AlgTemplateBase(dispatcher)
 {}
 
 ReduceScatterMeshAtomic::~ReduceScatterMeshAtomic() {}
+
+HcclResult ReduceScatterMeshAtomic::Prepare(DeviceMem &inputMem, DeviceMem &outputMem, DeviceMem &scratchMem,
+                                            const u64 count, const HcclDataType dataType, const Stream &stream,
+                                            const HcclReduceOp reductionOp, const u32 root,
+                                            const std::vector<Slice> &slices, const u64 baseOffset,
+                                            const u64 reduceAttrBitMap, std::vector<Stream> &meshStreams,
+                                            std::vector<std::shared_ptr<LocalNotify>> &meshSignal,
+                                            std::vector<std::shared_ptr<LocalNotify>> &meshSignalAux,
+                                            u32 userRank, const HcomCollOpInfo *opInfo)
+{
+    reduceAttr_ = reduceAttrBitMap;
+    userRank_ = userRank;
+    meshStreams_ = meshStreams;
+    meshSignalPtr_ = &meshSignal;
+    meshSignalAuxPtr_ = &meshSignalAux;
+    (void)opInfo;
+    return AlgTemplateBase::Prepare(inputMem, outputMem, scratchMem, count, dataType, stream, reductionOp,
+        root, slices, baseOffset);
+}
 
 HcclResult ReduceScatterMeshAtomic::RunReduceScatterHighPerf(const std::vector<LINK> &links)
 {
@@ -98,17 +108,17 @@ HcclResult ReduceScatterMeshAtomic::RunReduceScatter(const std::vector<LINK> &li
         Slice &rxSlice = slices_[localRank_];
         if (streamIndex == 0) {
             for (u32 signalIndex = 0; signalIndex < localRankSize_ - 2; signalIndex++) { // rankSize-2: stream num
-                CHK_RET(LocalNotify::Wait(stream, dispatcher_, meshSignal_[signalIndex], profilerInput_.stage));
+                CHK_RET(LocalNotify::Wait(stream, dispatcher_, (*meshSignalPtr_)[signalIndex], profilerInput_.stage));
             }
             for (u32 signalIndex = 0; signalIndex < localRankSize_ - 2; signalIndex++) { // rankSize-2: stream num
-                CHK_RET(LocalNotify::Post(stream, dispatcher_, meshSignalAux_[signalIndex],
+                CHK_RET(LocalNotify::Post(stream, dispatcher_, (*meshSignalAuxPtr_)[signalIndex],
                     profilerInput_.stage));
             }
         } else {
             u32 signalIndex = streamIndex - 1;
-            CHK_RET(LocalNotify::Post(stream, dispatcher_, meshSignal_[signalIndex],
+            CHK_RET(LocalNotify::Post(stream, dispatcher_, (*meshSignalPtr_)[signalIndex],
                 profilerInput_.stage));
-            CHK_RET(LocalNotify::Wait(stream, dispatcher_, meshSignalAux_[signalIndex], profilerInput_.stage));
+            CHK_RET(LocalNotify::Wait(stream, dispatcher_, (*meshSignalAuxPtr_)[signalIndex], profilerInput_.stage));
         }
 
         HCCL_DEBUG(
@@ -125,6 +135,7 @@ HcclResult ReduceScatterMeshAtomic::RunReduceScatter(const std::vector<LINK> &li
         CHK_RET(dstLink->TxDataSignal(stream));
         CHK_RET(dstLink->RxDataSignal(stream));
     }
+    // 添加空task,保证执行时不乱序
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem_, outputMem_, streamVct[0], dispatcher_));
     return HCCL_SUCCESS;
 }
@@ -154,12 +165,12 @@ HcclResult ReduceScatterMeshAtomic::RunAsync(const u32 rank, const u32 rankSize,
 
     for (u32 streamIndex = 0; streamIndex < rankSize - 2; streamIndex++) { // rankSize-2: stream num
         HCCL_DEBUG("rank[%u] streamindex[%u] wait signalaux[%p]",
-            rank, streamIndex, meshSignalAux_[streamIndex]->ptr());
-        CHK_RET(LocalNotify::Wait(meshStreams_[streamIndex], dispatcher_, meshSignalAux_[streamIndex],
+            rank, streamIndex, (*meshSignalAuxPtr_)[streamIndex]->ptr());
+        CHK_RET(LocalNotify::Wait(meshStreams_[streamIndex], dispatcher_, (*meshSignalAuxPtr_)[streamIndex],
             profilerInput_.stage));
     }
     for (u32 streamIndex = 0; streamIndex < rankSize - 2; streamIndex++) { // rankSize-2: stream num
-        CHK_RET(LocalNotify::Post(stream_, dispatcher_, meshSignalAux_[streamIndex],
+        CHK_RET(LocalNotify::Post(stream_, dispatcher_, (*meshSignalAuxPtr_)[streamIndex],
             profilerInput_.stage));
     }
 
@@ -171,12 +182,13 @@ HcclResult ReduceScatterMeshAtomic::RunAsync(const u32 rank, const u32 rankSize,
 
     for (u32 streamIndex = 0; streamIndex < rankSize - 2; streamIndex++) { // rankSize - 2 stream num
         HCCL_DEBUG("rank[%u] streamindex[%u] wait signal[%p] ",
-            rank, streamIndex, meshSignal_[streamIndex]->ptr());
-        CHK_RET(LocalNotify::Wait(stream_, dispatcher_, meshSignal_[streamIndex], profilerInput_.stage));
-        CHK_RET(LocalNotify::Post(meshStreams_[streamIndex], dispatcher_, meshSignal_[streamIndex],
+            rank, streamIndex, (*meshSignalPtr_)[streamIndex]->ptr());
+        CHK_RET(LocalNotify::Wait(stream_, dispatcher_, (*meshSignalPtr_)[streamIndex], profilerInput_.stage));
+        CHK_RET(LocalNotify::Post(meshStreams_[streamIndex], dispatcher_, (*meshSignalPtr_)[streamIndex],
             profilerInput_.stage));
     }
 
+    // 添加空task,保证执行时不乱序
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
 
     if ((GetExternalInputHcclHighPerfEnable() != 0) &&
@@ -254,4 +266,5 @@ HcclResult ReduceScatterMeshAtomic::MemSlice()
 
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_REDUCESCATTER_MESH_ATOMIC, ReduceScatterMeshAtomic);
 }

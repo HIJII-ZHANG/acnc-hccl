@@ -150,11 +150,11 @@ HcclResult CollReduceScatterVFor310PRingExecutor::KernelRun(const OpParam &param
     }
 
     std::vector<u32> rankOrder(level0RankSize, 0);
-    std::unique_ptr<ExecutorBase> tempAlg;
-    tempAlg.reset(new (std::nothrow) ReduceScatterRingConcurrentDirect(
-                        dispatcher_, reduceAttr, opInfoPtr, topoAttr_.userRank, algResResp_->slaveStreams,
-                        algResResp_->notifiesMain, algResResp_->notifiesAux, rankOrder, outputSlices, true));
+    std::unique_ptr<AlgTemplateBase> tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_REDUCESCATTER_RING_DIRECT, dispatcher_);
     CHK_SMART_PTR_NULL(tempAlg);
+    CHK_RET(tempAlg->Prepare(reduceAttr, opInfoPtr, topoAttr_.userRank, algResResp_->slaveStreams,
+                        algResResp_->notifiesMain, algResResp_->notifiesAux, rankOrder, outputSlices, true));
 
     CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
         dataType, param.stream, param.reduceType, 0, dataSlices));

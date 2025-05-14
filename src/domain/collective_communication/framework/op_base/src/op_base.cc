@@ -35,6 +35,7 @@
 #include "comm_config_pub.h"
 #include "kernel_tiling/kernel_tiling.h"
 #include "external/runtime/rt_error_codes.h"
+#include "mmpa_api.h"
 
 #define DOUBLE_SIZE 2
 
@@ -50,42 +51,45 @@ const std::string HCCL_ALLTOALLVC = "ALLTOALLVC";
 
 thread_local map<std::string, shared_ptr<TopoInfoDetect>> g_topoDetectServerPtrMap;
 
-HcclResult GetCaptureInfo(const std::string& funcname, aclrtStream stream, std::string& captureInfo)
+HcclResult GetCaptureInfo(aclrtStream stream, std::string& captureInfo, bool& isCapture)
 {   
+    isCapture = false;
     DevType devType;   
     CHK_RET(hrtGetDeviceType(devType));
     if(GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-        HCCL_WARNING("[%s]Stream capture only support opbase mode!", funcname.c_str());
+        HCCL_WARNING("[%s]Stream capture only support opbase mode!", __func__);
         return HCCL_SUCCESS;
     }
     rtStreamCaptureStatus captureStatus = rtStreamCaptureStatus::RT_STREAM_CAPTURE_STATUS_NONE;
     rtModel_t rtModel = nullptr;
     rtError_t ret = rtStreamGetCaptureInfo(stream, &captureStatus, &rtModel);
     if (ret == ACL_ERROR_RT_FEATURE_NOT_SUPPORT) {
-        HCCL_WARNING("[%s]Stream capture not support!", funcname.c_str());
+        HCCL_WARNING("[%s]Stream capture not support!", __func__);
         return HCCL_SUCCESS;
     } else {
         CHK_PRT_RET(ret != RT_ERROR_NONE,
-            HCCL_ERROR("[%s]rtGet stream get capture status fail. return[%d]", funcname.c_str(), ret), HCCL_E_RUNTIME);
+            HCCL_ERROR("[%s]rtGet stream get capture status fail. return[%d]", __func__, ret), HCCL_E_RUNTIME);
     }
     std::string modelstr;
     if (captureStatus == RT_STREAM_CAPTURE_STATUS_ACTIVE) {
+        isCapture = true;
         uint32_t modelId = 0;
         ret = rtModelGetId(rtModel, &modelId);
         CHK_PRT_RET(ret != RT_ERROR_NONE,
-            HCCL_ERROR("[%s]rtGet stream get capture model id fail. return[%d]", funcname.c_str(), ret), HCCL_E_RUNTIME);
+            HCCL_ERROR("[%s]rtGet stream get capture model id fail. return[%d]", __func__, ret), HCCL_E_RUNTIME);
         modelstr = to_string(modelId);
     } else {
         modelstr = "none";
     }
     captureInfo = ", capture status[" + to_string(captureStatus) + "], model id[" + modelstr + "].";
+    ProfilingManagerPub::SetCaptureStatus(isCapture);
     return HCCL_SUCCESS;
 }
 
 HcclResult CallMsprofReportHostApi(hccl::hcclComm* hcclComm, HcclCMDType cmdType, uint64_t beginTime, u64 count,
     HcclDataType dataType, std::string tag)
 {
-    if (GetExternalInputHcclIfProf()) {
+    if (GetIfProfile()) {
         AlgType algType;
         if(cmdType == HcclCMDType::HCCL_CMD_BATCH_SEND_RECV){
             algType.algoLevel0 = AlgTypeLevel0::ALG_LEVEL0_PAIRWISE;
@@ -195,13 +199,14 @@ HcclResult HcclGetCommAll(uint32_t ndev, int32_t *devices, HcclComm *comms)
     CHK_PRT_RET(hrtSetDevice(devices[0]) != HCCL_SUCCESS,
         HCCL_ERROR("[HcclGetCommAll] set fail devices[0][%d]", devices[0]), HCCL_E_INTERNAL);
 
-    HcclRootInfo rootHandle;
-    CHK_RET(HcclGetRootInfo(&rootHandle));
-
     // 获取通信域之前, 先把所有通信域设置为空
     for (uint32_t i = 0; i < ndev; i++) {
         comms[i] = nullptr;
     }
+
+    HcclRootInfo rootHandle;
+    CHK_RET(HcclGetRootInfo(&rootHandle));
+    
     std::vector<std::unique_ptr<std::thread>> threads(ndev);
     for (uint32_t rankId = 0; rankId < ndev; rankId++) {
         threads[rankId].reset(new (std::nothrow) std::thread(&GetDeviceComm, ndev, std::ref(rootHandle), rankId,
@@ -1199,7 +1204,9 @@ HcclResult HcclCommInitRootInfoConfig(uint32_t nRanks, const HcclRootInfo *rootI
 HcclResult HcclSetConfig(HcclConfig config, HcclConfigValue configValue)
 {
     if (config == HCCL_DETERMINISTIC) {
-        std::string hcclDeterministicEnv = SalGetEnv("HCCL_DETERMINISTIC");
+        char* mmSysGetEnvValue = nullptr;
+        MM_SYS_GET_ENV(MM_ENV_HCCL_DETERMINISTIC, mmSysGetEnvValue);
+        std::string hcclDeterministicEnv = (mmSysGetEnvValue != nullptr) ? mmSysGetEnvValue : "EmptyString";
         if (hcclDeterministicEnv == "EmptyString") {
             if (configValue.value == 1) {
                 CHK_RET(SetDeterministic(true));
@@ -1249,8 +1256,13 @@ HcclResult HcclSetIfProfile()
 {
     bool ifOpbase = (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
     bool state = ProfilingManagerPub::GetAllState();
-    SetIfProfile(ifOpbase, state);
+    SetIfProfile((!ifOpbase) || (!state));
     return HCCL_SUCCESS;
+}
+
+void HcclResetIfProfile()
+{
+    SetIfProfile(true);
 }
 
 HcclResult HcclAllReduce(void *sendBuf, void *recvBuf, uint64_t count, HcclDataType dataType,
@@ -1258,7 +1270,12 @@ HcclResult HcclAllReduce(void *sendBuf, void *recvBuf, uint64_t count, HcclDataT
 {
     HcclUs startut = TIME_NOW();
 
-    HcclSetIfProfile();
+    std::string captureInfo;
+    bool isCapture;
+    CHK_PRT(GetCaptureInfo(stream, captureInfo, isCapture));
+    if (!isCapture) {
+        HcclSetIfProfile();
+    }
 
     uint64_t beginTime = hrtMsprofSysCycleTime();
 
@@ -1285,7 +1302,6 @@ HcclResult HcclAllReduce(void *sendBuf, void *recvBuf, uint64_t count, HcclDataT
     DevType devType;
     CHK_RET(hrtGetDeviceType(devType));
 
-
     CHK_RET_AND_PRINT_IDE(HcomCheckOpParam(tag.c_str(), count, dataType, stream), tag.c_str());
 
     CHK_RET_AND_PRINT_IDE(HcomCheckReductionOp(op), tag.c_str());
@@ -1298,8 +1314,6 @@ HcclResult HcclAllReduce(void *sendBuf, void *recvBuf, uint64_t count, HcclDataT
     s32 streamId = 0;
     CHK_RET_AND_PRINT_IDE(hrtGetStreamId(stream, streamId), tag.c_str());
 
-    std::string captureInfo;
-    CHK_PRT(GetCaptureInfo(std::string(__func__), stream, captureInfo));
     /* 接口交互信息日志 */
     char stackLogBuffer[LOG_TMPBUF_SIZE];
     s32 ret = snprintf_s(stackLogBuffer, LOG_TMPBUF_SIZE, LOG_TMPBUF_SIZE - 1U,
@@ -1323,7 +1337,10 @@ HcclResult HcclAllReduce(void *sendBuf, void *recvBuf, uint64_t count, HcclDataT
     CHK_RET_AND_PRINT_IDE(SetOverFlowAddr(hcclComm), tag.c_str());
     CHK_RET_AND_PRINT_IDE(hcclComm->AllReduceOutPlace(tag, sendBuf, recvBuf, count, dataType, op, stream), tag.c_str());
     CHK_RET(CallMsprofReportHostApi(hcclComm, HcclCMDType::HCCL_CMD_ALLREDUCE, beginTime, count, dataType, tag));
-    ResetIfProfile();
+
+    if (!isCapture) {
+        HcclResetIfProfile();
+    }
     HcclUs endut = TIME_NOW();
     /* 关键状态记录 */
     std::string endInfo = "HcclAllReduce:success,take time: " +
@@ -1336,7 +1353,12 @@ HcclResult HcclAllReduce(void *sendBuf, void *recvBuf, uint64_t count, HcclDataT
 HcclResult HcclBarrier(HcclComm comm, aclrtStream stream)
 {
     HcclUs startut = TIME_NOW();
-    HcclSetIfProfile();
+    std::string captureInfo;
+    bool isCapture;
+    CHK_PRT(GetCaptureInfo(stream, captureInfo, isCapture));
+    if (!isCapture) {
+        HcclSetIfProfile();
+    }
     uint64_t beginTime = hrtMsprofSysCycleTime();
 
     s32 deviceLogicId = 0;
@@ -1366,8 +1388,6 @@ HcclResult HcclBarrier(HcclComm comm, aclrtStream stream)
     CHK_RET_AND_PRINT_IDE(hcclComm->GetGroupRank(rankId), tag.c_str());
     HCCL_PROFILER_ADD_GROUPRANK(hcclComm->GetIdentifier(), rankSize, rankId);
     
-    std::string captureInfo;
-    CHK_PRT(GetCaptureInfo(std::string(__func__), stream, captureInfo));
     /* 接口交互信息日志 */
     char stackLogBuffer[LOG_TMPBUF_SIZE];
     s32 ret = snprintf_s(stackLogBuffer, LOG_TMPBUF_SIZE, LOG_TMPBUF_SIZE - 1U,
@@ -1399,7 +1419,9 @@ HcclResult HcclBarrier(HcclComm comm, aclrtStream stream)
     HCCL_PROFILER_DEL_GROUPRANK(hcclComm->GetIdentifier());
     CHK_RET(CallMsprofReportHostApi(hcclComm, HcclCMDType::HCCL_CMD_ALLREDUCE, beginTime, HCCL_BARRIER_DEFAULT_COUNT,
         dataType, tag));
-    ResetIfProfile();
+    if (!isCapture) {
+        HcclResetIfProfile();
+    }
     HcclUs endut = TIME_NOW();
     /* 关键状态记录 */
     std::string endInfo = "HcclBarrier:success,take time: " +
@@ -1412,7 +1434,12 @@ HcclResult HcclBroadcast(void *buf, uint64_t count, HcclDataType dataType, uint3
                          aclrtStream stream)
 {
     HcclUs startut = TIME_NOW();
-    HcclSetIfProfile();
+    std::string captureInfo;
+    bool isCapture;
+    CHK_PRT(GetCaptureInfo(stream, captureInfo, isCapture));
+    if (!isCapture) {
+        HcclSetIfProfile();
+    }
     uint64_t beginTime = hrtMsprofSysCycleTime();
     s32 deviceLogicId = 0;
     CHK_RET(hrtGetDeviceRefresh(&deviceLogicId));
@@ -1444,8 +1471,6 @@ HcclResult HcclBroadcast(void *buf, uint64_t count, HcclDataType dataType, uint3
     s32 streamId = 0;
     CHK_RET_AND_PRINT_IDE(hrtGetStreamId(stream, streamId), tag.c_str());
 
-    std::string captureInfo;
-    CHK_PRT(GetCaptureInfo(std::string(__func__), stream, captureInfo));
     /* 接口交互信息日志 */
     char stackLogBuffer[LOG_TMPBUF_SIZE];
     s32 ret = snprintf_s(stackLogBuffer, LOG_TMPBUF_SIZE, LOG_TMPBUF_SIZE - 1U,
@@ -1467,7 +1492,9 @@ HcclResult HcclBroadcast(void *buf, uint64_t count, HcclDataType dataType, uint3
     CHK_RET_AND_PRINT_IDE(hcclComm->BroadcastOutPlace(tag, buf, count, dataType, root, stream), tag.c_str());
 
     CHK_RET(CallMsprofReportHostApi(hcclComm, HcclCMDType::HCCL_CMD_BROADCAST, beginTime, count, dataType, tag));
-    ResetIfProfile();
+    if (!isCapture) {
+        HcclResetIfProfile();
+    }
     HcclUs endut = TIME_NOW();
     /* 关键状态记录 */
     std::string endInfo = "HcclBroadcast:success,take time: " +
@@ -1480,7 +1507,12 @@ HcclResult HcclReduceScatter(void *sendBuf, void *recvBuf, uint64_t recvCount, H
                              HcclReduceOp op, HcclComm comm, aclrtStream stream)
 {
     HcclUs startut = TIME_NOW();
-    HcclSetIfProfile();
+    std::string captureInfo;
+    bool isCapture;
+    CHK_PRT(GetCaptureInfo(stream, captureInfo, isCapture));
+    if (!isCapture) {
+        HcclSetIfProfile();
+    }
     uint64_t beginTime = hrtMsprofSysCycleTime();
     s32 deviceLogicId = 0;
     CHK_RET(hrtGetDeviceRefresh(&deviceLogicId));
@@ -1513,8 +1545,6 @@ HcclResult HcclReduceScatter(void *sendBuf, void *recvBuf, uint64_t recvCount, H
     s32 streamId = 0;
     CHK_RET_AND_PRINT_IDE(hrtGetStreamId(stream, streamId), tag.c_str());
 
-    std::string captureInfo;
-    CHK_PRT(GetCaptureInfo(std::string(__func__), stream, captureInfo));
     /* 接口交互信息日志 */
     char stackLogBuffer[LOG_TMPBUF_SIZE];
     s32 ret = snprintf_s(stackLogBuffer, LOG_TMPBUF_SIZE, LOG_TMPBUF_SIZE - 1U,
@@ -1541,7 +1571,9 @@ HcclResult HcclReduceScatter(void *sendBuf, void *recvBuf, uint64_t recvCount, H
                           tag.c_str());
     CHK_RET(CallMsprofReportHostApi(hcclComm, HcclCMDType::HCCL_CMD_REDUCE_SCATTER, beginTime, recvCount,
         dataType, tag));
-    ResetIfProfile();
+    if (!isCapture) {
+        HcclResetIfProfile();
+    }
     HcclUs endut = TIME_NOW();
     /* 关键状态记录 */
     std::string endInfo = "HcclReduceScatter:success,take time: " +
@@ -1554,7 +1586,12 @@ HcclResult HcclReduceScatterV(void *sendBuf, const void *sendCounts, const void 
     void *recvBuf, uint64_t recvCount, HcclDataType dataType, HcclReduceOp op, HcclComm comm, aclrtStream stream)
 {
     HcclUs startut = TIME_NOW();
-    HcclSetIfProfile();
+    std::string captureInfo;
+    bool isCapture;
+    CHK_PRT(GetCaptureInfo(stream, captureInfo, isCapture));
+    if (!isCapture) {
+        HcclSetIfProfile();
+    }
     uint64_t beginTime = hrtMsprofSysCycleTime();
     s32 deviceLogicId = 0;
     CHK_RET(hrtGetDeviceRefresh(&deviceLogicId));
@@ -1597,9 +1634,6 @@ HcclResult HcclReduceScatterV(void *sendBuf, const void *sendCounts, const void 
     u32 userRank = INVALID_VALUE_RANKID;
     CHK_RET_AND_PRINT_IDE(hcclComm->GetUserRank(userRank), tag.c_str());
     CHK_RET_AND_PRINT_IDE(HcomCheckUserRank(rankSize, userRank), tag.c_str());
-
-    std::string captureInfo;
-    CHK_PRT(GetCaptureInfo(std::string(__func__), stream, captureInfo));
 
     u64 maxCount = 0;
     u64 inputCount = 0;
@@ -1657,7 +1691,9 @@ HcclResult HcclReduceScatterV(void *sendBuf, const void *sendCounts, const void 
 
     CHK_RET(CallMsprofReportHostApi(hcclComm, HcclCMDType::HCCL_CMD_REDUCE_SCATTER_V, beginTime, maxCount,
         dataType, tag));
-    ResetIfProfile();
+    if (!isCapture) {
+        HcclResetIfProfile();
+    }
     HcclUs endut = TIME_NOW();
 
     /* 关键状态记录 */
@@ -1685,7 +1721,12 @@ HcclResult HcclScatter(void *sendBuf, void *recvBuf, uint64_t recvCount, HcclDat
     HcclComm comm, aclrtStream stream)
 {
     HcclUs startut = TIME_NOW();
-    HcclSetIfProfile();
+    std::string captureInfo;
+    bool isCapture;
+    CHK_PRT(GetCaptureInfo(stream, captureInfo, isCapture));
+    if (!isCapture) {
+        HcclSetIfProfile();
+    }
     uint64_t beginTime = hrtMsprofSysCycleTime();
     s32 deviceLogicId = 0;
     CHK_RET(hrtGetDeviceRefresh(&deviceLogicId));
@@ -1718,8 +1759,6 @@ HcclResult HcclScatter(void *sendBuf, void *recvBuf, uint64_t recvCount, HcclDat
     s32 streamId = 0;
     CHK_RET_AND_PRINT_IDE(hrtGetStreamId(stream, streamId), tag.c_str());
 
-    std::string captureInfo;
-    CHK_PRT(GetCaptureInfo(std::string(__func__), stream, captureInfo));
     /* 接口交互信息日志 */
     char stackLogBuffer[LOG_TMPBUF_SIZE];
     s32 ret = snprintf_s(stackLogBuffer, LOG_TMPBUF_SIZE, LOG_TMPBUF_SIZE - 1U,
@@ -1743,7 +1782,9 @@ HcclResult HcclScatter(void *sendBuf, void *recvBuf, uint64_t recvCount, HcclDat
 
     CHK_RET(CallMsprofReportHostApi(hcclComm, HcclCMDType::HCCL_CMD_SCATTER, beginTime, recvCount, dataType,
         tag));
-    ResetIfProfile();
+    if (!isCapture) {
+        HcclResetIfProfile();
+    }
     HcclUs endut = TIME_NOW();
     /* 关键状态记录 */
     std::string endInfo = "HcclScatter:success,take time: " +
@@ -1756,7 +1797,12 @@ HcclResult HcclAllGather(void *sendBuf, void *recvBuf, uint64_t sendCount, HcclD
                          HcclComm comm, aclrtStream stream)
 {
     HcclUs startut = TIME_NOW();
-    HcclSetIfProfile();
+    std::string captureInfo;
+    bool isCapture;
+    CHK_PRT(GetCaptureInfo(stream, captureInfo, isCapture));
+    if (!isCapture) {
+        HcclSetIfProfile();
+    }
     uint64_t beginTime = hrtMsprofSysCycleTime();
     s32 deviceLogicId = 0;
     CHK_RET(hrtGetDeviceRefresh(&deviceLogicId));
@@ -1782,8 +1828,6 @@ HcclResult HcclAllGather(void *sendBuf, void *recvBuf, uint64_t sendCount, HcclD
     s32 streamId = 0;
     CHK_RET_AND_PRINT_IDE(hrtGetStreamId(stream, streamId), tag.c_str());
 
-    std::string captureInfo;
-    CHK_PRT(GetCaptureInfo(std::string(__func__), stream, captureInfo));
     /* 接口交互信息日志 */
     char stackLogBuffer[LOG_TMPBUF_SIZE];
     s32 ret = snprintf_s(stackLogBuffer, LOG_TMPBUF_SIZE, LOG_TMPBUF_SIZE - 1U,
@@ -1805,7 +1849,9 @@ HcclResult HcclAllGather(void *sendBuf, void *recvBuf, uint64_t sendCount, HcclD
     CHK_RET_AND_PRINT_IDE(hcclComm->AllGatherOutPlace(tag, sendBuf, recvBuf, sendCount, dataType, stream), tag.c_str());
     CHK_RET(CallMsprofReportHostApi(hcclComm, HcclCMDType::HCCL_CMD_ALLGATHER, beginTime, sendCount, dataType,
         tag));
-    ResetIfProfile();
+    if (!isCapture) {
+        HcclResetIfProfile();
+    }
     HcclUs endut = TIME_NOW();
     /* 关键状态记录 */
     std::string endInfo = "HcclAllGather:success,take time: " +
@@ -1818,7 +1864,12 @@ HcclResult HcclAllGatherV(void *sendBuf, uint64_t sendCount, void *recvBuf,
     const void *recvCounts, const void *recvDispls, HcclDataType dataType, HcclComm comm, aclrtStream stream)
 {
     HcclUs startut = TIME_NOW();
-    HcclSetIfProfile();
+    std::string captureInfo;
+    bool isCapture;
+    CHK_PRT(GetCaptureInfo(stream, captureInfo, isCapture));
+    if (!isCapture) {
+        HcclSetIfProfile();
+    }
     uint64_t beginTime = hrtMsprofSysCycleTime();
     s32 deviceLogicId = 0;
     CHK_RET(hrtGetDeviceRefresh(&deviceLogicId));
@@ -1854,9 +1905,6 @@ HcclResult HcclAllGatherV(void *sendBuf, uint64_t sendCount, void *recvBuf,
     u32 userRank = INVALID_VALUE_RANKID;
     CHK_RET_AND_PRINT_IDE(hcclComm->GetUserRank(userRank), tag.c_str());
     CHK_RET_AND_PRINT_IDE(HcomCheckUserRank(rankSize, userRank), tag.c_str());
-
-    std::string captureInfo;
-    CHK_PRT(GetCaptureInfo(std::string(__func__), stream, captureInfo));
 
     u64 maxCount = 0;
     u64 outputCount = 0;
@@ -1911,7 +1959,9 @@ HcclResult HcclAllGatherV(void *sendBuf, uint64_t sendCount, void *recvBuf,
         dataType, stream), tag.c_str());
 
     CHK_RET(CallMsprofReportHostApi(hcclComm, HcclCMDType::HCCL_CMD_ALLGATHER_V, beginTime, maxCount, dataType, tag));
-    ResetIfProfile();
+    if (!isCapture) {
+        HcclResetIfProfile();
+    }
     HcclUs endut = TIME_NOW();
 
     /* 关键状态记录 */
@@ -1925,7 +1975,12 @@ HcclResult HcclSend(void* sendBuf, uint64_t count, HcclDataType dataType, uint32
                     HcclComm comm, aclrtStream stream)
 {
     HcclUs startut = TIME_NOW();
-    HcclSetIfProfile();
+    std::string captureInfo;
+    bool isCapture;
+    CHK_PRT(GetCaptureInfo(stream, captureInfo, isCapture));
+    if (!isCapture) {
+        HcclSetIfProfile();
+    }
     uint64_t beginTime = hrtMsprofSysCycleTime();
     s32 deviceLogicId = 0;
     CHK_RET(hrtGetDeviceRefresh(&deviceLogicId));
@@ -1962,8 +2017,6 @@ HcclResult HcclSend(void* sendBuf, uint64_t count, HcclDataType dataType, uint32
         hcclComm->GetIdentifier(), HcclReduceOp::HCCL_REDUCE_RESERVED);
     HCCL_PROFILER_ADD_GROUPRANK_SENDRECV(hcclComm->GetIdentifier(), rankSize, localRank, destRank);
 
-    std::string captureInfo;
-    CHK_PRT(GetCaptureInfo(std::string(__func__), stream, captureInfo));
     /* 接口交互信息日志 */
     char stackLogBuffer[LOG_TMPBUF_SIZE];
     s32 ret = snprintf_s(stackLogBuffer, LOG_TMPBUF_SIZE, LOG_TMPBUF_SIZE - 1U,
@@ -1989,7 +2042,9 @@ HcclResult HcclSend(void* sendBuf, uint64_t count, HcclDataType dataType, uint32
     HCCL_PROFILER_DEL_OPDATA(tag);
     HCCL_PROFILER_DEL_GROUPRANK(hcclComm->GetIdentifier());
     CHK_RET(CallMsprofReportHostApi(hcclComm, HcclCMDType::HCCL_CMD_SEND, beginTime, count, dataType, tag));
-    ResetIfProfile();
+    if (!isCapture) {
+        HcclResetIfProfile();
+    }
     HcclUs endut = TIME_NOW();
     /* 关键状态记录 */
     std::string endInfo = "HcclSend:success,take time: " +
@@ -2002,7 +2057,12 @@ HcclResult HcclRecv(void* recvBuf, uint64_t count, HcclDataType dataType, uint32
                     HcclComm comm, aclrtStream stream)
 {
     HcclUs startut = TIME_NOW();
-    HcclSetIfProfile();
+    std::string captureInfo;
+    bool isCapture;
+    CHK_PRT(GetCaptureInfo(stream, captureInfo, isCapture));
+    if (!isCapture) {
+        HcclSetIfProfile();
+    }
     uint64_t beginTime = hrtMsprofSysCycleTime();
     s32 deviceLogicId = 0;
     CHK_RET(hrtGetDeviceRefresh(&deviceLogicId));
@@ -2039,8 +2099,6 @@ HcclResult HcclRecv(void* recvBuf, uint64_t count, HcclDataType dataType, uint32
         hcclComm->GetIdentifier(), HcclReduceOp::HCCL_REDUCE_RESERVED);
     HCCL_PROFILER_ADD_GROUPRANK_SENDRECV(hcclComm->GetIdentifier(), rankSize, localRank, srcRank);
 
-    std::string captureInfo;
-    CHK_PRT(GetCaptureInfo(std::string(__func__), stream, captureInfo));
     /* 接口交互信息日志 */
     char stackLogBuffer[LOG_TMPBUF_SIZE];
     s32 ret = snprintf_s(stackLogBuffer, LOG_TMPBUF_SIZE, LOG_TMPBUF_SIZE - 1U,
@@ -2065,7 +2123,9 @@ HcclResult HcclRecv(void* recvBuf, uint64_t count, HcclDataType dataType, uint32
     HCCL_PROFILER_DEL_OPDATA(tag);
     HCCL_PROFILER_DEL_GROUPRANK(hcclComm->GetIdentifier());
     CHK_RET(CallMsprofReportHostApi(hcclComm, HcclCMDType::HCCL_CMD_RECEIVE, beginTime, count, dataType, tag));
-    ResetIfProfile();
+    if (!isCapture) {
+        HcclResetIfProfile();
+    }
     HcclUs endut = TIME_NOW();
     /* 关键状态记录 */
     std::string endInfo = "HcclRecv:success,take time: " +
@@ -2178,6 +2238,7 @@ HcclResult HcclCommDestroy(HcclComm comm)
         HCCL_ERROR("[HcclCommDestroy] comm is not exist, comm=%p, group=%s, deviceLogicId=%d", comm, group.c_str(), deviceLogicId);
         return HCCL_E_PARA;
     }
+    ProfilingManagerPub::ClearStoragedProfilingInfo();
 
     HcclUs endut = TIME_NOW();
 
@@ -2361,7 +2422,12 @@ HcclResult HcclGetRankId(HcclComm comm, uint32_t *rank)
 HcclResult HcclAlltoAll(const void *sendBuf, uint64_t sendCount, HcclDataType sendType, const void *recvBuf,
     uint64_t recvCount, HcclDataType recvType, HcclComm comm, aclrtStream stream)
 {
-    HcclSetIfProfile();
+    std::string captureInfo;
+    bool isCapture;
+    CHK_PRT(GetCaptureInfo(stream, captureInfo, isCapture));
+    if (!isCapture) {
+        HcclSetIfProfile();
+    }
     HcclUs startut = TIME_NOW();
     uint64_t beginTime = hrtMsprofSysCycleTime();
     s32 deviceLogicId = 0;
@@ -2412,8 +2478,6 @@ HcclResult HcclAlltoAll(const void *sendBuf, uint64_t sendCount, HcclDataType se
         hcclComm->GetIdentifier(), HcclReduceOp::HCCL_REDUCE_RESERVED);
     HCCL_PROFILER_ADD_GROUPRANK(hcclComm->GetIdentifier(), rankSize, localRank);
 
-    std::string captureInfo;
-    CHK_PRT(GetCaptureInfo(std::string(__func__), stream, captureInfo));
     // 接口交互信息日志
     char stackLogBuffer[LOG_TMPBUF_SIZE];
     s32 ret = snprintf_s(stackLogBuffer, LOG_TMPBUF_SIZE, LOG_TMPBUF_SIZE - 1U,
@@ -2457,7 +2521,12 @@ HcclResult HcclAlltoAllV(const void *sendBuf, const void *sendCounts, const void
                          const void *recvBuf, const void *recvCounts, const void *rdispls, HcclDataType recvType,
                          HcclComm comm, aclrtStream stream)
 {
-    HcclSetIfProfile();
+    std::string captureInfo;
+    bool isCapture;
+    CHK_PRT(GetCaptureInfo(stream, captureInfo, isCapture));
+    if (!isCapture) {
+        HcclSetIfProfile();
+    }
     HcclUs startut = TIME_NOW();
     uint64_t beginTime = hrtMsprofSysCycleTime();
     s32 deviceLogicId = 0;
@@ -2506,8 +2575,6 @@ HcclResult HcclAlltoAllV(const void *sendBuf, const void *sendCounts, const void
         HcclReduceOp::HCCL_REDUCE_RESERVED);
     HCCL_PROFILER_ADD_GROUPRANK(hcclComm->GetIdentifier(), rankSize, localRank);
 
-    std::string captureInfo;
-    CHK_PRT(GetCaptureInfo(std::string(__func__), stream, captureInfo));
     /* 接口交互信息日志 */
     char stackLogBuffer[LOG_TMPBUF_SIZE];
     s32 ret = snprintf_s(stackLogBuffer, LOG_TMPBUF_SIZE, LOG_TMPBUF_SIZE - 1U,
@@ -2567,7 +2634,12 @@ HcclResult HcclAlltoAllVC(const void *sendBuf, const void *sendCountMatrix,
     HcclDataType sendType, const void *recvBuf, HcclDataType recvType,
     HcclComm comm, rtStream_t stream)
 {
-    HcclSetIfProfile();
+    std::string captureInfo;
+    bool isCapture;
+    CHK_PRT(GetCaptureInfo(stream, captureInfo, isCapture));
+    if (!isCapture) {
+        HcclSetIfProfile();
+    }
     HcclUs startut = TIME_NOW();
     uint64_t beginTime = hrtMsprofSysCycleTime();
     s32 deviceLogicId = 0;
@@ -2608,8 +2680,6 @@ HcclResult HcclAlltoAllVC(const void *sendBuf, const void *sendCountMatrix,
     u64 sendCountMatrixHash;
     HcomGetHashFromSendCountMatrix(sendCountMatrixHash, sendCountMatrix, rankSize, tag);
 
-    std::string captureInfo;
-    CHK_PRT(GetCaptureInfo(std::string(__func__), stream, captureInfo));
     /* 接口交互信息日志 */
     char stackLogBuffer[LOG_TMPBUF_SIZE];
     s32 ret = snprintf_s(stackLogBuffer, LOG_TMPBUF_SIZE, LOG_TMPBUF_SIZE - 1U,
@@ -2667,7 +2737,12 @@ HcclResult HcclAlltoAllVC(const void *sendBuf, const void *sendCountMatrix,
 HcclResult HcclReduce(void *sendBuf, void *recvBuf, uint64_t count, HcclDataType dataType, HcclReduceOp op,
                       uint32_t root, HcclComm comm, aclrtStream stream)
 {
-    HcclSetIfProfile();
+    std::string captureInfo;
+    bool isCapture;
+    CHK_PRT(GetCaptureInfo(stream, captureInfo, isCapture));
+    if (!isCapture) {
+        HcclSetIfProfile();
+    }
     HcclUs startut = TIME_NOW();
     uint64_t beginTime = hrtMsprofSysCycleTime();
     s32 deviceLogicId = 0;
@@ -2703,8 +2778,6 @@ HcclResult HcclReduce(void *sendBuf, void *recvBuf, uint64_t count, HcclDataType
     s32 streamId = 0;
     CHK_RET_AND_PRINT_IDE(hrtGetStreamId(stream, streamId), tag.c_str());
 
-    std::string captureInfo;
-    CHK_PRT(GetCaptureInfo(std::string(__func__), stream, captureInfo));
     /* 接口交互信息日志 */
     char stackLogBuffer[LOG_TMPBUF_SIZE];
     s32 ret = snprintf_s(stackLogBuffer, LOG_TMPBUF_SIZE, LOG_TMPBUF_SIZE - 1U,
@@ -2743,6 +2816,7 @@ HcclResult ReduceLoop(const std::string &tag, void *inputPtr, void *outputPtr, c
     HcclDataType dataType, HcclReduceOp op, const u32 root, hccl::hcclComm *hcclComm, rtStream_t stream)
 {
     HcclSetIfProfile();
+    
     void *commInputPtr = nullptr;
     void *commOutputPtr = nullptr;
     u64 commInputSize, commOutputSize;
@@ -3219,12 +3293,13 @@ HcclResult HcclCreateComResourceByComm(HcclComm comm, u32 streamMode, bool isOpb
 
     // 同通信域同算子复用tag
     hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
-    u32 serverNum = hcclComm->GetServerNum();
+    u32 moduleNum = hcclComm->GetModuleNum();
     // mc2算子更改tag 
     DevType devType;
     CHK_RET(hrtGetDeviceType(devType));
     string tag = "CreatecomResource_" + hcclComm->GetIdentifier();
-    if (isMC2 && devType == DevType::DEV_TYPE_910B && serverNum > 1) {
+    if (isMC2 && devType == DevType::DEV_TYPE_910B && 
+        (moduleNum > HCCL_DEVICE_NUM_ONE)) {
         tag += HCCL_MC2_MULTISERVER_SUFFIX;
     }
     char stackLogBuffer[LOG_TMPBUF_SIZE];
@@ -3353,7 +3428,12 @@ HcclResult HcclGetAicpuOpStreamAndNotify(HcclComm comm, rtStream_t* opstream, u8
 HcclResult HcclBatchSendRecv(HcclSendRecvItem* sendRecvInfo, uint32_t itemNum, HcclComm comm, aclrtStream stream)
 {
     HcclUs startut = TIME_NOW();
-    HcclSetIfProfile();
+    std::string captureInfo;
+    bool isCapture;
+    CHK_PRT(GetCaptureInfo(stream, captureInfo, isCapture));
+    if (!isCapture) {
+        HcclSetIfProfile();
+    }
     uint64_t beginTime = hrtMsprofSysCycleTime();
     s32 deviceLogicId = 0;
     CHK_RET(hrtGetDeviceRefresh(&deviceLogicId));
@@ -3377,8 +3457,6 @@ HcclResult HcclBatchSendRecv(HcclSendRecvItem* sendRecvInfo, uint32_t itemNum, H
     u32 rankId = INVALID_VALUE_RANKID;
     CHK_RET_AND_PRINT_IDE(hcclComm->GetGroupRank(rankId), tag.c_str());
 
-    std::string captureInfo;
-    CHK_PRT(GetCaptureInfo(std::string(__func__), stream, captureInfo));
     /* 记录接口交互信息日志 */
     char stackLogBuffer[LOG_TMPBUF_SIZE];
     s32 ret = snprintf_s(stackLogBuffer, LOG_TMPBUF_SIZE, LOG_TMPBUF_SIZE - 1U,
@@ -3419,7 +3497,9 @@ HcclResult HcclBatchSendRecv(HcclSendRecvItem* sendRecvInfo, uint32_t itemNum, H
     HCCL_PROFILER_DEL_GROUPRANK(hcclComm->GetIdentifier());
     CHK_RET(CallMsprofReportHostApi(hcclComm, HcclCMDType::HCCL_CMD_BATCH_SEND_RECV, beginTime, sendRecvInfo->count,
         sendRecvInfo->dataType, tag));
-    ResetIfProfile();
+    if (!isCapture) {
+        HcclResetIfProfile();
+    }
     HcclUs endut = TIME_NOW();
     /* 关键状态记录 */
     std::string endInfo = "HcclBatchSendRecv:success,take time: " +

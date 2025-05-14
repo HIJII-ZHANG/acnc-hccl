@@ -16,10 +16,12 @@
 namespace hccl {
 class ScatterMesh : public AlgTemplateBase {
 public:
-    explicit ScatterMesh(const HcclDispatcher dispatcher,
-                         const u32 interRank, const u32 interRankSize);
+    explicit ScatterMesh(const HcclDispatcher dispatcher);
 
     ~ScatterMesh() override;
+
+    // should be called soon after template ScatterMesh instance created
+    HcclResult Prepare(u32 interRank, u32 interRankSize) override;
 
     HcclResult RunAsync(const u32 rank, const u32 rankSize,
                                    const std::vector<std::shared_ptr<Transport> > &links) override;

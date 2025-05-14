@@ -107,11 +107,11 @@ HcclResult CollAllGatherVMeshOpbaseExecutor::KernelRun(const OpParam &param, Exe
     HcomCollOpInfo opInfo = {"", execMem.inputPtr, execMem.outputPtr, execMem.count, dataType,
         param.root, param.reduceType};
     
-    std::unique_ptr<AlgTemplateBase> tempAlg;
-    tempAlg.reset(new (std::nothrow) AllgatherMeshDirect(
-                        dispatcher_, algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
-                        level0CommInfo.localRank, level0CommInfo.localRankSize, topoAttr_.userRank, &opInfo));
+    std::unique_ptr<AlgTemplateBase> tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_ALL_GATHER_MESH_DIRECT, dispatcher_);
     CHK_SMART_PTR_NULL(tempAlg);
+    CHK_RET(tempAlg->Prepare(algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
+        topoAttr_.userRank, &opInfo, level0CommInfo.localRank, level0CommInfo.localRankSize));
 
     CHK_RET(tempAlg->Prepare(curOutputMem, curOutputMem, execMem.inputMem, execMem.count,
         dataType, param.stream, HCCL_REDUCE_RESERVED, LEVEL0_BRIDGE_RANK_ID, outputSlices, baseOffset));

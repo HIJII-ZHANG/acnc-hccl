@@ -126,11 +126,13 @@ HcclResult CollReduceRingPlusHdExecutor::KernelRun(const OpParam &param, ExecMem
 
     std::unique_ptr<AlgTemplateBase> level1TempAlg;
     if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
-        level1TempAlg.reset(new (std::nothrow) ReduceRing(dispatcher_, reduceAttr));
+        level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_REDUCE_RING, dispatcher_);
     } else {
-        level1TempAlg.reset(new (std::nothrow) ReduceRecursiveHalvingDoubling(dispatcher_, reduceAttr));
+        level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_REDUCE_RECURSIVE_HALVING_DOUBLING, 
+            dispatcher_);
     }
     CHK_SMART_PTR_NULL(level1TempAlg);
+    CHK_RET(level1TempAlg->Prepare(reduceAttr));
 
     u32 subUserrankRoot = topoMatcher_->GetSubRootUserRank(topoAttr_.userRank, param.root);
     CHK_PRT_RET(subUserrankRoot == INVALID_VALUE_RANKID,

@@ -16,10 +16,15 @@
 namespace hccl {
 class ReduceScatterMeshDirect : public AlgTemplateBase {
 public:
-    explicit ReduceScatterMeshDirect(const HcclDispatcher dispatcher, const u64 reduceAttrBitMap,
-        std::vector<Stream> &meshStreams, const std::vector<std::shared_ptr<LocalNotify>> &meshSignal,
-        const std::vector<std::shared_ptr<LocalNotify>> &meshSignalAux, u32 userRank, HcomCollOpInfo *opInfo = nullptr);
+    explicit ReduceScatterMeshDirect(const HcclDispatcher dispatcher);
     ~ReduceScatterMeshDirect() override;
+    HcclResult Prepare(DeviceMem &inputMem, DeviceMem &outputMem, DeviceMem &scratchMem, const u64 count,
+        const HcclDataType dataType, const Stream &stream, const HcclReduceOp reductionOp, 
+        const u32 root, const std::vector<Slice> &slices, const u64 baseOffset, 
+        const u64 reduceAttrBitMap, std::vector<Stream> &meshStreams, 
+        std::vector<std::shared_ptr<LocalNotify>> &meshSignal, 
+        std::vector<std::shared_ptr<LocalNotify>> &meshSignalAux, 
+        u32 userRank, const HcomCollOpInfo *opInfo = nullptr) override;
     HcclResult RunAsync(const u32 rank, const u32 rankSize, const std::vector<LINK> &links) override;
 
 private:
@@ -28,15 +33,15 @@ private:
     HcclResult MainWaitSub();
     HcclResult SubRecordMain();
 
-    const u64 reduceAttr_;
-    u32 localRank_;
-    u32 localRankSize_;
-    u32 userRank_;
+    u64 reduceAttr_ = 0;
+    u32 localRank_ = 0;
+    u32 localRankSize_ = 0;
+    u32 userRank_ = 0;
     std::vector<Stream> meshStreams_;         /* * 多steam* */
-    const std::vector<std::shared_ptr<LocalNotify>> &meshSignal_;    /* 每个ring创建一个signal */
-    const std::vector<std::shared_ptr<LocalNotify>> &meshSignalAux_; /* 从stream wait，主steam record */
+    const std::vector<std::shared_ptr<LocalNotify>> *meshSignalPtr_{nullptr};    /* 每个ring创建一个signal */
+    const std::vector<std::shared_ptr<LocalNotify>> *meshSignalAuxPtr_{nullptr}; /* 从stream wait，主steam record */
     std::vector<Slice> scratchSlices_;
-    HcomCollOpInfo *opInfo_;
+    const HcomCollOpInfo *opInfo_{nullptr};
 };
 } // namespace hccl
 

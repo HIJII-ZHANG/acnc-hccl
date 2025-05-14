@@ -9,6 +9,7 @@
  */
 
 #include "scatter_ring.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 ScatterRing::ScatterRing(const HcclDispatcher dispatcher)
@@ -421,4 +422,5 @@ HcclResult ScatterRing::ScatterSlicesPrep(u32 rankSize, u32 nicSize)
     }
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_SCATTER_RING, ScatterRing);
 }  // namespace hccl

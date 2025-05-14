@@ -9,6 +9,7 @@
  */
 
 #include "coll_reduce_scatter_ring_executor.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 
@@ -42,9 +43,9 @@ HcclResult CollReduceScatterRingExecutor::CalcScratchMemSize(u64& scratchMemSize
 {
     if (scratchMemFlag_) {
         if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-            scratchMemSize = inCCLbufferSize_ + CCE_REDUCE_ALIGN_FACTOR * CCE_REDUCE_ALIGN_SIZE;
+            scratchMemSize = inCCLbufferSize_;
         } else {
-            scratchMemSize = totalSize_ + CCE_REDUCE_ALIGN_FACTOR * CCE_REDUCE_ALIGN_SIZE;
+            scratchMemSize = totalSize_;
         }
     } else {
         scratchMemSize = 0U;
@@ -179,9 +180,11 @@ HcclResult CollReduceScatterRingExecutor::KernelRun(const OpParam &param, ExecMe
             std::unique_ptr<AlgTemplateBase> level1TempAlg;
 
             if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
-                level1TempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
+                level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_REDUCESCATTER_RING, dispatcher_);
                 HCCL_INFO("reducescatter ring: using ring algo inter-server.");
                 CHK_SMART_PTR_NULL(level1TempAlg);
+                CHK_RET(level1TempAlg->Prepare(reduceAttr));
 
                 u64 ringSize = execMem.inputMem.size() / level1RankSize;
                 u64 ringCount = ringSize / perDataSize;
@@ -190,9 +193,11 @@ HcclResult CollReduceScatterRingExecutor::KernelRun(const OpParam &param, ExecMe
                     param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID,
                     std::vector<Slice>(0)));
             } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
-                level1TempAlg.reset(new (std::nothrow) ReduceScatterNHR(dispatcher_, reduceAttr));
+                level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_REDUCESCATTER_NHR, dispatcher_);
                 HCCL_INFO("reducescatter ring: using nhr algo inter-server.");
                 CHK_SMART_PTR_NULL(level1TempAlg);
+                CHK_RET(level1TempAlg->Prepare(reduceAttr, false));
 
                 u64 ringSize = execMem.inputMem.size() / level1RankSize;
                 u64 ringCount = ringSize / perDataSize;
@@ -200,9 +205,11 @@ HcclResult CollReduceScatterRingExecutor::KernelRun(const OpParam &param, ExecMe
                     param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID,
                     std::vector<Slice>(0)));
             } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
-                level1TempAlg.reset(new (std::nothrow) ReduceScatterNHRV1(dispatcher_, reduceAttr));
+                level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_REDUCESCATTER_NHR_V1, dispatcher_);
                 HCCL_INFO("reducescatter ring: using nhr_v1 algo inter-server.");
                 CHK_SMART_PTR_NULL(level1TempAlg);
+                CHK_RET(level1TempAlg->Prepare(reduceAttr));
 
                 u64 ringSize = execMem.inputMem.size() / level1RankSize;
                 u64 ringCount = ringSize / perDataSize;
@@ -210,9 +217,11 @@ HcclResult CollReduceScatterRingExecutor::KernelRun(const OpParam &param, ExecMe
                     param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID,
                     std::vector<Slice>(0)));
             } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
-                level1TempAlg.reset(new (std::nothrow) ReduceScatterNB(dispatcher_, reduceAttr));
+                level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_REDUCESCATTER_NB, dispatcher_);
                 HCCL_INFO("reducescatter ring: using nonuniform-bruck algo inter-server.");
                 CHK_SMART_PTR_NULL(level1TempAlg);
+                CHK_RET(level1TempAlg->Prepare(reduceAttr));
 
                 u64 ringSize = execMem.inputMem.size() / level1RankSize;
                 u64 ringCount = ringSize / perDataSize;
@@ -220,10 +229,12 @@ HcclResult CollReduceScatterRingExecutor::KernelRun(const OpParam &param, ExecMe
                     param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID,
                     std::vector<Slice>(0)));
             } else {
-                level1TempAlg.reset(new (std::nothrow) ReduceScatterRecursiveHalvingDoubling(dispatcher_, reduceAttr));
+                level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_REDUCESCATTER_RECURSIVE_HD, dispatcher_);
                 HCCL_INFO("reducescatter ring: using halving-doubling algo inter-server.");
 
                 CHK_SMART_PTR_NULL(level1TempAlg);
+                CHK_RET(level1TempAlg->Prepare(reduceAttr));
                 u64 inputDataCount = execMem.inputMem.size() / perDataSize; // count是output的数据个数
                 CHK_RET(level1TempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, inputDataCount,
                     param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID,

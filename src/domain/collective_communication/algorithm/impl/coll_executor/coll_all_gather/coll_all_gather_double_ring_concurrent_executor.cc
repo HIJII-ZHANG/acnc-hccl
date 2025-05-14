@@ -214,10 +214,12 @@ HcclResult CollAllGatherDoubleRingConcurrentExecutor::KernelRun(const OpParam &p
                 SubCommInfo level1TempCommInfo = level1MultSlice[planeIndex].first ? level1CommInfo : level1RdmaCommInfo;
                 std::unique_ptr<AlgTemplateBase> level1Executor;
                 if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
-                    level1Executor.reset(new (std::nothrow) AllGatherNB(dispatcher_));
+                    level1Executor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                        TemplateType::TEMPLATE_ALL_GATHER_NB, dispatcher_);
                     HCCL_INFO("allgather ring: using nonuniform-bruck algo inter-server.");
                 } else {
-                    level1Executor.reset(new (std::nothrow) AllGatherRing(dispatcher_));
+                    level1Executor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                        TemplateType::TEMPLATE_ALL_GATHER_RING, dispatcher_);
                     HCCL_INFO("allgather ring: using ring algo inter-server.");
                 }
                 CHK_SMART_PTR_NULL(level1Executor);

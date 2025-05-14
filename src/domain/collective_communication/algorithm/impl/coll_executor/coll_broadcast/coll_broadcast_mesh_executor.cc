@@ -69,9 +69,9 @@ HcclResult CollBroadcastMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
     u32 commIndex = level0CommInfo.localRank;
     CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
 
-    level0TempAlg1.reset(
-        new (std::nothrow) ScatterMesh(dispatcher_, level0CommInfo.localRank, level0CommInfo.localRankSize));
+    level0TempAlg1 = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_SCATTER_MESH, dispatcher_);
     CHK_SMART_PTR_NULL(level0TempAlg1);
+    CHK_RET(level0TempAlg1->Prepare(level0CommInfo.localRank, level0CommInfo.localRankSize));
     level0TempAlg1->CloseBarrier();
 
     /* 内层topo:all_reduce */
@@ -89,9 +89,11 @@ HcclResult CollBroadcastMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
         HCCL_DEBUG("broadcast mesh: curSize[%llu] deviceNumPerAggregation[%u] commLevel0Size[%u]",
             curSize, topoAttr_.deviceNumPerAggregation, level0CommInfo.localRankSize);
         if (curSize / topoAttr_.deviceNumPerAggregation <= NHR_BCAST_SMALL_SIZE) {
-            level1TempAlg.reset(new (std::nothrow) BroadcastNHROneshot(dispatcher_));
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_NHR_ONESHOT, dispatcher_);
         } else {
-            level1TempAlg.reset(new (std::nothrow) BroadcastNHR(dispatcher_));
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_NHR, dispatcher_);
         }
         HCCL_INFO("broadcast mesh: using nhr algo inter-server.");
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
@@ -103,30 +105,31 @@ HcclResult CollBroadcastMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
         const u32 level1RankSize = level1CommInfo.localRankSize;
         if (ShouldUseBinaryBroadcastOfNB(curSize / topoAttr_.deviceNumPerAggregation, level1RankSize,
                 topoAttr_.userRankSize, topoAttr_.deviceNumPerAggregation)) {
-            level1TempAlg.reset(new (std::nothrow) BroadcastNBBinary(dispatcher_));
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_NB_BINARY, dispatcher_);
         } else {
-            level1TempAlg.reset(new (std::nothrow) BroadcastNB(dispatcher_));
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_NB, dispatcher_);
         }
         HCCL_INFO("broadcast mesh: using nonuniform-bruck algo inter-server.");
     } else {
-        level1TempAlg.reset(new (std::nothrow) BcastRecursiveHalvingDoubling(dispatcher_));
+        level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_BROADCAST_RECURSIVE_HD, dispatcher_);
         HCCL_INFO("broadcast mesh: using Recursive halving-doubling algo inter-server.");
     }
     CHK_SMART_PTR_NULL(level1TempAlg);
 
     /* 外层topo:all_gather */
     if (topoAttr_.deviceType == DevType::DEV_TYPE_910B) {
-        level0TempAlg2.reset(
-            new (std::nothrow) AllGatherMeshAtomic(dispatcher_, algResResp_->slaveStreams,
-            algResResp_->notifiesMain, algResResp_->notifiesAux, level0CommInfo.localRank, level0CommInfo.localRankSize,
-            topoAttr_.userRank));
+        level0TempAlg2 = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_ALL_GATHER_MESH_ATOMIC, dispatcher_);
     } else {
-        level0TempAlg2.reset(
-            new (std::nothrow) AllGatherMesh(dispatcher_, algResResp_->slaveStreams, algResResp_->notifiesMain,
-            algResResp_->notifiesAux, level0CommInfo.localRank, level0CommInfo.localRankSize,
-            topoAttr_.userRank));
+        level0TempAlg2 = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_ALL_GATHER_MESH, dispatcher_);
     }
     CHK_SMART_PTR_NULL(level0TempAlg2);
+    CHK_RET(level0TempAlg2->Prepare(algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
+        topoAttr_.userRank, nullptr, level0CommInfo.localRank, level0CommInfo.localRankSize));
 
     /* 节点内执行器 stage0 */
     u32 rootRank = 0;

@@ -60,7 +60,7 @@ typedef enum {
     HCCL_REDUCE_PROD = 1,   /**< prod */
     HCCL_REDUCE_MAX = 2,    /**< max */
     HCCL_REDUCE_MIN = 3,    /**< min */
-    HCCL_REDUCE_RESERVED    /**< reserved */
+    HCCL_REDUCE_RESERVED = 255 /**< reserved */
 } HcclReduceOp;
 
 /**
@@ -77,10 +77,13 @@ typedef enum {
     HCCL_DATA_TYPE_UINT8 = 7,    /**< uint8 */
     HCCL_DATA_TYPE_UINT16 = 8,   /**< uint16 */
     HCCL_DATA_TYPE_UINT32 = 9,   /**< uint32 */
-    HCCL_DATA_TYPE_FP64 = 10, /**< fp64 */
+    HCCL_DATA_TYPE_FP64 = 10,    /**< fp64 */
     HCCL_DATA_TYPE_BFP16 = 11,    /**< bfp16 */
     HCCL_DATA_TYPE_INT128 = 12,   /**< int128 */
-    HCCL_DATA_TYPE_RESERVED     /**< reserved */
+    HCCL_DATA_TYPE_HIF8 = 13,     /**< hif8 */
+    HCCL_DATA_TYPE_FP8E4M3 = 14,  /**< fp8e4m3 */
+    HCCL_DATA_TYPE_FP8E5M2 = 15,  /**< fp8e5m2 */
+    HCCL_DATA_TYPE_RESERVED = 255 /**< reserved */
 } HcclDataType;
 
 typedef enum {

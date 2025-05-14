@@ -11,34 +11,36 @@
 #include "alltoallv_staged_pairwise.h"
 #include "externalinput_pub.h"
 #include "log.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 using namespace std;
 
-AlltoAllVStagedPairwise::AlltoAllVStagedPairwise(const HcclDispatcher dispatcher, Stream &stream)
-    : AlltoAllVStagedBase(dispatcher, stream)
-{}
+AlltoAllVStagedPairwise::AlltoAllVStagedPairwise(const HcclDispatcher dispatcher)
+    : AlltoAllVStagedBase(dispatcher)
+{
+}
 
 AlltoAllVStagedPairwise::~AlltoAllVStagedPairwise() {}
 
 // 图模式Prepare入口
 HcclResult AlltoAllVStagedPairwise::Prepare(DeviceMem &sendMem, DeviceMem &recvMem,
     StageAlltoAllVAddrInfo &sendAddrInfo, StageAlltoAllVAddrInfo &recvAddrInfo,
-    bool isAlltoAllZCopyMode, const std::vector<Stream> &subStreams)
+    bool isAlltoAllZCopyMode, Stream &mainStream)
 {
     DeviceMem scratchInputMem = DeviceMem();
     DeviceMem scratchOutputMem = DeviceMem();
-    CHK_RET(Prepare(sendMem, recvMem, scratchInputMem, scratchOutputMem, sendAddrInfo, recvAddrInfo,
-        isAlltoAllZCopyMode));
-    return HCCL_SUCCESS;
+    return AlltoAllVStagedPairwise::Prepare(sendMem, recvMem, scratchInputMem, scratchOutputMem,
+        sendAddrInfo, recvAddrInfo, isAlltoAllZCopyMode, mainStream);
 }
 
 // 单算子Prepare入口
 HcclResult AlltoAllVStagedPairwise::Prepare(DeviceMem &sendMem, DeviceMem &recvMem, DeviceMem &scratchInputMem,
     DeviceMem &scratchOutputMem, StageAlltoAllVAddrInfo &sendAddrInfo, StageAlltoAllVAddrInfo &recvAddrInfo,
-    bool isAlltoAllZCopyMode, const std::vector<Stream> &subStreams)
+    bool isAlltoAllZCopyMode, Stream &mainStream)
 {
-    isAlltoAllZCopyMode_ = isAlltoAllZCopyMode;
+    CHK_RET(AlltoAllVStagedBase::Prepare(sendMem, recvMem, sendAddrInfo, recvAddrInfo,
+        isAlltoAllZCopyMode, mainStream));
     if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE &&
         !isAlltoAllZCopyMode_) {
         CHK_PRT_RET((scratchInputMem.size() != scratchOutputMem.size()),
@@ -54,10 +56,6 @@ HcclResult AlltoAllVStagedPairwise::Prepare(DeviceMem &sendMem, DeviceMem &recvM
         scratchOutputMem_ = scratchOutputMem;
         scratchMemSize_ = scratchInputMem.size();
     }
-    sendMem_ = sendMem;
-    recvMem_ = recvMem;
-    sendAddrInfo_ = sendAddrInfo;
-    recvAddrInfo_ = recvAddrInfo;
 
     HCCL_DEBUG("[AlltoAllVStagedPairwise][Prepare] finished");
     return HCCL_SUCCESS;
@@ -67,7 +65,7 @@ HcclResult AlltoAllVStagedPairwise::RunAsync(const u32 rank, const u32 rankSize,
 {
     HCCL_INFO("[AlltoAllVStagedPairwise][RunAsync]: rank[%u] transportSize[%llu]", rank, links.size());
     CHK_SMART_PTR_NULL(dispatcher_);
-    CHK_PTR_NULL(mainStream_.ptr());
+    CHK_PTR_NULL(mainStreamPtr_);
 
     CHK_PRT_RET(rankSize == 0, HCCL_ERROR("[AlltoAllVStagedPairwise][Prepare] invilad rankSize[%u]", rankSize),
         HCCL_E_PARA);
@@ -110,8 +108,8 @@ HcclResult AlltoAllVStagedPairwise::RunZCopyAlltoAll(const u32 rank, const u32 r
         HCCL_DEBUG("[AlltoAllVStagedPairwise][RunZCopyAlltoAll]: prevRank[%u] nextRank[%u], step[%u]", prevRank,
             nextRank, i);
 
-        CHK_RET(prevTransport->TxAck(mainStream_)); // transport sync record
-        CHK_RET(nextTransport->RxAck(mainStream_)); // transport sync wait
+        CHK_RET(prevTransport->TxAck(*mainStreamPtr_)); // transport sync record
+        CHK_RET(nextTransport->RxAck(*mainStreamPtr_)); // transport sync wait
 
         u32 sendDataNum = sendAddrInfo_[nextRank].size();
         vector<TxMemoryInfo> txMems(sendDataNum);
@@ -134,8 +132,8 @@ HcclResult AlltoAllVStagedPairwise::RunZCopyAlltoAll(const u32 rank, const u32 r
             rxMems[index].len = addrInfo.localLength;
             index++;
         }
-        CHK_RET(nextTransport->TxAsync(txMems, mainStream_)); // send payload + data notify
-        CHK_RET(prevTransport->RxAsync(rxMems, mainStream_)); // wait data notify
+        CHK_RET(nextTransport->TxAsync(txMems, *mainStreamPtr_)); // send payload + data notify
+        CHK_RET(prevTransport->RxAsync(rxMems, *mainStreamPtr_)); // wait data notify
         CHK_RET(ExecuteBarrier(prevTransport, nextTransport));
     }
 
@@ -274,10 +272,10 @@ HcclResult AlltoAllVStagedPairwise::SendRecv(const u64 curSendTime,
     bool hasSend = curSendTime < sendPolicies.size();
     bool hasRecv = curRecvTime < recvPolicies.size();
     if (hasRecv) {
-        CHK_RET(prevTransport->TxAck(mainStream_)); // transport sync record
+        CHK_RET(prevTransport->TxAck(*mainStreamPtr_)); // transport sync record
     }
     if (hasSend) {
-        CHK_RET(nextTransport->RxAck(mainStream_)); // transport sync wait
+        CHK_RET(nextTransport->RxAck(*mainStreamPtr_)); // transport sync wait
     }
     if (hasSend) {
         // 1、把对应内存块从sendbuf copy到CCLInputBuf
@@ -285,12 +283,12 @@ HcclResult AlltoAllVStagedPairwise::SendRecv(const u64 curSendTime,
         for (auto &addrInfo : sendPolicies[curSendTime]) {
             DeviceMem dstMem = scratchInputMem_.range(curCCLInputBufOffset, addrInfo.localLength);
             DeviceMem srcMem = sendMem_.range(addrInfo.localOffset, addrInfo.localLength);
-            CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dstMem, srcMem, mainStream_));
+            CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dstMem, srcMem, *mainStreamPtr_));
             curCCLInputBufOffset += addrInfo.localLength;
         }
         // 2、send CCLInputBuf to CCLOutPutBuf + record
         CHK_RET(nextTransport->TxAsync(UserMemType::OUTPUT_MEM, 0, scratchInputMem_.ptr(),
-            curCCLInputBufOffset, mainStream_));
+            curCCLInputBufOffset, *mainStreamPtr_));
     }
 
     if (hasRecv) {
@@ -300,13 +298,13 @@ HcclResult AlltoAllVStagedPairwise::SendRecv(const u64 curSendTime,
             recvBytes += addrInfo.localLength;
         }
         // wait
-        CHK_RET(prevTransport->RxAsync(UserMemType::INPUT_MEM, 0, scratchOutputMem_.ptr(), recvBytes, mainStream_));
+        CHK_RET(prevTransport->RxAsync(UserMemType::INPUT_MEM, 0, scratchOutputMem_.ptr(), recvBytes, *mainStreamPtr_));
         // 4、把对应内存块从CCLOutputBuf copy到recvBuf
         u64 curCCLOutputBufOffset = 0;
         for (auto &addrInfo : recvPolicies[curRecvTime]) {
             DeviceMem srcMem = scratchOutputMem_.range(curCCLOutputBufOffset, addrInfo.localLength);
             DeviceMem dstMem = recvMem_.range(addrInfo.localOffset, addrInfo.localLength);
-            CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dstMem, srcMem, mainStream_));
+            CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dstMem, srcMem, *mainStreamPtr_));
             curCCLOutputBufOffset += addrInfo.localLength;
         }
     }
@@ -335,17 +333,17 @@ HcclResult AlltoAllVStagedPairwise::ExecuteBarrier(std::shared_ptr<Transport> pr
     std::shared_ptr<Transport> aftLink)
 {
     // 同步与preLink保证数据收发已结束
-    CHK_RET(preLink->TxAck(mainStream_)); // record
+    CHK_RET(preLink->TxAck(*mainStreamPtr_)); // record
 
-    CHK_RET(aftLink->RxAck(mainStream_)); // wait
+    CHK_RET(aftLink->RxAck(*mainStreamPtr_)); // wait
 
     // 同步与aftLink保证数据收发已结束
-    CHK_RET(aftLink->TxDataSignal(mainStream_)); // record
+    CHK_RET(aftLink->TxDataSignal(*mainStreamPtr_)); // record
 
-    CHK_RET(preLink->RxDataSignal(mainStream_)); // wait
+    CHK_RET(preLink->RxDataSignal(*mainStreamPtr_)); // wait
 
-    CHK_RET(preLink->RxWaitDone(mainStream_));
-    CHK_RET(aftLink->TxWaitDone(mainStream_));
+    CHK_RET(preLink->RxWaitDone(*mainStreamPtr_));
+    CHK_RET(aftLink->TxWaitDone(*mainStreamPtr_));
 
     return HCCL_SUCCESS;
 }
@@ -355,28 +353,29 @@ HcclResult AlltoAllVStagedPairwise::ExecuteBarrier(bool hasSend, bool hasRecv,
 {
     // 同步与preLink保证数据收发已结束
     if (hasRecv) {
-        CHK_RET(preLink->TxAck(mainStream_)); // record
+        CHK_RET(preLink->TxAck(*mainStreamPtr_)); // record
     }
     if (hasSend) {
-        CHK_RET(aftLink->RxAck(mainStream_)); // wait
+        CHK_RET(aftLink->RxAck(*mainStreamPtr_)); // wait
     }
 
     // 同步与aftLink保证数据收发已结束
     if (hasSend) {
-        CHK_RET(aftLink->TxDataSignal(mainStream_)); // record
+        CHK_RET(aftLink->TxDataSignal(*mainStreamPtr_)); // record
     }
     if (hasRecv) {
-        CHK_RET(preLink->RxDataSignal(mainStream_)); // wait
+        CHK_RET(preLink->RxDataSignal(*mainStreamPtr_)); // wait
     }
 
     if (hasRecv) {
-        CHK_RET(preLink->RxWaitDone(mainStream_));
+        CHK_RET(preLink->RxWaitDone(*mainStreamPtr_));
     }
 
     if (hasSend) {
-        CHK_RET(aftLink->TxWaitDone(mainStream_));
+        CHK_RET(aftLink->TxWaitDone(*mainStreamPtr_));
     }
 
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_ALL_2_ALL_V_STAGED_PAIRWISE, AlltoAllVStagedPairwise);
 } // namespace hccl

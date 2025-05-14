@@ -155,13 +155,16 @@ HcclResult CollReduceRingFor91093Executor::KernelRun(const OpParam &param, ExecM
         u64 reduceAttr = GetReduceAttr(reduceInput, reduceOutput, param.DataDes.dataType, param.reduceType);
         std::unique_ptr<AlgTemplateBase> level1TempAlg;
         if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
-            level1TempAlg.reset(new (std::nothrow) ReduceRing(dispatcher_, reduceAttr));
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_REDUCE_RING, 
+                dispatcher_);
             HCCL_INFO("[CollReduceRingFor91093Executor]reduce: using ring algo inter-server.");
         } else {
-            level1TempAlg.reset(new (std::nothrow) ReduceRecursiveHalvingDoubling(dispatcher_, reduceAttr));
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_REDUCE_RECURSIVE_HALVING_DOUBLING, 
+                dispatcher_);
             HCCL_INFO("[CollReduceRingFor91093Executor]reduce: using halving-doubling algo inter-server.");
         }
         CHK_SMART_PTR_NULL(level1TempAlg);
+        CHK_RET(level1TempAlg->Prepare(reduceAttr));
         
         u32 rankSize = level1CommInfo.localRankSize;
         u32 subUserrankRoot = topoMatcher_->GetSubRootUserRank(topoAttr_.userRank, param.root);
@@ -196,8 +199,10 @@ HcclResult CollReduceRingFor91093Executor::KernelRun(const OpParam &param, ExecM
                 param.DataDes.dataType, param.reduceType);
             std::unique_ptr<AlgTemplateBase> level1RSTempAlg;
             if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
-                level1RSTempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
+                level1RSTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_REDUCESCATTER_RING, 
+                    dispatcher_);
                 CHK_SMART_PTR_NULL(level1RSTempAlg);
+                CHK_RET(level1RSTempAlg->Prepare(reduceAttr));
                 HCCL_INFO("[CollReduceRingFor91093Executor] reducescatter: using ring algo inter-server");
             } else {
                 HCCL_ERROR("[CollReduceRingFor91093Executor][superpod]reducescatter: algType_[%u] is not supported.", 
@@ -235,13 +240,15 @@ HcclResult CollReduceRingFor91093Executor::KernelRun(const OpParam &param, ExecM
         u64 reduceAttr = GetReduceAttr(reduceInput, reduceOutput, param.DataDes.dataType, param.reduceType);
         std::unique_ptr<AlgTemplateBase> level1RTempAlg;
         if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_RING) {
-            level1RTempAlg.reset(new (std::nothrow) ReduceRing(dispatcher_, reduceAttr));
+            level1RTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_REDUCE_RING, dispatcher_);
             HCCL_INFO("[CollReduceRingFor91093Executor][superpod]reduce: using ring algo inter-server.");
         } else {
-            level1RTempAlg.reset(new (std::nothrow) ReduceRecursiveHalvingDoubling(dispatcher_, reduceAttr));
+            level1RTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_REDUCE_RECURSIVE_HALVING_DOUBLING, 
+                dispatcher_);
             HCCL_INFO("[CollReduceRingFor91093Executor][superpod]reduce: using halving-doubling algo inter-server.");
         }
         CHK_SMART_PTR_NULL(level1RTempAlg);
+        CHK_RET(level1RTempAlg->Prepare(reduceAttr));
         u64 arCount = dataSegsSlice[localRank].size  / perDataSize;
         
         CHK_RET(level1RTempAlg->Prepare(
@@ -263,7 +270,8 @@ HcclResult CollReduceRingFor91093Executor::KernelRun(const OpParam &param, ExecM
             std::unique_ptr<AlgTemplateBase> level1GTempAlg;
             DeviceMem gatherInput = execMem.outputMem.range(level1Offset, hdSize);
             DeviceMem gatherOutput = execMem.outputMem.range(level1Offset, hdSize);
-            level1GTempAlg.reset(new (std::nothrow) GatherRing(dispatcher_));
+            level1GTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_GATHER_RING, 
+                dispatcher_);
             HCCL_INFO("[CollReduceRingFor91093Executor]gather ring: using ring algo inter-server.");
             
             CHK_SMART_PTR_NULL(level1GTempAlg);

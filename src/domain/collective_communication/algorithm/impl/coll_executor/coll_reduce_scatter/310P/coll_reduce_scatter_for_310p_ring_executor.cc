@@ -65,9 +65,10 @@ HcclResult CollReduceScatterFor310PRingExecutor::KernelRun(const OpParam &param,
         SalSetBitOne(reduceAttr, ATTR_POS_INLINE_REDUCE);
     }
 
-    std::unique_ptr<AlgTemplateBase> tempAlg;
-    tempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr));
+    std::unique_ptr<AlgTemplateBase> tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_REDUCESCATTER_RING, dispatcher_);
     CHK_SMART_PTR_NULL(tempAlg);
+    CHK_RET(tempAlg->Prepare(reduceAttr));
 
     CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.outputMem, execMem.count,
         param.DataDes.dataType, param.stream, param.reduceType));

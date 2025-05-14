@@ -18,14 +18,21 @@
 namespace hccl {
 class AlignedReduceScatterDoubleRing : public AlgTemplateBase {
 public:
-    explicit AlignedReduceScatterDoubleRing(const HcclDispatcher dispatcher,
-                                               const u64 reduceAttrBitMap, const HcomCollOpInfo *opInfo,
-                                               const u32 userRank, std::vector<Stream> &subStreams,
-                                               const std::vector<std::shared_ptr<LocalNotify>> &mainSignals,
-                                               const std::vector<std::shared_ptr<LocalNotify>> &subSignals,
-                                               const std::vector<std::vector<u32>> &ringsOrders,
-                                               const std::vector<std::vector<Slice>> &userMemInputSlicesOfDoubleRing);
+    explicit AlignedReduceScatterDoubleRing(const HcclDispatcher dispatcher);
     ~AlignedReduceScatterDoubleRing() override;
+
+    HcclResult Prepare(DeviceMem &inputMem, DeviceMem &outputMem, DeviceMem &scratchMem, 
+        const u64 count, const HcclDataType dataType, const Stream &stream, 
+        const std::vector<std::vector<Slice>> &multRingsSlices,
+        const HcclReduceOp reductionOp, const u32 root, const u64 baseOffset, 
+        const bool disableDMAReduce, const u64 reduceAttrBitMap, 
+        const HcomCollOpInfo *opInfo, const u32 userRank, 
+        std::vector<Stream> &subStreams,
+        const std::vector<std::shared_ptr<LocalNotify>> &mainSignals,
+        const std::vector<std::shared_ptr<LocalNotify>> &subSignals, 
+        const std::vector<std::vector<u32>> &ringsOrders,
+        const std::vector<std::vector<Slice>> &userMemInputSlicesOfDoubleRing) override;
+
     virtual HcclResult RunAsync(const u32 rank, const u32 rankSize, const std::vector<LINK> &links) override;
 
 protected:
@@ -91,16 +98,16 @@ protected:
     std::unique_ptr<Sender>  senderInfo_;
     std::unique_ptr<Reducer> reducerInfo_;
 
-    const u64                                 reduceAttr_; /* 0x1:表示data_type + reduce_type支持inlinereduce  */
-    const HcomCollOpInfo                     *opInfo_;
-    const u32                                 userRank_;
+    u64                                 reduceAttr_; /* 0x1:表示data_type + reduce_type支持inlinereduce  */
+    const HcomCollOpInfo                     *opInfo_{nullptr};
+    u32                                 userRank_;
     std::vector<Stream>                       subStreams_;
     std::vector<std::shared_ptr<LocalNotify>> mainSignals_;
     std::vector<std::shared_ptr<LocalNotify>> subSignals_;
-    const std::vector<u32>                    ringsOrder_;
-    const std::vector<std::vector<u32>>       ringsOrders_;
-    const std::vector<Slice>                  userMemInputSlices_;
-    const std::vector<std::vector<Slice>>     userMemInputSlicesOfDoubleRing_;
+    std::vector<u32>                    ringsOrder_;
+    std::vector<std::vector<u32>>       ringsOrders_;
+    std::vector<Slice>                  userMemInputSlices_;
+    std::vector<std::vector<Slice>>     userMemInputSlicesOfDoubleRing_;
     u64                                       lastStepOffset_;
     std::vector<u64>                          lastStepOffsets_;
 };

@@ -137,10 +137,12 @@ HcclResult CollAllGatherMixExecutor::KernelRun(const OpParam &param, ExecMem &ex
     //  第一步，AI server间all gather
     std::unique_ptr<AlgTemplateBase> level1Executor;
     if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
-        level1Executor.reset(new (std::nothrow) AllGatherRing(dispatcher_));
+        level1Executor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_ALL_GATHER_RING, dispatcher_);
         HCCL_INFO("[CollAllGatherMixExecutor][KernelRun]allgather mix: using ring algo inter-server.");
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
-        level1Executor.reset(new (std::nothrow) AllGatherNHR(dispatcher_));
+        level1Executor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_ALL_GATHER_NHR, dispatcher_);
         HCCL_INFO("[CollAllGatherMixExecutor][KernelRun]allgather mix: using nhr algo inter-server.");
     } else {
         HCCL_ERROR("[CollAllGatherMixExecutor][KernelRun]allgather mix: algType_[%u] is not supported.", algType_.algoLevel1);
@@ -207,11 +209,11 @@ HcclResult CollAllGatherMixExecutor::KernelRun(const OpParam &param, ExecMem &ex
     } else if (topoAttr_.deviceType == DevType::DEV_TYPE_910B) {
         CHK_RET(ActiveSlaveStreams(param.stream));
 
-        std::unique_ptr<AlgTemplateBase> level0Executor;
-        level0Executor.reset(new (std::nothrow) AllgatherMeshMix(dispatcher_, algResResp_->slaveStreams,
-            algResResp_->notifiesMain, algResResp_->notifiesAux, serverIndex, level1RankSize, opInfoPtr));
-    
+        std::unique_ptr<AlgTemplateBase> level0Executor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_ALL_GATHER_MESH_MIX, dispatcher_);
         CHK_SMART_PTR_NULL(level0Executor);
+        CHK_RET(level0Executor->Prepare(algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
+            0, opInfoPtr, serverIndex, level1RankSize));
         std::vector<Slice> emptySlices;
         CHK_RET(level0Executor->Prepare(execMem.outputMem, execMem.outputMem, execMem.inputMem,
             execMem.count, param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED,

@@ -70,7 +70,7 @@ HcclResult AllGatherVOperator::SelectAlgfor910B(const OpParam& param, std::strin
 
     if (dataSize > AIV_ALL_GATHER_SMALL_SIZE) {
         isBigData = true;
-    }
+    } 
 
     if (!isSingleMeshAggregation_) {
         HCCL_ERROR("[AllGatherVOperator][SelectAlgfor910B] AllGatherV only support one module");
@@ -81,9 +81,9 @@ HcclResult AllGatherVOperator::SelectAlgfor910B(const OpParam& param, std::strin
                      IsSupportAIVCopy(param.VDataDes.dataType) && dataSize <= AIV_BIG_SIZE;
     if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
         if (isAivMode) {
-            if (isBigData) {
+            if (isBigData){
                 algName = "AllGatherVMeshAivExecutor";
-            } else {
+            }else{
                 algName = "AllGatherVMeshAivSmallCountExecutor";
             }
         } else {

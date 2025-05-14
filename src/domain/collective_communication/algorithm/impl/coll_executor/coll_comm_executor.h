@@ -14,6 +14,9 @@
 #include "coll_native_executor_base.h"
 #include "coll_alg_exec_registry.h"
 #include "profiler_base_pub.h"
+#include "send_receive_pub.h"
+#include "alg_template_register.h"
+#include "alltoallv_staged_calculator_pub.h"
 
 namespace hccl {
 class CollCommExecutor : public CollNativeExecutorBase {

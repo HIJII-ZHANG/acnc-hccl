@@ -35,7 +35,7 @@ void CollReduceScatterDeterExecutor::ParseParam(const OpParam& param)
 HcclResult CollReduceScatterDeterExecutor::CalcScratchMemSize(u64& scratchMemSize)
 {
     if (scratchMemFlag_) { // 确定性计算只有图模式需要scratch memory
-        scratchMemSize = totalSize_ + CCE_REDUCE_ALIGN_FACTOR * CCE_REDUCE_ALIGN_SIZE;
+        scratchMemSize = totalSize_;
     } else {
         scratchMemSize = 0U;
     }
@@ -178,17 +178,18 @@ HcclResult CollReduceScatterDeterExecutor::KernelRun(const OpParam &param, ExecM
         (topoAttr_.deviceType == DevType::DEV_TYPE_910B);
 
     if (isLocalReduce91073 || isLocalReduce910B) {
-        level0TempAlg.reset(new (std::nothrow) ReduceScatterLocalReduce(dispatcher_, reduceAttr,
-            algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
-            topoAttr_.userRank, &opInfo));
+        level0TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_REDUCESCATTER_LOCAL_REDUCE, dispatcher_);
     } else {
-        level0TempAlg.reset(new (std::nothrow) ReduceScatterHDStage(dispatcher_, reduceAttr, algResResp_->slaveStreams,
-            algResResp_->notifiesMain, algResResp_->notifiesAux, topoAttr_.userRank, &opInfo));
+        level0TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_REDUCESCATTER_HDSTAGE, dispatcher_);
     }
 
     CHK_SMART_PTR_NULL(level0TempAlg);
     CHK_RET(level0TempAlg->Prepare(execMem.inputMem, execMem.scratchMem, execMem.outputMem, execMem.count,
-        param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID, dataSegsSlice, 0));
+        param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID, dataSegsSlice, 0,
+        reduceAttr, algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
+        topoAttr_.userRank, &opInfo));
 
     CHK_RET(level0TempAlg->RegisterProfiler(
         (level0CommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level0CommInfo.localRank,

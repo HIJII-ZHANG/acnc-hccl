@@ -18,10 +18,10 @@
 namespace hccl {
 class ReduceScatterRecursiveHalvingDoubling : public RecursiveHalvingDoublingBase {
 public:
-    explicit ReduceScatterRecursiveHalvingDoubling(const HcclDispatcher dispatcher,
-        const u64 reduceAttrBitMap);
+    explicit ReduceScatterRecursiveHalvingDoubling(const HcclDispatcher dispatcher);
     ~ReduceScatterRecursiveHalvingDoubling() override;
 
+    HcclResult Prepare(u64 reduceAttrBitMap, HcomCollOpInfo *opInfo = nullptr) override;
     HcclResult RunAsync(
         const u32 rank, const u32 rankSize, const std::vector<std::shared_ptr<Transport> > &links) override;
 
@@ -35,7 +35,7 @@ private:
 
     HcclResult ScatterInPartOne(u32 rank, u32 rankSize, const std::vector<LINK> &links);
 
-    const u64 reduceAttr;
+    u64 reduceAttr = 0;
 
     std::unique_ptr<Sender> senderInfo_;
     std::unique_ptr<Reducer> reducerInfo_;

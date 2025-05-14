@@ -10,22 +10,27 @@
 
 #include "all_gather_mesh.h"
 #include "externalinput_pub.h"
+#include "alg_template_register.h"
 
 namespace hccl {
-AllGatherMesh::AllGatherMesh(const HcclDispatcher dispatcher, std::vector<Stream> &meshStreams,
-    const std::vector<std::shared_ptr<LocalNotify>> &meshSignal,
-    const std::vector<std::shared_ptr<LocalNotify>> &meshSignalAux, u32 interRank,
-    u32 interRankSize, u32 userRank)
-    : AlgTemplateBase(dispatcher),
-      meshStreams_(meshStreams),
-      meshSignal_(meshSignal),
-      meshSignalAux_(meshSignalAux),
-      interRank_(interRank),
-      interRankSize_(interRankSize),
-      userRank_(userRank)
+AllGatherMesh::AllGatherMesh(const HcclDispatcher dispatcher)
+    : AlgTemplateBase(dispatcher)
 {}
 
 AllGatherMesh::~AllGatherMesh() {}
+
+HcclResult AllGatherMesh::Prepare(std::vector<Stream> &meshStreams,
+    std::vector<std::shared_ptr<LocalNotify>> &meshSignal, std::vector<std::shared_ptr<LocalNotify>> &meshSignalAux,
+    u32 userRank, HcomCollOpInfo *opInfo, u32 interRank, u32 interRankSize)
+{
+    meshStreams_ = meshStreams;
+    meshSignal_ = &meshSignal;
+    meshSignalAux_ = &meshSignalAux;
+    interRank_ = interRank;
+    interRankSize_ = interRankSize;
+    userRank_ = userRank;
+    return HCCL_SUCCESS;
+}
 
 HcclResult AllGatherMesh::Tx(const LINK &link, const Slice &txSlice, const Slice &dstSlice, Stream stream)
 {
@@ -164,11 +169,11 @@ HcclResult AllGatherMesh::RunAsync(const u32 rank, const u32 rankSize, const std
         return HCCL_E_INTERNAL;
     }
     u32 subStreamSize = interRankSize_ - 2; // 子流大小等于ranksize-2
-    if (meshStreams_.size() < subStreamSize || meshSignal_.size() < subStreamSize ||
-        meshSignalAux_.size() < subStreamSize) {
+    if (meshStreams_.size() < subStreamSize || (*meshSignal_).size() < subStreamSize ||
+        (*meshSignalAux_).size() < subStreamSize) {
         HCCL_ERROR("[AllGatherMesh][RunAsync]AllGatherMesh stream size error: "
             "rank[%u] totalrank:%u substreamsize[%llu] signalsize[%llu], signal_aux size[%llu]",
-            rank, rankSize, meshStreams_.size(), meshSignal_.size(), meshSignalAux_.size());
+            rank, rankSize, meshStreams_.size(), (*meshSignal_).size(), (*meshSignalAux_).size());
         return HCCL_E_PARA;
     }
 
@@ -217,13 +222,13 @@ HcclResult AllGatherMesh::RunAsync(const u32 rank, const u32 rankSize, const std
 
     for (u32 streamIndex = 0; streamIndex < rankSize - 2; streamIndex++) { // rankSize-2: stream num
         HCCL_DEBUG("rank[%u] streamindex[%u] wait signalaux[%p]",
-            rank, streamIndex, meshSignalAux_[streamIndex]->ptr());
-        CHK_RET(LocalNotify::Wait(meshStreams_[streamIndex], dispatcher_, meshSignalAux_[streamIndex],
+            rank, streamIndex, (*meshSignalAux_)[streamIndex]->ptr());
+        CHK_RET(LocalNotify::Wait(meshStreams_[streamIndex], dispatcher_, (*meshSignalAux_)[streamIndex],
             profilerInput_.stage));
 
         HCCL_DEBUG("rank[%u] siganl_aux index[%u] signal record signalaux[%p]", rank, streamIndex,
-            meshSignalAux_[streamIndex]->ptr());
-        CHK_RET(LocalNotify::Post(stream_, dispatcher_, meshSignalAux_[streamIndex],
+            (*meshSignalAux_)[streamIndex]->ptr());
+        CHK_RET(LocalNotify::Post(stream_, dispatcher_, (*meshSignalAux_)[streamIndex],
             profilerInput_.stage));
     }
     if (GetExternalInputHcclHighPerfEnable() != 0) {
@@ -234,11 +239,11 @@ HcclResult AllGatherMesh::RunAsync(const u32 rank, const u32 rankSize, const std
 
     for (u32 streamIndex = 0; streamIndex < rankSize - 2; streamIndex++) { // rankSize - 2 stream num
         HCCL_DEBUG("rank[%u] streamindex[%u] wait signal[%p] ",
-            rank, streamIndex, meshSignal_[streamIndex]->ptr());
-        CHK_RET(LocalNotify::Wait(stream_, dispatcher_, meshSignal_[streamIndex], profilerInput_.stage));
+            rank, streamIndex, (*meshSignal_)[streamIndex]->ptr());
+        CHK_RET(LocalNotify::Wait(stream_, dispatcher_, (*meshSignal_)[streamIndex], profilerInput_.stage));
 
         HCCL_DEBUG("rank[%u] streamindex[%u] record signal[%p]", rank, streamIndex, meshStreams_[streamIndex].ptr());
-        CHK_RET(LocalNotify::Post(meshStreams_[streamIndex], dispatcher_, meshSignal_[streamIndex],
+        CHK_RET(LocalNotify::Post(meshStreams_[streamIndex], dispatcher_, (*meshSignal_)[streamIndex],
             profilerInput_.stage));
     }
 
@@ -246,4 +251,5 @@ HcclResult AllGatherMesh::RunAsync(const u32 rank, const u32 rankSize, const std
     HCCL_INFO("AllGatherMesh finished: rank[%u]", rank);
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_ALL_GATHER_MESH, AllGatherMesh);
 } // namespace hccl

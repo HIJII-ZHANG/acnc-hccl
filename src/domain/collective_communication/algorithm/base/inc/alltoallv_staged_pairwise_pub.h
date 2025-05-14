@@ -16,15 +16,15 @@
 namespace hccl {
 class AlltoAllVStagedPairwise : public AlltoAllVStagedBase {
 public:
-    explicit AlltoAllVStagedPairwise(const HcclDispatcher dispatcher, Stream &stream);
+    using AlgTemplateBase::Prepare;
+    explicit AlltoAllVStagedPairwise(const HcclDispatcher dispatcher);
 
     ~AlltoAllVStagedPairwise() override;
     HcclResult Prepare(DeviceMem &sendMem, DeviceMem &recvMem, StageAlltoAllVAddrInfo &sendAddrInfo,
-        StageAlltoAllVAddrInfo &recvAddrInfo, bool isAlltoAllZCopyMode,
-        const std::vector<Stream> &subStreams = std::vector<Stream>()) override;
+        StageAlltoAllVAddrInfo &recvAddrInfo, bool isAlltoAllZCopyMode, Stream &mainStream) override;
     HcclResult Prepare(DeviceMem &sendMem, DeviceMem &recvMem, DeviceMem &scratchInputMem,
         DeviceMem &scratchOutputMem, StageAlltoAllVAddrInfo &sendAddrInfo, StageAlltoAllVAddrInfo &recvAddrInfo,
-        bool isAlltoAllZCopyMode = false, const std::vector<Stream> &subStreams = std::vector<Stream>()) override;
+        bool isAlltoAllZCopyMode, Stream &mainStream) override;
     HcclResult RunAsync(const u32 rank, const u32 rankSize, const std::vector<LINK> &links) override;
 
 protected:

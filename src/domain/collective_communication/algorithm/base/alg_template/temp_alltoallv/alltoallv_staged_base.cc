@@ -14,8 +14,24 @@
 namespace hccl {
 using namespace std;
 
-AlltoAllVStagedBase::AlltoAllVStagedBase(const HcclDispatcher dispatcher, Stream &stream)
-    : dispatcher_(dispatcher), mainStream_(stream) {}
+AlltoAllVStagedBase::AlltoAllVStagedBase(const HcclDispatcher dispatcher)
+    : AlgTemplateBase(dispatcher)
+{
+}
+
+AlltoAllVStagedBase::~AlltoAllVStagedBase() {}
+
+HcclResult AlltoAllVStagedBase::Prepare(DeviceMem &sendMem, DeviceMem &recvMem, StageAlltoAllVAddrInfo& sendAddrInfo,
+    StageAlltoAllVAddrInfo& recvAddrInfo, bool isAlltoAllZCopyMode, Stream &mainStream)
+{
+    sendMem_ = sendMem;
+    recvMem_ = recvMem;
+    sendAddrInfo_ = sendAddrInfo;
+    recvAddrInfo_ = recvAddrInfo;
+    isAlltoAllZCopyMode_ = isAlltoAllZCopyMode;
+    mainStreamPtr_ = &mainStream;
+    return HCCL_SUCCESS;
+}
 
 HcclResult AlltoAllVStagedBase::LocalCopy(u32 rank)
 {
@@ -35,7 +51,7 @@ HcclResult AlltoAllVStagedBase::LocalCopy(u32 rank)
         HCCL_DEBUG(
             "[AlltoAllVStagedPairwise][LocalCopy]: Rank[%u] destAddr[%p], destMax[%llu], srcAddr[%p], size[%llu]", rank,
             dstAddr, destMax, srcAddr, size);
-        CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dst, src, mainStream_));
+        CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dst, src, *mainStreamPtr_));
     }
 
     return HCCL_SUCCESS;

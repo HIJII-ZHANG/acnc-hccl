@@ -96,25 +96,36 @@ HcclResult ThreadManage::ExecuteService()
 
     std::unique_ptr<AlgTemplateBase> tempAlg;
     if (executorType_ == ExecutorType::REDUCE_SCATTER_RING) {
-        tempAlg.reset(new (std::nothrow) ReduceScatterRing(dispatcher_, reduceAttr_));
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_REDUCESCATTER_RING, dispatcher_);
+        CHK_SMART_PTR_NULL(tempAlg);
+        CHK_RET(tempAlg->Prepare(reduceAttr_));
     } else if (executorType_ == ExecutorType::ALLGATHER_RING) {
-        tempAlg.reset(new (std::nothrow) AllGatherRing(dispatcher_));
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_GATHER_RING, dispatcher_);
     } else if (executorType_ == ExecutorType::REDUCE_SCATTER_RING_DIRECT) {
-        tempAlg.reset(new (std::nothrow) ReduceScatterRingConcurrentDirect(
-            dispatcher_, reduceAttr_, opInfo_, userRank_, subStreamsInOneRing_, mainSignalsInOneRing_,
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_REDUCESCATTER_RING_DIRECT, dispatcher_);
+        CHK_SMART_PTR_NULL(tempAlg);
+        CHK_RET(tempAlg->Prepare(reduceAttr_, opInfo_, userRank_, subStreamsInOneRing_, mainSignalsInOneRing_,
             subSignalsInOneRing_, ringsOrder_, userMemInputSlices_));
     } else if (executorType_ == ExecutorType::REDUCE_SCATTER_RING_DIRECT_RDMA) {
-        tempAlg.reset(new (std::nothrow) ReduceScatterRingConcurrentDirect(
-            dispatcher_, reduceAttr_, opInfo_, userRank_, subStreamsInOneRing_, mainSignalsInOneRing_,
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_REDUCESCATTER_RING_DIRECT, dispatcher_);
+        CHK_SMART_PTR_NULL(tempAlg);
+        CHK_RET(tempAlg->Prepare(reduceAttr_, opInfo_, userRank_, subStreamsInOneRing_, mainSignalsInOneRing_,
             subSignalsInOneRing_, ringsOrder_, userMemInputSlices_, false));
     } else if (executorType_ == ExecutorType::ALLGATHER_RING_DIRECT) {
-        tempAlg.reset(new (std::nothrow) AllGatherRingConcurrentDirect(
-            dispatcher_, opInfo_, userRank_, subStreamsInOneRing_, mainSignalsInOneRing_,
-            subSignalsInOneRing_, ringsOrder_, userMemInputSlices_));
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_ALL_GATHER_RING_CONCURRENT_DIRECT, dispatcher_);
+        CHK_SMART_PTR_NULL(tempAlg);
+        CHK_RET(tempAlg->Prepare(const_cast<HcomCollOpInfo*>(opInfo_), userRank_, subStreamsInOneRing_,
+            mainSignalsInOneRing_, subSignalsInOneRing_, ringsOrder_, userMemInputSlices_));
     } else if (executorType_ == ExecutorType::ALLGATHER_RING_DIRECT_RDMA) {
-        tempAlg.reset(new (std::nothrow) AllGatherRingConcurrentDirect(
-            dispatcher_, opInfo_, userRank_, subStreamsInOneRing_, mainSignalsInOneRing_,
-            subSignalsInOneRing_, ringsOrder_, userMemInputSlices_, false));
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_ALL_GATHER_RING_CONCURRENT_DIRECT, dispatcher_);
+        CHK_SMART_PTR_NULL(tempAlg);
+        CHK_RET(tempAlg->Prepare(const_cast<HcomCollOpInfo*>(opInfo_), userRank_, subStreamsInOneRing_, mainSignalsInOneRing_, subSignalsInOneRing_,
+            ringsOrder_, userMemInputSlices_, false));
     }
     CHK_SMART_PTR_NULL(tempAlg);
 

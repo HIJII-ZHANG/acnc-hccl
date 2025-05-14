@@ -9,6 +9,7 @@
  */
 
 #include "coll_reduce_scatter_v_mesh_executor.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 
@@ -104,15 +105,14 @@ HcclResult CollReduceScatterVMeshExecutor::KernelRun(const OpParam &param, ExecM
     }
 
     u64 reduceAttr = GetReduceAttr(execMem.inputMem, execMem.outputMem, dataType, param.reduceType);
-    std::unique_ptr<AlgTemplateBase> tempAlg;
-    tempAlg.reset(
-        new (std::nothrow) ReduceScatterMeshAtomic(dispatcher_, reduceAttr,
-        algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
-        topoAttr_.userRank));
+    std::unique_ptr<AlgTemplateBase> tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_REDUCESCATTER_MESH_ATOMIC, dispatcher_);
     CHK_SMART_PTR_NULL(tempAlg);
 
     CHK_RET(tempAlg->Prepare(execMem.inputMem, execMem.outputMem, execMem.scratchMem, execMem.count, dataType,
-        param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID, inputSlices, 0));
+        param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID, inputSlices, 0, reduceAttr,
+        algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
+        topoAttr_.userRank));
 
     CHK_RET(tempAlg->RegisterProfiler(
         (subCommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + subCommInfo.localRank,

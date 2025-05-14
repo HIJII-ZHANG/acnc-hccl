@@ -126,7 +126,7 @@ HcclResult CollAllGatherMeshAivSmallCountExecutor::KernelRun(const OpParam &para
         HcclCMDType::HCCL_CMD_ALLGATHER, execMem.inputPtr, execMem.outputPtr, execMem.count,
         param.DataDes.dataType, param.reduceType, 0, isOpbase
     };
-    AivTopoArgs topoArgs { localRank, localRankSize, MAX_RANK_SIZE, 0, 1, topoAttr_.deviceType };
+    AivTopoArgs topoArgs { localRank, localRankSize, MAX_RANK_SIZE, 0, 1, topoAttr_.deviceType};
     AivResourceArgs resourceArgs { param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size() };
     AivAlgArgs algArgs {};
     struct AivProfilingInfo aivProfilingInfo;

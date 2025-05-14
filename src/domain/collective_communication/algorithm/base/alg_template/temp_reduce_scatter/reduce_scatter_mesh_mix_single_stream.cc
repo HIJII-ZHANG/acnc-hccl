@@ -9,17 +9,23 @@
  */
 
 #include "reduce_scatter_mesh_mix_single_stream.h"
+#include "alg_template_register.h"
 
 namespace hccl {
-ReduceScatterMeshMixSingleStream::ReduceScatterMeshMixSingleStream(const HcclDispatcher dispatcher,
-    const u64 reduceAttrBitMap, const u32 streamIndex)
-    : AlgTemplateBase(dispatcher), reduceAttr_(reduceAttrBitMap),
-      streamIndex_(streamIndex)
+ReduceScatterMeshMixSingleStream::ReduceScatterMeshMixSingleStream(const HcclDispatcher dispatcher)
+    : AlgTemplateBase(dispatcher), reduceAttr_(0), streamIndex_(0)
 {
 }
 
 ReduceScatterMeshMixSingleStream::~ReduceScatterMeshMixSingleStream()
 {
+}
+
+HcclResult ReduceScatterMeshMixSingleStream::Prepare(u64 reduceAttrBitMap, u32 streamIndex)
+{
+    reduceAttr_ = reduceAttrBitMap;
+    streamIndex_ = streamIndex;
+    return HCCL_SUCCESS;
 }
 
 HcclResult ReduceScatterMeshMixSingleStream::RunSourceReducer(const LINK &link, const std::vector<Slice> &txSlices,
@@ -188,4 +194,5 @@ HcclResult ReduceScatterMeshMixSingleStream::RunAsync(const u32 rank, const u32 
     HCCL_INFO("ReduceScatterMeshMixSingleStream finished: rank[%u]", rank);
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_REDUCESCATTER_MESH_MIX_SS, ReduceScatterMeshMixSingleStream);
 }  // namespace hccl

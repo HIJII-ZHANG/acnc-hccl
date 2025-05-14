@@ -14,53 +14,26 @@
 #include "alg_template_base_pub.h"
 
 namespace hccl {
-struct AlltoAllVBufferInfo {
-    DeviceMem mem;
-    u64* counts = nullptr;
-    u64* displs = nullptr;
-    HcclDataType dataType = HCCL_DATA_TYPE_RESERVED;
 
-    AlltoAllVBufferInfo& operator=(const AlltoAllVBufferInfo& that) noexcept
-    {
-        if (&that != this) {
-            mem = that.mem;
-            counts = that.counts;
-            displs = that.displs;
-            dataType = that.dataType;
-        }
-        return *this;
-    }
-
-    AlltoAllVBufferInfo& operator=(const AlltoAllVBufferInfo&& that) noexcept
-    {
-        if (&that != this) {
-            mem = that.mem;
-            counts = that.counts;
-            displs = that.displs;
-            dataType = that.dataType;
-        }
-        return *this;
-    }
-};
-
-class AlltoAllVPairWise {
+class AlltoAllVPairWise : public AlgTemplateBase{
 public:
-    explicit AlltoAllVPairWise(const HcclDispatcher dispatcher,
-        const std::map<u32, std::vector<u64>> &rankSendDisplsMap = {},
-        const std::map<u32, std::vector<u64>> &rankRecvDisplsMap = {},
-        HcclWorkflowMode workMode = HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
+    explicit AlltoAllVPairWise(const HcclDispatcher dispatcher);
 
     virtual ~AlltoAllVPairWise();
 
     /* 图模式使用该prepare */
     HcclResult Prepare(AlltoAllVBufferInfo& sendBuffer, AlltoAllVBufferInfo& recvBuffer,
-                       bool isAlltoAllZCopyMode, const Stream &stream);
+        bool isAlltoAllZCopyMode, const Stream &stream, HcclWorkflowMode workMode, 
+        std::map<u32, std::vector<u64>> &rankSendDisplsMap, 
+        std::map<u32, std::vector<u64>> &rankRecvDisplsMap) override;
 
     /* 单算子使用该prepare */
     HcclResult Prepare(AlltoAllVBufferInfo& sendBuffer, AlltoAllVBufferInfo& recvBuffer,
-                       DeviceMem& scratchInputMem, DeviceMem& scratchOutputMem,
-                       bool isAlltoAllZCopyMode, const Stream &stream);
-    HcclResult RunAsync(const u32 rank, const u32 rankSize, const std::vector<LINK> &links);
+        DeviceMem& scratchInputMem, DeviceMem& scratchOutputMem,
+        bool isAlltoAllZCopyMode, const Stream &stream, HcclWorkflowMode workMode, 
+        std::map<u32, std::vector<u64>> &rankSendDisplsMap, 
+        std::map<u32, std::vector<u64>> &rankRecvDisplsMap) override;
+    HcclResult RunAsync(const u32 rank, const u32 rankSize, const std::vector<LINK> &links) override;
 
 protected:
 private:
@@ -78,7 +51,6 @@ private:
     HcclResult SendRecv(TxMemoryInfo txMemoryInfo, RxMemoryInfo rxMemoryInfo,
         std::shared_ptr<Transport> prevTransport, std::shared_ptr<Transport> nextTransport);
 
-    const HcclDispatcher dispatcher_;
     AlltoAllVBufferInfo sendBuffer_;
     AlltoAllVBufferInfo recvBuffer_;
     // 约束： scratchInputMem scratchOutputMem 用于transport中转，
@@ -89,8 +61,8 @@ private:
     u64 scratchMemSize_;
     u32 sendDataUnitBytes_;
     u32 recvDataUnitBytes_;
-    const std::map<u32, std::vector<u64>> &rankSendDisplsMap_;
-    const std::map<u32, std::vector<u64>> &rankRecvDisplsMap_;
+    const std::map<u32, std::vector<u64>> *rankSendDisplsMapPtr_{nullptr};
+    const std::map<u32, std::vector<u64>> *rankRecvDisplsMapPtr_{nullptr};
     HcclWorkflowMode workMode_;
     bool isAlltoAllZCopyMode_;
 };

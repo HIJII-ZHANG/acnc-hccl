@@ -70,8 +70,8 @@ HcclResult CollAllGatherSemiRingExecutor::DoubleRingMidCountAllGather(
     SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
 
     // 执行
-    std::unique_ptr<AllGatherUnifiedMarch> executor = nullptr;
-    executor.reset(new (std::nothrow) AllGatherUnifiedMarch(dispatcher_));
+    std::unique_ptr<AlgTemplateBase> executor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_ALL_GATHER_UNIFIED_MARCH, dispatcher_);
     CHK_SMART_PTR_NULL(executor);
 
     CHK_RET(executor->Prepare(stream, level0CommInfo, algResResp_->paramInputMem, algResResp_->paramOutputMem,

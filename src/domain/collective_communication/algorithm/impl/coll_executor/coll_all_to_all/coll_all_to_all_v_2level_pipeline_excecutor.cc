@@ -155,13 +155,13 @@ HcclResult CollRunAlltoAllVTwoLevelPipeline::KernelRun(const OpParam &param, Exe
 
     CHK_RET(AddSubStreamToProfiling());
 
-    std::unique_ptr<AlltoallPipelineBase> alltoallPipe = nullptr;
+    std::unique_ptr<AlgTemplateBase> alltoallPipe = nullptr;
     if (cclEnough) {
-        alltoallPipe.reset(new (std::nothrow)AlltoallPipelineMeshPairwiseCCLEnough(dispatcher_,
-            allMeshAggregationSendRecvInfo_, workflowMode_));
+        alltoallPipe = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_ALL_2_ALL_PIPELINE_MESH_PAIRWISE_CCL_ENOUGH, dispatcher_);
     } else {
-        alltoallPipe.reset(new (std::nothrow)AlltoallPipelineMeshPairwisePingPong(dispatcher_,
-            allMeshAggregationSendRecvInfo_, workflowMode_));
+        alltoallPipe = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_ALL_2_ALL_PIPELINE_MESH_PAIRWISE_PING_PONG, dispatcher_);
     }
 
     CHK_RET(CheckCommSize(COMM_MESH_L0, COMM_INDEX_0 + 1));
@@ -172,7 +172,7 @@ HcclResult CollRunAlltoAllVTwoLevelPipeline::KernelRun(const OpParam &param, Exe
     CHK_SMART_PTR_NULL(alltoallPipe);
     CHK_RET(alltoallPipe->Prepare(topoAttr_.userRank, a2aPipelineMemory, level0CommInfo, level1CommInfo,
         const_cast<Stream&>(param.stream), algResResp_->slaveStreams,
-        algResResp_->notifiesMain, algResResp_->notifiesAux));
+        algResResp_->notifiesMain, algResResp_->notifiesAux, allMeshAggregationSendRecvInfo_, workflowMode_));
     CHK_RET(alltoallPipe->RunAsync());
     HCCL_INFO("[CollRunAlltoAllVTwoLevelPipeline][kernelRun] alltoall two level pipeline exec end");
     return HCCL_SUCCESS;

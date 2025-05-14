@@ -9,6 +9,7 @@
  */
 
 #include "multi_root_scatter_ring.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 bool DscendSortWithSliceSendEnd(const SliceSendRange &a, const SliceSendRange &b)
@@ -343,4 +344,5 @@ HcclResult MultiRootScatterRing::MultiRootScatterSlicesPrep(u32 rankSize, u32 ni
 
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_MULTI_ROOT_SCATTER_RING, MultiRootScatterRing);
 }  // namespace hccl

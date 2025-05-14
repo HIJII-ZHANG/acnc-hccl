@@ -10,30 +10,41 @@
 
 #include "reduce_scatter_mesh_mix.h"
 #include "externalinput_pub.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 using namespace std;
 
-ReduceScatterMeshMix::ReduceScatterMeshMix(const HcclDispatcher dispatcher, const u64 reduceAttrBitMap,
-    std::vector<Stream> &meshStreams, const std::vector<std::shared_ptr<LocalNotify>> &meshSignal,
-    const std::vector<std::shared_ptr<LocalNotify>> &meshSignalAux,
-    u32 interRank, u32 interRankSize, HcomCollOpInfo *opInfo)
-    : AlgTemplateBase(dispatcher),
-      reduceAttr_(reduceAttrBitMap),
-      meshStreams_(meshStreams),
-      meshSignal_(meshSignal),
-      meshSignalAux_(meshSignalAux),
-      interRank_(interRank),
-      interRankSize_(interRankSize),
-      opInfo_(opInfo)
+ReduceScatterMeshMix::ReduceScatterMeshMix(const HcclDispatcher dispatcher)
+    : AlgTemplateBase(dispatcher)
 {}
 
 ReduceScatterMeshMix::~ReduceScatterMeshMix() {}
 
+HcclResult ReduceScatterMeshMix::Prepare(DeviceMem &inputMem, DeviceMem &outputMem, DeviceMem &scratchMem,
+                                         const u64 count, const HcclDataType dataType, const Stream &stream,
+                                         const HcclReduceOp reductionOp, const u32 root,
+                                         const std::vector<Slice> &slices, const u64 baseOffset,
+                                         const u64 reduceAttrBitMap, std::vector<Stream> &meshStreams,
+                                         const std::vector<std::shared_ptr<LocalNotify>> &meshSignal,
+                                         const std::vector<std::shared_ptr<LocalNotify>> &meshSignalAux,
+                                         u32 interRank, u32 interRankSize, HcomCollOpInfo *opInfo)
+{
+    reduceAttr_ = reduceAttrBitMap;
+    meshStreams_ = meshStreams;
+    meshSignalPtr_ = &meshSignal;
+    meshSignalAuxPtr_ = &meshSignalAux;
+    interRank_ = interRank;
+    interRankSize_ = interRankSize;
+    opInfo_ = opInfo;
+    return AlgTemplateBase::Prepare(inputMem, outputMem, scratchMem, count, dataType,
+        stream, reductionOp, root, slices, baseOffset);
+}
+
 HcclResult ReduceScatterMeshMix::MainRecordSub()
 {
-    for (u32 signalIndex = 0; signalIndex < meshSignalAux_.size(); signalIndex++) {
-        CHK_RET(LocalNotify::Post(stream_, dispatcher_, meshSignalAux_[signalIndex],
+    for (u32 signalIndex = 0; signalIndex < meshSignalAuxPtr_->size(); signalIndex++) {
+        CHK_RET(LocalNotify::Post(stream_, dispatcher_, (*meshSignalAuxPtr_)[signalIndex],
             profilerInput_.stage));
     }
     return HCCL_SUCCESS;
@@ -41,25 +52,25 @@ HcclResult ReduceScatterMeshMix::MainRecordSub()
 
 HcclResult ReduceScatterMeshMix::SubWaitMain()
 {
-    for (u32 streamIndex = 0; streamIndex < meshSignalAux_.size(); streamIndex++) {
+    for (u32 streamIndex = 0; streamIndex < meshSignalAuxPtr_->size(); streamIndex++) {
         CHK_RET(LocalNotify::Wait(meshStreams_[streamIndex], dispatcher_,
-            meshSignalAux_[streamIndex], profilerInput_.stage));
+            (*meshSignalAuxPtr_)[streamIndex], profilerInput_.stage));
     }
     return HCCL_SUCCESS;
 }
 
 HcclResult ReduceScatterMeshMix::MainWaitSub()
 {
-    for (u32 signalIndex = 0; signalIndex < meshSignal_.size(); signalIndex++) {
-        CHK_RET(LocalNotify::Wait(stream_, dispatcher_, meshSignal_[signalIndex], profilerInput_.stage));
+    for (u32 signalIndex = 0; signalIndex < meshSignalPtr_->size(); signalIndex++) {
+        CHK_RET(LocalNotify::Wait(stream_, dispatcher_, (*meshSignalPtr_)[signalIndex], profilerInput_.stage));
     }
     return HCCL_SUCCESS;
 }
 
 HcclResult ReduceScatterMeshMix::SubRecordMain()
 {
-    for (u32 streamIndex = 0; streamIndex < meshSignal_.size(); streamIndex++) {
-        CHK_RET(LocalNotify::Post(meshStreams_[streamIndex], dispatcher_, meshSignal_[streamIndex],
+    for (u32 streamIndex = 0; streamIndex < meshSignalPtr_->size(); streamIndex++) {
+        CHK_RET(LocalNotify::Post(meshStreams_[streamIndex], dispatcher_, (*meshSignalPtr_)[streamIndex],
             profilerInput_.stage));
     }
     return HCCL_SUCCESS;
@@ -138,4 +149,5 @@ HcclResult ReduceScatterMeshMix::RunAsync(const u32 rank, const u32 rankSize, co
     HCCL_INFO("ReduceScatterMeshMix finished: rank[%u]", rank);
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_REDUCESCATTER_MESH_MIX, ReduceScatterMeshMix);
 }

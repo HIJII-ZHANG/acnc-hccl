@@ -176,11 +176,11 @@ HcclResult BroadCastOperator::SelectAlgfor91093(const OpParam& param, std::strin
     bool smallCountOptimMultiServer =
         (deviceNumPerAggregation_ > HCCL_DEVICE_NUM_TWO) && (serverNum_ != 1) && (superPodNum_ == 1) &&
         (param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] <= HCCL_SMALL_COUNT_256_KB * userRankSize_);
-    if (multiModuleDiffDeviceNumMode_ || multiSuperPodDiffServerNumMode_ || smallCountOptimMultiServer) {
+    if (multiModuleDiffDeviceNumMode_ || multiSuperPodDiffServerNumMode_) {
         algName = "BroadCastComm";
-        if (smallCountOptimMultiServer) {
-            algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_NHR;
-        }
+    } else if (smallCountOptimMultiServer) {
+        algName = "BroadCastComm";
+        algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_NHR;
     } else if (smallCountOptimSingleServer) {
         algName = "BroadCastSmallCountExecutor";
     } else if (topoType_ == TopoType::TOPO_TYPE_NP_SINGLE_RING || topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) {

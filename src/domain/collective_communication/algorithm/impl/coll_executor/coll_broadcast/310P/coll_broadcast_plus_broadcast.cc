@@ -52,8 +52,8 @@ HcclResult CollBroadcastPlusBroadcast::KernelRun(const OpParam &param, ExecMem &
     if (!rootIsDevPhyZero) {
         u32 rootRank = 0;
         CHK_RET(GetRankByUserRank(COMM_LEVEL0, COMM_INDEX_0, param.root, rootRank));
-        std::unique_ptr<AlgTemplateBase> bCastRingInNode;
-        bCastRingInNode.reset(new (std::nothrow) BroadcastRing(dispatcher_));
+        std::unique_ptr<AlgTemplateBase> bCastRingInNode = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_BROADCAST_RING, dispatcher_);
         CHK_SMART_PTR_NULL(bCastRingInNode);
         CHK_RET(bCastRingInNode->Prepare(execMem.inputMem, execMem.outputMem, execMem.inputMem, execMem.count,
                                          param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, rootRank));
@@ -66,15 +66,18 @@ HcclResult CollBroadcastPlusBroadcast::KernelRun(const OpParam &param, ExecMem &
         SubCommInfo level1CommInfo = GetSubCommInfo(COMM_LEVEL1, COMM_INDEX_0);
         u64 curSize = execMem.count * SIZE_TABLE[param.DataDes.dataType];
         if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
-            broadcastTempAlg.reset(new (std::nothrow) BroadcastRing(dispatcher_));
+            broadcastTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_RING, dispatcher_);
             HCCL_INFO("broadcast ring: using ring algo inter-server.");
         } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
             HCCL_DEBUG("broadcast ring: curSize[%llu] deviceNumPerAggregation[%u] commLevel0Size[%u]",
                 curSize, topoAttr_.deviceNumPerAggregation, level0CommInfo.localRankSize);
             if (curSize / topoAttr_.deviceNumPerAggregation <= NHR_BCAST_SMALL_SIZE) {
-                broadcastTempAlg.reset(new (std::nothrow) BroadcastNHROneshot(dispatcher_));
+                broadcastTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_BROADCAST_NHR_ONESHOT, dispatcher_);
             } else {
-                broadcastTempAlg.reset(new (std::nothrow) BroadcastNHR(dispatcher_));
+                broadcastTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_BROADCAST_NHR, dispatcher_);
             }
             HCCL_INFO("broadcast ring: using nhr algo inter-server.");
         } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
@@ -86,13 +89,16 @@ HcclResult CollBroadcastPlusBroadcast::KernelRun(const OpParam &param, ExecMem &
             const u32 level1RankSize = level1CommInfo.localRankSize;
             if (ShouldUseBinaryBroadcastOfNB(curSize / topoAttr_.deviceNumPerAggregation, level1RankSize,
                                              topoAttr_.userRankSize, topoAttr_.deviceNumPerAggregation)) {
-                broadcastTempAlg.reset(new (std::nothrow) BroadcastNBBinary(dispatcher_));
+                broadcastTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_BROADCAST_NB_BINARY, dispatcher_);
             } else {
-                broadcastTempAlg.reset(new (std::nothrow) BroadcastNB(dispatcher_));
+                broadcastTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_BROADCAST_NB, dispatcher_);
             }
             HCCL_INFO("broadcast ring: using nonuniform-bruck algo inter-server.");
         } else {
-            broadcastTempAlg.reset(new (std::nothrow) BcastRecursiveHalvingDoubling(dispatcher_));
+            broadcastTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_RECURSIVE_HD, dispatcher_);
             HCCL_INFO("broadcast recursive hd: using halving-doubling algo inter-server.");
         }
         CHK_SMART_PTR_NULL(broadcastTempAlg);
@@ -122,8 +128,8 @@ HcclResult CollBroadcastPlusBroadcast::KernelRun(const OpParam &param, ExecMem &
         CHK_RET(RunTemplate(broadcastTempAlg, level1CommInfo));
     }
     // 第三步，执行server内broadcast（从设备0到设备1）
-    std::unique_ptr<AlgTemplateBase> bcastTempAlg;
-    bcastTempAlg.reset(new (std::nothrow) BroadcastRing(dispatcher_));
+    std::unique_ptr<AlgTemplateBase> bcastTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_BROADCAST_RING, dispatcher_);
     CHK_SMART_PTR_NULL(bcastTempAlg);
     // 获取本rank所在server上device0的UserRank
     u32 level0RootUserRank = level0CommInfo.localRank;

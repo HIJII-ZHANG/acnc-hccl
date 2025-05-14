@@ -9,17 +9,24 @@
  */
 
 #include "all_gather_halving_doubling.h"
+#include "alg_template_register.h"
 
 namespace hccl {
-AllGatherHalvingDoubling::AllGatherHalvingDoubling(u32 blockSize,
-    const HcclDispatcher dispatcher, UserMemType hdInputMemType, UserMemType hdOutputMemType)
-    : AlgTemplateBase(dispatcher), blockSize_(blockSize), interRank_(0), interRankSize_(0),
-      hdInputMemType_(hdInputMemType), hdOutputMemType_(hdOutputMemType)
+AllGatherHalvingDoubling::AllGatherHalvingDoubling(const HcclDispatcher dispatcher)
+    : AlgTemplateBase(dispatcher), interRank_(0), interRankSize_(0)
 {
 }
 
 AllGatherHalvingDoubling::~AllGatherHalvingDoubling()
 {
+}
+
+HcclResult AllGatherHalvingDoubling::Prepare(u32 blockSize, UserMemType hdInputMemType, UserMemType hdOutputMemType)
+{
+    blockSize_ = blockSize;
+    hdInputMemType_ = hdInputMemType;
+    hdOutputMemType_ = hdOutputMemType;
+    return HCCL_SUCCESS;
 }
 
 u32 AllGatherHalvingDoubling::Log2(u32 antilogarithm) const
@@ -187,4 +194,5 @@ HcclResult AllGatherHalvingDoubling::RunAllGather(u32 rank, u32 stepNum,
     }
     return ret;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_ALL_GATHER_HALVING_DOUBLING, AllGatherHalvingDoubling);
 }  // namespace hccl

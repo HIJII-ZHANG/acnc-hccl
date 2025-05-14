@@ -89,9 +89,11 @@ HcclResult CollBroadcastCommExecutor::KernelRun(const OpParam &param, ExecMem &e
     u64 curSize = execMem.count * SIZE_TABLE[param.DataDes.dataType];
     if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
         if (curSize <= NHR_BCAST_SMALL_SIZE) {
-            tempAlg.reset(new (std::nothrow) BroadcastNHROneshot(dispatcher_));
+            tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_NHR_ONESHOT, dispatcher_);
         } else {
-            tempAlg.reset(new (std::nothrow) BroadcastNHR(dispatcher_));
+            tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_NHR, dispatcher_);
         }
         HCCL_INFO("broadcast comm: using nhr algo inter-server.");
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
@@ -102,13 +104,16 @@ HcclResult CollBroadcastCommExecutor::KernelRun(const OpParam &param, ExecMem &e
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
         if (ShouldUseBinaryBroadcastOfNB(curSize, combinedCommInfo.localRankSize, topoAttr_.userRankSize,
                 topoAttr_.deviceNumPerAggregation)) {
-            tempAlg.reset(new (std::nothrow) BroadcastNBBinary(dispatcher_));
+            tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_NB_BINARY, dispatcher_);
         } else {
-            tempAlg.reset(new (std::nothrow) BroadcastNB(dispatcher_));
+            tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_NB, dispatcher_);
         }
         HCCL_INFO("broadcast comm: using nonuniform-bruck algo inter-server.");
     } else {
-        tempAlg.reset(new (std::nothrow) BroadcastRing(dispatcher_));
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_BROADCAST_RING, dispatcher_);
         HCCL_INFO("broadcast comm: using ring algo inter-server.");
     }
     CHK_SMART_PTR_NULL(tempAlg);

@@ -18,12 +18,11 @@
 namespace hccl {
 class ReduceScatterMesh : public AlgTemplateBase {
 public:
-    explicit ReduceScatterMesh(const HcclDispatcher dispatcher,
-                                const u64 reduceAttrBitMap,
-                                const u32 streamIndex = 0);
+    explicit ReduceScatterMesh(const HcclDispatcher dispatcher);
 
     ~ReduceScatterMesh() override;
 
+    HcclResult Prepare(u64 reduceAttrBitMap, u32 streamIndex) override;
     HcclResult RunAsync(const u32 rank, const u32 rankSize,
                                    const std::vector<std::shared_ptr<Transport> > &links) override;
 
@@ -53,11 +52,11 @@ private:
                                     const std::vector<Slice>& scratchSlices);
     std::unique_ptr<Sender> senderInfo_;
     std::unique_ptr<Reducer> reducerInfo_;
-    u32 interRank_;       // 在所有rank环上的rankid?
-    u32 interRankSize_; // 指的服务器的个数? 应当是所有服务器上rank总数和?
+    u32 interRank_ = 0;       // 在所有rank环上的rankid?
+    u32 interRankSize_ = 0; // 指的服务器的个数? 应当是所有服务器上rank总数和?
 
-    const u64 reduceAttr_;       /* 0x1:表示data_type + reduce_type支持inlinereduce  */
-    u32 streamIndex_;
+    u64 reduceAttr_ = 0;       /* 0x1:表示data_type + reduce_type支持inlinereduce  */
+    u32 streamIndex_ = 0;
 };
 }  // namespace hccl
 

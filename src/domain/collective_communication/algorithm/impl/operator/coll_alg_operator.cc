@@ -13,7 +13,6 @@
 
 #include "coll_alg_operator.h"
 #include "device_capacity.h"
-#include "nonuniform_hierarchical_ring_base_pub.h"
 #include "coll_executor_base.h"
 #include "coll_alg_exec_registry.h"
 

@@ -182,12 +182,15 @@ HcclResult FftsTailCounter(const HcclDispatcher &dispatcher, Stream &stream)
     return OpExeCounter::GetInstance(devLogicID).AddCounter(dispatcher, stream, TAIL);
 }
 
-HcclResult StarsCounter(const HcclDispatcher &dispatcher, Stream &stream, int flag)
+HcclResult StarsCounter(const HcclDispatcher &dispatcher, Stream &stream, int flag, bool isAicpuMode, bool isRetry)
 {
-    if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && GetExternalInputHcclEnableFfts()) {
+    // 不需要STARS头尾计数的场景: AICPU展开不开重执行 或者 HOST展开FFTS+模式
+    if ((isAicpuMode && !isRetry) ||
+        (!isAicpuMode && GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && GetExternalInputHcclEnableFfts())) {
         HCCL_DEBUG("do not need add stars mode counter");
         return HCCL_SUCCESS;
     }
+    // 需要添加STARS头尾计数的场景: AICPU开启重执行 或者 非AICPU展开 单算子STARS、图模式
     s32 devLogicID = 0;
     CHK_RET(hrtGetDevice(&devLogicID));
     return OpExeCounter::GetInstance(devLogicID).AddCounter(dispatcher, stream, flag);

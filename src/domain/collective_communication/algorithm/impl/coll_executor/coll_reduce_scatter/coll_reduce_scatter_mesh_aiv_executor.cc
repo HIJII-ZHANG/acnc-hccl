@@ -81,8 +81,7 @@ HcclResult CollReduceScatterMeshAivExecutor::Orchestrate(OpParam& param, AlgReso
     execMem.count = param.DataDes.count;
     execMem.inputPtr = param.inputPtr;
     execMem.outputPtr = param.outputPtr;
- 
-    // 单算子大数据量
+
     if (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
         execMem.inputMem = algRes.paramInputMem;
         execMem.outputMem = algRes.aivOutputMem;

@@ -9,6 +9,7 @@
  */
 
 #include "bcast_halvingdoubling.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 BcastHalvingDoubling::BcastHalvingDoubling(const HcclDispatcher dispatcher)
@@ -394,4 +395,5 @@ HcclResult BcastHalvingDoubling::GatherBetweenBlocksLowerBlock(const u32 rank, c
 
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_BROADCAST_HALVLINGDOUBLING, BcastHalvingDoubling);
 }  // namespace hccl

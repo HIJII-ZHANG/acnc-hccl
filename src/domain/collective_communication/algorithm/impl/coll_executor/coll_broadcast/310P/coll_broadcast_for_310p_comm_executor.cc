@@ -42,9 +42,8 @@ HcclResult CollBroadcastFor310PCommExecutor::KernelRun(const OpParam &param, Exe
 {
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
     SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
-    std::unique_ptr<AlgTemplateBase> tempAlg;
-
-    tempAlg.reset(new (std::nothrow) BroadcastRing(dispatcher_));
+    std::unique_ptr<AlgTemplateBase> tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_BROADCAST_RING, dispatcher_);
     CHK_SMART_PTR_NULL(tempAlg);
     // 获取root
     u32 rootRank = 0;

@@ -18,14 +18,15 @@
 namespace hccl {
 class ScatterDoubleRingDirect : public AlgTemplateBase {
 public:
-    explicit ScatterDoubleRingDirect(const HcclDispatcher dispatcher, const HcomCollOpInfo *opInfo, const u32 userRank,
-                                     const u32 subRingRank, std::vector<Stream> &subStreams,
-                                     const std::vector<std::shared_ptr<LocalNotify>> &mainSignals,
-                                     const std::vector<std::shared_ptr<LocalNotify>> &subSignals,
-                                     const std::vector<std::vector<u32>> &ringsOrders,
-                                     const std::vector<std::vector<Slice>> &multiRingSlices,
-                                     const std::vector<std::vector<Slice>> &userMemInputSlices);
+    explicit ScatterDoubleRingDirect(const HcclDispatcher dispatcher);
     ~ScatterDoubleRingDirect() override;
+
+    // should be called soon after template ScatterDoubleRingDirect instance created
+    HcclResult Prepare(HcomCollOpInfo *opInfo, const u32 userRank, const u32 subRingRank, 
+        std::vector<Stream> &subStreams, const std::vector<std::shared_ptr<LocalNotify>> &mainSignals, 
+        const std::vector<std::shared_ptr<LocalNotify>> &subSignals, const std::vector<std::vector<u32>> &ringsOrders, 
+        const std::vector<std::vector<Slice>> &multiRingSlices, 
+        const std::vector<std::vector<Slice>> &userMemInputSlices) override;
 
     HcclResult RunAsync(const u32 rank, const u32 rankSize, const std::vector<LINK> &links) override;
 
@@ -50,15 +51,15 @@ private:
     LINK leftLink_;
     LINK rightLink_;
 
-    const HcomCollOpInfo                     *opInfo_;
-    const u32                                 userRank_;
-    const u32                                 subRingRank_;
+    HcomCollOpInfo                     *opInfo_{nullptr};
+    u32                                 userRank_;
+    u32                                 subRingRank_;
     std::vector<Stream>                       subStreams_;
     std::vector<std::shared_ptr<LocalNotify>> mainSignals_;
     std::vector<std::shared_ptr<LocalNotify>> subSignals_;
-    const std::vector<std::vector<u32>>       ringsOrders_;
-    const std::vector<std::vector<Slice>>     multiRingSlices_;
-    const std::vector<std::vector<Slice>>     userMemInputSlices_;
+    std::vector<std::vector<u32>>       ringsOrders_;
+    std::vector<std::vector<Slice>>     multiRingSlices_;
+    std::vector<std::vector<Slice>>     userMemInputSlices_;
 };
 } // namespace hccl
 

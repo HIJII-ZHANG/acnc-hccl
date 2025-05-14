@@ -95,13 +95,13 @@ HcclResult BroadCastOperatorForHetero::RunBroadCast(const std::string &tag, Devi
 HcclResult BroadCastOperatorForHetero::BroadcastStarExecutor(const std::string &tag, DeviceMem &inputMem,
     DeviceMem &outputMem, u64 count, HcclDataType dataType, HcclReduceOp op, u32 root, Stream &stream)
 {
-    std::unique_ptr<AlgTemplateBase> BcastStarTempAlg;
-    BcastStarTempAlg.reset(new (std::nothrow) BroadcastStar(dispatcher_, userRank_));
+    std::unique_ptr<AlgTemplateBase> BcastStarTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_BROADCAST_STAR, dispatcher_);
     CHK_SMART_PTR_NULL(BcastStarTempAlg);
 
     std::vector<u32> nicRankList{0, 1};
     CHK_RET(BcastStarTempAlg->Prepare(inputMem, outputMem, inputMem, count, dataType, stream, op, root,
-        std::vector<Slice>(0), 0, nicRankList));
+        std::vector<Slice>(0), 0, nicRankList, userRank_));
 
     CommInfo *currComm;
     hcclImpl_->GetCommInfo(currComm, tag);

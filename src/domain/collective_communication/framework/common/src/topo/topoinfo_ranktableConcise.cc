@@ -283,27 +283,8 @@ HcclResult TopoinfoRanktableConcise::GetSingleServer(const nlohmann::json &serve
         CHK_RET(ConvertIpAddress(hostNicIp, hostIp));
     }
 
-    std::string hostPortStr;
-    u32 hostPort = HCCL_INVALID_PORT;
-    ret = GetJsonArrayMemberProperty(serverListObj, objIndex, "host_port", hostPortStr, true);
-    CHK_PRT_RET(ret != HCCL_SUCCESS && ret != HCCL_E_NOT_FOUND,
-        HCCL_ERROR("[Get][SingleServer]get host port error, serverIndex[%u]", serverIdx), ret);
-    HCCL_DEBUG("[%s.json] -> host_port: [%s]. ret[%u]", fileName_.c_str(), hostPortStr.c_str(), ret);
-    if (ret != HCCL_E_NOT_FOUND) {
-        CHK_RET(SalStrToULong(hostPortStr, HCCL_BASE_DECIMAL, hostPort));
-        CHK_PRT_RET(hostPort == HCCL_SOCKET_PORT_RANGE_AUTO,
-            HCCL_ERROR("[Get][SingleServer] serverIndex[%u], please do not use the reserved port number[%u]",
-            objIndex, HCCL_SOCKET_PORT_RANGE_AUTO), HCCL_E_PARA);
-        CHK_PRT_RET(hostPort > MAX_PORT_NUMBER,
-            HCCL_ERROR("[Get][SingleServer] serverIndex[%u], port number[%u] exceed max port number[%u]",
-            objIndex, hostPort, MAX_PORT_NUMBER), HCCL_E_PARA);
-    } else {
-        HCCL_INFO("[Get][SingleServer] serverIndex[%u], 'host_port' in ranktable is not set. "
-            "Multi-process may not be supported for op retry.", objIndex);
-    }
-
     // 处理ranklist
-    ret = GetDeviceList(serverListObj, objIndex, clusterInfo, serverId, serverIdx, hostIp, hostPort);
+    ret = GetDeviceList(serverListObj, objIndex, clusterInfo, serverId, serverIdx, hostIp);
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[Get][SingleServer]get dev list error:serverId[%s]",
         serverId.c_str()), ret);
 
@@ -311,7 +292,7 @@ HcclResult TopoinfoRanktableConcise::GetSingleServer(const nlohmann::json &serve
 }
 
 HcclResult TopoinfoRanktableConcise::GetDeviceList(const nlohmann::json &serverListObj, u32 objIndex,
-    RankTable_t &clusterInfo, std::string &serverId, u32 &serverIdx, HcclIpAddress &hostIp, u32 hostPort)
+    RankTable_t &clusterInfo, std::string &serverId, u32 &serverIdx, HcclIpAddress &hostIp)
 {
     HCCL_DEBUG("Get GetDeviceList[%u]: serverId[%s]", objIndex, serverId.c_str());
 
@@ -324,7 +305,7 @@ HcclResult TopoinfoRanktableConcise::GetDeviceList(const nlohmann::json &serverL
 
     for (u32 index = 0; index < deviceList.size(); index++) {
         // get single server info
-        CHK_RET(GetSingleDevice(deviceList, index, clusterInfo, serverId, serverIdx, hostIp, hostPort));
+        CHK_RET(GetSingleDevice(deviceList, index, clusterInfo, serverId, serverIdx, hostIp));
     }
 
     // 检查devip的数目是否一致
@@ -347,7 +328,7 @@ HcclResult TopoinfoRanktableConcise::GetDeviceList(const nlohmann::json &serverL
 }
 
 HcclResult TopoinfoRanktableConcise::GetSingleDevice(const nlohmann::json &deviceListObj, u32 objIndex,
-    RankTable_t &clusterInfo, std::string &serverId, u32 &serverIdx, HcclIpAddress &hostIp, u32 hostPort)
+    RankTable_t &clusterInfo, std::string &serverId, u32 &serverIdx, HcclIpAddress &hostIp)
 {
     // 获取rank_id
     std::string rankId;
@@ -384,10 +365,10 @@ HcclResult TopoinfoRanktableConcise::GetSingleDevice(const nlohmann::json &devic
     rankinfo.serverId = serverId;
     rankinfo.serverIdx = serverIdx;
     rankinfo.hostIp = hostIp;
-    rankinfo.hostPort = hostPort;
     rankinfo.deviceInfo.devicePhyId = devicePhyId;
 
-    CHK_RET(GetSingleDeviceIp(deviceListObj, objIndex, clusterInfo, rankinfo, rankinfo.hostIp.IsInvalid()));
+    CHK_RET(GetSingleDeviceHostPort(deviceListObj, objIndex, rankinfo));
+    CHK_RET(GetSingleDeviceIp(deviceListObj, objIndex, clusterInfo, rankinfo, deviceType, rankinfo.hostIp.IsInvalid()));
     CHK_RET(GetSingleDevicePort(deviceListObj, objIndex, rankinfo));
     CHK_RET(GetSingleBackupDeviceIp(deviceListObj, objIndex, rankinfo));
 
@@ -436,7 +417,7 @@ HcclResult TopoinfoRanktableConcise::SplitString(const std::string& str, const s
 }
 
 HcclResult TopoinfoRanktableConcise::GetSingleDeviceIp(const nlohmann::json &deviceListObj, u32 objIndex,
-    RankTable_t &clusterInfo, RankInfo_t &rankinfo, bool invalidHostIp)
+    RankTable_t &clusterInfo, RankInfo_t &rankinfo, DevType deviceType, bool invalidHostIp)
 {
     // 获取device_ip （可能有多个）
     std::string deviceIp;
@@ -444,9 +425,13 @@ HcclResult TopoinfoRanktableConcise::GetSingleDeviceIp(const nlohmann::json &dev
     // 多机和走roce网卡ranktable必须有“device_ip”字段，单机可以没有
     if (clusterInfo.serverNum > 1 || (GetExternalInputIntraRoceSwitch() == 1)) {
         // 如果没有配置HostIp，那么deviceIp必须有效，否则出错
-        CHK_PRT_RET(ret != HCCL_SUCCESS && invalidHostIp,
+        bool isDeviceIpError = (ret != HCCL_SUCCESS && invalidHostIp) || (deviceType == DevType::DEV_TYPE_910B && deviceIp == "");
+        RPT_INPUT_ERR(isDeviceIpError, "EI0004", std::vector<std::string>({ "error_reason", "ranktable_path" }),
+            std::vector<std::string>({ "The 'device_ip' in ranktable is not set or is not a valid ip address.",
+            "The ranktable path configured in the training can be found in the plogs." }));
+        CHK_PRT_RET(isDeviceIpError,
             HCCL_ERROR("[Get][SingleDeviceIp]'device_ip' is not set correctly,"\
-                       "must be set when multi Server or HCCL_INTRA_ROCE_ENABLE enabled"), ret);
+                       "must be set when multi Server or HCCL_INTRA_ROCE_ENABLE enabled"), HCCL_E_PARA);
     } else if (clusterInfo.serverNum == 1 && ret == HCCL_E_NOT_FOUND) {
         HcclIpAddress invalidAddr;
         rankinfo.deviceInfo.deviceIp.push_back(invalidAddr);
@@ -528,6 +513,32 @@ HcclResult TopoinfoRanktableConcise::GetSingleBackupDeviceIp(const nlohmann::jso
         HcclIpAddress invalidAddr;
         rankinfo.deviceInfo.backupDeviceIp.push_back(invalidAddr);
         HCCL_WARNING("objIndex[%u],'bakcup_device_ip' is not set", objIndex);
+    }
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoinfoRanktableConcise::GetSingleDeviceHostPort(const nlohmann::json &deviceListObj, u32 objIndex,
+    RankInfo_t &rankinfo)
+{
+    std::string hostPortStr;
+    rankinfo.hostPort = HCCL_INVALID_PORT;
+    HcclResult ret = GetJsonArrayMemberProperty(deviceListObj, objIndex, "host_port", hostPortStr, true);
+    CHK_PRT_RET(ret != HCCL_SUCCESS && ret != HCCL_E_NOT_FOUND,
+        HCCL_ERROR("[Get][SingleDeviceHostPort]get host port error, deviceIndex[%u]", objIndex), ret);
+    HCCL_DEBUG("[%s.json] -> host_port: [%s]. ret[%u]", fileName_.c_str(), hostPortStr.c_str(), ret);
+    if (ret != HCCL_E_NOT_FOUND) {
+        CHK_RET(SalStrToULong(hostPortStr, HCCL_BASE_DECIMAL, rankinfo.hostPort));
+        CHK_PRT_RET(rankinfo.hostPort == HCCL_SOCKET_PORT_RANGE_AUTO,
+            HCCL_ERROR("[Get][SingleDeviceHostPort] deviceIndex[%u], please do not use the reserved port number[%u]",
+            objIndex, HCCL_SOCKET_PORT_RANGE_AUTO), HCCL_E_PARA);
+        CHK_PRT_RET(rankinfo.hostPort > MAX_PORT_NUMBER,
+            HCCL_ERROR("[Get][SingleDeviceHostPort] deviceIndex[%u], port number[%u] exceed max port number[%u]",
+            objIndex, rankinfo.hostPort, MAX_PORT_NUMBER), HCCL_E_PARA);
+        HCCL_INFO("[TopoinfoRanktableConcise][GetSingleDeviceHostPort] deviceIndex[%u], devicePhyId[%u], "
+            "get HOST port[%u].", objIndex, rankinfo.deviceInfo.devicePhyId, rankinfo.hostPort);
+    } else {
+        HCCL_INFO("[Get][SingleDeviceHostPort] deviceIndex[%u], 'host_port' in ranktable is not set. "
+            "Multi-process may not be supported for op retry.", objIndex);
     }
     return HCCL_SUCCESS;
 }

@@ -31,11 +31,11 @@ public:
     HcclResult SetParallelTaskLoader(ParallelTaskLoader *parallelTaskLoader);
 
     virtual HcclResult CheckNeedRecreateComm(u64 lastScratchMemSize, bool& needRecreateAlltoallComm);
-    static HcclResult RunAlltoAllTemplate(const std::unique_ptr<AlltoAllVPairWise> &executor,
+    static HcclResult RunAlltoAllTemplate(const std::unique_ptr<AlgTemplateBase> &executor,
         const SubCommInfo &commInfo);
-    static HcclResult RunAlltoAllVTemplateStaged(const std::unique_ptr<AlltoAllVStagedBase> &executor,
+    static HcclResult RunAlltoAllVTemplateStaged(const std::unique_ptr<AlgTemplateBase> &executor,
         const SubCommInfo &commInfo);
-    static HcclResult RunTemplateWithVirtualLink(const std::unique_ptr<AlltoAllVStagedBase> &executor,
+    static HcclResult RunTemplateWithVirtualLink(const std::unique_ptr<AlgTemplateBase> &executor,
         const SubCommInfo &commInfo);
 
 protected:

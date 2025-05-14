@@ -103,6 +103,8 @@ public:
 
     u32 GetServerNum();
 
+    u32 GetModuleNum();
+
     HcclResult GetCommParams(HcclCommParams &params); // 逆向解析获取HcclCommParams参数
 
     HcclResult GetCommRankTable(RankTable_t &rankTable); // 逆向解析获取RankTable_t参数
@@ -320,6 +322,7 @@ public:
         void* tilingDataPtr, u32 tilingDataSize, const std::string &kernelName, HcclWorkflowMode mode,
         const std::string &tag);
     virtual HcclResult Mc2AiCpuStreamAllocAndGet(u32 streamMode, rtStream_t &aiCpuStream);
+    HcclResult Mc2AiCpuInitStreamAllocAndGet(u32 streamMode, rtStream_t &aiCpuStream);
     HcclResult GetTopoDesc(HcclTopoDescs *topoDescs, uint32_t topoSize);
     HcclResult ReStartVnic(const HcclCommParams &params, const RankTable_t &rankTable);
     static std::string GetUniqueId(void);
@@ -386,7 +389,7 @@ private:
     HcclResult InitTcpMode(const RankTable_t &rankTable) const;
     HcclResult InitRaResource();
     bool IsNeedNicInit();
-    HcclResult InitNic();
+    HcclResult InitNic(bool isMC2ReInit = false);
     HcclResult DeinitNic();
     HcclResult RegisterToHeartBeat();
     HcclResult RegisterToHeartBeat(u32 peerRankId, std::string &tag);
@@ -431,9 +434,12 @@ private:
         bool isUseDefault);
     HcclResult SetBsrTransportStatusImpl(OpCommTransport &opCommTransport, bool statusStop,
         const HcclOpIdentifier &opId, u32 remoteRank);
-    HcclResult SetTransportStatusImplForChange(OpCommTransport &opCommTransport, bool isSendRecv, u32 remoteRank,
-        const std::map<u32, bool> &remoteRankPortMap, bool isUseDefault, const std::map<u32, bool> &isChangeLinkMap,
-        bool isCurTag);
+    HcclResult SetTransportStatusImplForChange(OpCommTransport &opCommTransport, const HcclOpIdentifier &opId, 
+        u32 remoteRank, const std::map<u32, bool> &remoteRankPortMap, bool isUseDefault, 
+        const std::map<u32, bool> &isChangeLinkMap, bool isCurTag);
+    HcclResult SetBsrTransportStatusImplforchange(OpCommTransport &opCommTransport, 
+        const HcclOpIdentifier &opId, u32 remoteRank, const std::map<u32, bool> &remoteRankPortMap, bool isUseDefault, 
+        const std::map<u32, bool> &isChangeLinkMap, bool isCurTag);
     void ClearOpTransportResponseLinks(OpCommTransport &opTransportResponse);
     HcclResult SetSignalTransport(SingleSubCommTransport &singleSubCommTransport,
         u32 linkIdx, bool statusStop);
@@ -650,6 +656,8 @@ private:
     void SaveLinkRes(const OpCommTransport &opTransportResponse);
     HcclResult SetDevIbverbsData(CommBase *comm, bool isSupportNormalQP, u64 commBufferSize, void *commInPtr,
         void *commOutPtr);
+    HcclResult CaptureSlaveStreams(rtStream_t mainStream, std::vector<Stream> &slaveStreams);
+    HcclResult HandleAclGraphFirstOpAivBuff(rtStream_t mainStream);
     HcclIpAddress loopBackIp_;
     bool profilingInitiated_;
     u64 callbackThreadId_;
@@ -673,6 +681,7 @@ private:
     bool isAlgoLevel1Default_ = false;
     HcclCombinOpParam combinOpara_;
     Stream opStream_;
+    Stream aicpuInitStream_;
     std::vector<Stream> attachedStreams_;
     HcclRtNotify aicpuOpNotify_[2] = { nullptr };
     std::vector<std::shared_ptr<LocalNotify>> localAiCpuNotifyRes_;
@@ -707,6 +716,7 @@ private:
     std::unordered_map<std::string, AlgResourceResponse> resMap_; // tag : AlgResourceResponse
     std::unordered_set<std::string> hostResMap_;
     std::unordered_set<std::string> hbSendRecvTags_;
+    std::vector<DeviceMem> deviceResOrigMem_;
     bool isSuspending = false;
     bool retryEnable_ = false;
     bool rtsSupportChangeLink_ = true;  // RTS是否支持借轨（部分ASCEND_RT_VISIBLE_DEVICES自定义场景不支持访问同chip内的另一个die）
@@ -739,6 +749,7 @@ private:
     std::atomic<bool> isOneSidedServiceNicInited{false};
     std::unique_ptr<OpRetryManager> opRetryManager_ = { nullptr };
     std::shared_ptr<HcclOpStreamRes> opRetryStreamPtr_;
+    std::unordered_set<u32> captureModelIds_;
     std::unordered_map<u32, std::unordered_map<std::string, HccltagRemoteResV3>> rankTagRemoteRes_;  // 以rankid&tag粒度保存HccltagRemoteResV3
     std::shared_ptr<HDCommunicate> kfcControlTransferH2D_;
     std::shared_ptr<HDCommunicate> kfcStatusTransferD2H_;

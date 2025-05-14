@@ -178,14 +178,18 @@ HcclResult AllGatherOperator::SelectAlgfor910B(const OpParam& param, std::string
             }
         }
         if (algName.empty()) {
-            algName = "AllGatherMeshExecutor";
+			if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE || dataSize > HCCL_SMALL_COUNT_1_MB) {
+				algName = "AllGatherMeshExecutor";
+			} else {
+				algName = "AllGatherMeshGraphExecutor";
+			}
         }
     } else if (isRingTopo) {
         algName = "AllGatherRingExecutor";
     } else {
         algName = "AllGatherComm";
     }
-    HCCL_INFO("[SelectAlgfor910B] all_gather SelectAlgfor910B is algName [%s]", algName.c_str());
+    HCCL_INFO("[SelectAlgfor910B] all_gather SelectAlgfor910B is algName [%s], current mode is [%u]", algName.c_str(), workflowMode_);
     return HCCL_SUCCESS;
 }
 

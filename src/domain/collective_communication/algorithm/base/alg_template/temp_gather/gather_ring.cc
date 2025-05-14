@@ -9,6 +9,7 @@
  */
 
 #include "gather_ring.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 GatherRing::GatherRing(const HcclDispatcher dispatcher)
@@ -223,4 +224,5 @@ HcclResult GatherRing::RunAsync(const u32 rank, const u32 rankSize,
 
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_GATHER_RING, GatherRing);
 }  // namespace hccl

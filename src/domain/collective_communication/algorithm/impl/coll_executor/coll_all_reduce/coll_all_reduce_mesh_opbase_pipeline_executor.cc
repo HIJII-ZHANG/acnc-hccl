@@ -106,9 +106,10 @@ HcclResult CollAllReduceMeshOpbasePipelineExecutor::KernelRun(const OpParam &par
         "", execMem.inputPtr, execMem.outputPtr, execMem.count, param.DataDes.dataType, param.root, param.reduceType
     };
 
-    std::unique_ptr<AllReduceOpbasePipeline> tempAlg;
-    tempAlg.reset(new (std::nothrow) AllReduceOpbasePipeline(dispatcher_, reduceAttr));
+    std::unique_ptr<AlgTemplateBase> tempAlg;
+    tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_OPBASE_PIPELINE, dispatcher_);
     CHK_SMART_PTR_NULL(tempAlg);
+    CHK_RET(tempAlg->Prepare(reduceAttr));
     CHK_RET(tempAlg->Prepare(&opInfo, execMem.inputMem, execMem.outputMem, execMem.count,
         level1CommInfo, level0CommInfo, const_cast<Stream&>(param.stream),
         algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux));

@@ -10,31 +10,40 @@
 
 #include "reduce_scatter_mesh_atomic_opbase.h"
 #include "externalinput_pub.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 using namespace std;
 
-ReduceScatterMeshDirect::ReduceScatterMeshDirect(const HcclDispatcher dispatcher,
-    const u64 reduceAttrBitMap, std::vector<Stream> &meshStreams,
-    const std::vector<std::shared_ptr<LocalNotify>> &meshSignal,
-    const std::vector<std::shared_ptr<LocalNotify>> &meshSignalAux, u32 userRank, HcomCollOpInfo *opInfo)
-    : AlgTemplateBase(dispatcher),
-      reduceAttr_(reduceAttrBitMap),
-      localRank_(0),
-      localRankSize_(0),
-      userRank_(userRank),
-      meshStreams_(meshStreams),
-      meshSignal_(meshSignal),
-      meshSignalAux_(meshSignalAux),
-      opInfo_(opInfo)
+ReduceScatterMeshDirect::ReduceScatterMeshDirect(const HcclDispatcher dispatcher)
+    : AlgTemplateBase(dispatcher)
 {}
 
 ReduceScatterMeshDirect::~ReduceScatterMeshDirect() {}
 
+HcclResult ReduceScatterMeshDirect::Prepare(DeviceMem &inputMem, DeviceMem &outputMem, DeviceMem &scratchMem,
+                                            const u64 count, const HcclDataType dataType, const Stream &stream,
+                                            const HcclReduceOp reductionOp, const u32 root,
+                                            const std::vector<Slice> &slices, const u64 baseOffset,
+                                            const u64 reduceAttrBitMap, std::vector<Stream> &meshStreams,
+                                            std::vector<std::shared_ptr<LocalNotify>> &meshSignal,
+                                            std::vector<std::shared_ptr<LocalNotify>> &meshSignalAux,
+                                            u32 userRank, const HcomCollOpInfo *opInfo)
+{
+    reduceAttr_ = reduceAttrBitMap;
+    userRank_ = userRank;
+    meshStreams_ = meshStreams;
+    meshSignalPtr_ = &meshSignal;
+    meshSignalAuxPtr_ = &meshSignalAux;
+    opInfo_ = opInfo;
+    return AlgTemplateBase::Prepare(inputMem, outputMem, scratchMem, count, dataType, stream, reductionOp,
+        root, slices, baseOffset);
+}
+
 HcclResult ReduceScatterMeshDirect::MainRecordSub()
 {
-    for (u32 signalIndex = 0; signalIndex < meshSignalAux_.size(); signalIndex++) {
-        CHK_RET(LocalNotify::Post(stream_, dispatcher_, meshSignalAux_[signalIndex],
+    for (u32 signalIndex = 0; signalIndex < meshSignalAuxPtr_->size(); signalIndex++) {
+        CHK_RET(LocalNotify::Post(stream_, dispatcher_, (*meshSignalAuxPtr_)[signalIndex],
             profilerInput_.stage));
     }
     return HCCL_SUCCESS;
@@ -42,25 +51,25 @@ HcclResult ReduceScatterMeshDirect::MainRecordSub()
 
 HcclResult ReduceScatterMeshDirect::SubWaitMain()
 {
-    for (u32 streamIndex = 0; streamIndex < meshSignalAux_.size(); streamIndex++) {
+    for (u32 streamIndex = 0; streamIndex < meshSignalAuxPtr_->size(); streamIndex++) {
         CHK_RET(LocalNotify::Wait(meshStreams_[streamIndex], dispatcher_,
-            meshSignalAux_[streamIndex], profilerInput_.stage));
+            (*meshSignalAuxPtr_)[streamIndex], profilerInput_.stage));
     }
     return HCCL_SUCCESS;
 }
 
 HcclResult ReduceScatterMeshDirect::MainWaitSub()
 {
-    for (u32 signalIndex = 0; signalIndex < meshSignal_.size(); signalIndex++) {
-        CHK_RET(LocalNotify::Wait(stream_, dispatcher_, meshSignal_[signalIndex], profilerInput_.stage));
+    for (u32 signalIndex = 0; signalIndex < meshSignalPtr_->size(); signalIndex++) {
+        CHK_RET(LocalNotify::Wait(stream_, dispatcher_, (*meshSignalPtr_)[signalIndex], profilerInput_.stage));
     }
     return HCCL_SUCCESS;
 }
 
 HcclResult ReduceScatterMeshDirect::SubRecordMain()
 {
-    for (u32 streamIndex = 0; streamIndex < meshSignal_.size(); streamIndex++) {
-        CHK_RET(LocalNotify::Post(meshStreams_[streamIndex], dispatcher_, meshSignal_[streamIndex],
+    for (u32 streamIndex = 0; streamIndex < meshSignalPtr_->size(); streamIndex++) {
+        CHK_RET(LocalNotify::Post(meshStreams_[streamIndex], dispatcher_, (*meshSignalPtr_)[streamIndex],
             profilerInput_.stage));
     }
     return HCCL_SUCCESS;
@@ -148,4 +157,5 @@ HcclResult ReduceScatterMeshDirect::RunAsync(const u32 rank, const u32 rankSize,
     HCCL_INFO("ReduceScatterMeshDirect finished: rank[%u]", rank);
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_REDUCESCATTER_MESH_DIRECT, ReduceScatterMeshDirect);
 }

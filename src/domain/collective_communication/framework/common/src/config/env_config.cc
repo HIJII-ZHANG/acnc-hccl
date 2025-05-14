@@ -9,13 +9,14 @@
  */
 
 #include "env_config.h"
+#include <algorithm>
 #include <mutex>
-#include <regex>
 #include <sstream>
 #include <string>
 #include "adapter_error_manager_pub.h"
 #include "log.h"
 #include "sal_pub.h"
+#include "mmpa_api.h"
 
 using namespace hccl;
 
@@ -54,6 +55,15 @@ bool GetExternalInputNpuPortSwitch()
     return g_envConfig.npuSocketPortSwitch;
 }
 
+const u32& EnvConfig::GetExternalInputRdmaTrafficClass()
+{
+    return g_envConfig.rdmaTrafficClass;
+}
+
+const u32& EnvConfig::GetExternalInputRdmaServerLevel()
+{
+    return g_envConfig.rdmaServerLevel;
+}
 
 const std::vector<HcclSocketPortRange> &GetExternalInputHostSocketPortRange()
 {
@@ -82,7 +92,32 @@ HcclResult InitEnvParam()
         HCCL_ERROR("[InitEnvParam]errNo[0x%016llx] In init environtment param, parse "
             "HCCL_NPU_SOCKET_PORT_RANGE failed. errorno[%d]", HCCL_ERROR_CODE(ret), ret), ret);
 
+    ret = g_envConfig.ParseRDMATrafficClass();
+    RPT_ENV_ERR(ret != HCCL_SUCCESS, "EI0001", std::vector<std::string>({"env", "tips"}),
+        std::vector<std::string>({"HCCL_RDMA_TC", "Value range[0, 255], Must be a multiple of 4"}));
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[InitEnvParam]errNo[0x%016llx] In init environtment param, parse "
+            "HCCL_RDMA_TC failed. errorno[%d]", HCCL_ERROR_CODE(ret), ret), ret);
+
+    ret = g_envConfig.ParseRDMAServerLevel();
+    RPT_ENV_ERR(ret != HCCL_SUCCESS, "EI0001", std::vector<std::string>({"env", "tips"}),
+        std::vector<std::string>({"HCCL_RDMA_SL", "Value range[0, 7]"}));
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[InitEnvParam]errNo[0x%016llx] In init environtment param, parse "
+            "HCCL_RDMA_SL failed. errorno[%d]", HCCL_ERROR_CODE(ret), ret), ret);
+
     return HCCL_SUCCESS;
+}
+
+bool EnvConfig::CheckEnvLen(const char *envStr, u32 envMaxLen)
+{
+    // 校验环境变量长度
+    u32 envLen = strnlen(envStr, envMaxLen + 1);
+    if (envLen == (envMaxLen + 1)) {
+        HCCL_ERROR("[CheckEnvLen] errNo[0x%016llx] env len is invalid, len is %u", HCCL_ERROR_CODE(HCCL_E_PARA), envLen);
+        return false;
+    }
+    return true;
 }
 
 HcclResult SetDefaultSocketPortRange(const SocketLocation &socketLoc, std::vector<HcclSocketPortRange> &portRangeVec)
@@ -142,37 +177,58 @@ HcclResult CheckSocketPortRangeValid(const std::string &envName, const std::vect
     return HCCL_SUCCESS;
 }
 
+HcclResult GetUIntFromStr(const std::string &digitStr, u32 &val)
+{
+    HcclResult ret = IsAllDigit(digitStr.c_str());
+    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[GetUIntFromStr] str[%s] is not all digit.",
+        digitStr.c_str()), ret);
+    ret = SalStrToULong(digitStr.c_str(), HCCL_BASE_DECIMAL, val);
+    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[GetUIntFromStr] str[%s] is a invalid number.",
+        digitStr.c_str()), ret);
+    return HCCL_SUCCESS;
+}
+
+bool SplitString(std::string &totalStr, std::string &prefixStr, const std::string &delim)
+{
+    std::size_t found = totalStr.find(delim);
+    if (found == std::string::npos) {
+        return false;
+    }
+    prefixStr = totalStr.substr(0, found);
+    totalStr = totalStr.substr(found + 1);
+    return true;
+}
+
+HcclResult SplitSinglePortRange(const std::string &envName, std::string &rangeStr, HcclSocketPortRange &portRange)
+{
+    std::string rangeMin{};
+    const std::string delim = "-";
+    if (SplitString(rangeStr, rangeMin, delim)) {
+        CHK_RET(GetUIntFromStr(rangeMin, portRange.min));
+        CHK_RET(GetUIntFromStr(rangeStr, portRange.max));
+    } else {
+        CHK_RET(GetUIntFromStr(rangeStr, portRange.min));
+        portRange.max = portRange.min;
+    }
+    HCCL_INFO("[Split][SinglePortRange] Load hccl socket port range [%u, %u] from %s",
+        portRange.min, portRange.max, envName.c_str());
+    return HCCL_SUCCESS;
+}
+
 HcclResult SplitHcclSocketPortRange(const std::string &envName, std::string &portRangeConfig,
     std::vector<HcclSocketPortRange> &portRangeVec)
 {
-    portRangeConfig += ",";
-    // verify whether the string format is valid
-    std::regex inputFormatPattern(R"((\d{1,5}((-\d{1,5})?,))+)");
-    bool validFormat = std::regex_match(portRangeConfig.begin(), portRangeConfig.end(), inputFormatPattern);
-    CHK_PRT_RET(!validFormat,
-        HCCL_ERROR("[Split][HcclSocketPortRange]errNo[0x%016llx] %s is invalid, please check the format.",
-            HCCL_ERROR_CODE(HCCL_E_PARA), envName.c_str()), HCCL_E_PARA);
-
-    // load socket port range one by one
-    std::regex rangePattern(R"(\d{1,5}(-\d{1,5})?)");
-    std::sregex_iterator iter(portRangeConfig.begin(), portRangeConfig.end(), rangePattern);
-    std::sregex_iterator end;
-    for (std::sregex_iterator it = iter; it != end; ++it) {
-        std::smatch match = *it;
-        std::string rangeStr = match.str();
-        std::size_t found = rangeStr.find("-");
+    std::string rangeStr{};
+    const std::string delim = ",";
+    while (SplitString(portRangeConfig, rangeStr, delim)) {
         HcclSocketPortRange portRange = {};
-        if (found == std::string::npos) {
-            SalStrToULong(rangeStr, HCCL_BASE_DECIMAL, portRange.min);
-            portRange.max = portRange.min;
-        } else {
-            SalStrToULong(rangeStr.substr(0, found), HCCL_BASE_DECIMAL, portRange.min);
-            SalStrToULong(rangeStr.substr(found + 1), HCCL_BASE_DECIMAL, portRange.max);
-        }
+        CHK_RET(SplitSinglePortRange(envName, rangeStr, portRange));
         portRangeVec.emplace_back(portRange);
-        HCCL_INFO("[Split][HcclSocketPortRange] Load hccl socket port range [%u, %u] from %s",
-            portRange.min, portRange.max, envName.c_str());
     }
+    HcclSocketPortRange portRange = {};
+    CHK_RET(SplitSinglePortRange(envName, portRangeConfig, portRange));
+    portRangeVec.emplace_back(portRange);
+
     CHK_RET(CheckSocketPortRangeValid(envName, portRangeVec));
     return HCCL_SUCCESS;
 }
@@ -246,7 +302,9 @@ HcclResult SetSocketPortRange(const std::string &envName, const std::string &soc
 
 HcclResult ParseHostSocketPortRange()
 {
-    std::string hostSocketPortRangeEnv = SalGetEnv("HCCL_HOST_SOCKET_PORT_RANGE");
+    char* mmSysGetEnvValue = nullptr;
+    MM_SYS_GET_ENV(MM_ENV_HCCL_HOST_SOCKET_PORT_RANGE, mmSysGetEnvValue);
+    std::string hostSocketPortRangeEnv = (mmSysGetEnvValue != nullptr) ? mmSysGetEnvValue : "EmptyString";
     CHK_RET(SetSocketPortRange("HCCL_HOST_SOCKET_PORT_RANGE", hostSocketPortRangeEnv, SOCKET_HOST,
         g_envConfig.hostSocketPortRange));
     return HCCL_SUCCESS;
@@ -254,8 +312,74 @@ HcclResult ParseHostSocketPortRange()
 
 HcclResult ParseNpuSocketPortRange()
 {
-    std::string npuSocketPortRangeEnv = SalGetEnv("HCCL_NPU_SOCKET_PORT_RANGE");
+    char* mmSysGetEnvValue = nullptr;
+    MM_SYS_GET_ENV(MM_ENV_HCCL_NPU_SOCKET_PORT_RANGE, mmSysGetEnvValue);
+    std::string npuSocketPortRangeEnv = (mmSysGetEnvValue != nullptr) ? mmSysGetEnvValue : "EmptyString";
     CHK_RET(SetSocketPortRange("HCCL_NPU_SOCKET_PORT_RANGE", npuSocketPortRangeEnv, SOCKET_NPU,
         g_envConfig.npuSocketPortRange));
     return HCCL_SUCCESS;
+}
+
+// 通用的环境变量解析函数
+HcclResult ParseEnvConfig(const EnvConfigParam& param, std::string& envValue, u32& resultValue)
+{
+    if (!envValue.compare(ENV_EMPTY_STRING)) {
+        HCCL_RUN_INFO("%s set by default to [%u]", param.envName.c_str(), param.defaultValue);
+        resultValue = param.defaultValue;
+        return HCCL_SUCCESS;
+    }
+
+    // 校验环境变量长度
+    bool isEnvLenValid = g_envConfig.CheckEnvLen(envValue.c_str(), g_envConfig.MAX_LEN_OF_DIGIT_ENV);
+    CHK_PRT_RET(!isEnvLenValid,
+        HCCL_ERROR("[Parse][%s] errNo[0x%016llx] Invalid %s env len, len is bigger than [%u], errorno[%d]",
+        param.envName.c_str(), HCCL_ERROR_CODE(HCCL_E_PARA), param.envName.c_str(), g_envConfig.MAX_LEN_OF_DIGIT_ENV, HCCL_E_PARA),
+        HCCL_E_PARA);
+    
+    CHK_RET(IsAllDigit(envValue.c_str()));
+    
+    HcclResult ret = SalStrToULong(envValue.c_str(), HCCL_BASE_DECIMAL, resultValue);
+    // 若转换出错或者设置的值不在有效范围内，报错
+    CHK_PRT_RET((ret != HCCL_SUCCESS || resultValue < param.minValue || resultValue > param.maxValue),
+        HCCL_ERROR("[Parse][%s] is invalid. except: [%u, %u], actual: [%u]", param.envName.c_str(), param.minValue, param.maxValue, resultValue),
+        HCCL_E_PARA);
+    
+    // 如果提供了baseValue，检查是否是baseValue的整数倍
+    if (param.baseValue != 0 && resultValue % param.baseValue != 0) {
+        HCCL_ERROR("[Parse] %s[%u] is not a multiple of [%u]", param.envName.c_str(), resultValue, param.baseValue);
+        return HCCL_E_PARA;
+    }
+
+    HCCL_RUN_INFO("%s set by environment to [%u]", param.envName.c_str(), resultValue);
+    return HCCL_SUCCESS;
+}
+
+HcclResult EnvConfig::ParseRDMATrafficClass()
+{
+    EnvConfigParam param = {
+        "HCCL_RDMA_TC",
+        HCCL_RDMA_TC_DEFAULT,
+        HCCL_RDMA_TC_MIN,
+        HCCL_RDMA_TC_MAX,
+        HCCL_RDMA_TC_BASE
+    };
+    char* mmSysGetEnvValue = nullptr;
+    MM_SYS_GET_ENV(MM_ENV_HCCL_RDMA_TC, mmSysGetEnvValue);
+    std::string envValue = (mmSysGetEnvValue != nullptr) ? mmSysGetEnvValue : "EmptyString";
+    return ParseEnvConfig(param, envValue, g_envConfig.rdmaTrafficClass);
+}
+
+HcclResult EnvConfig::ParseRDMAServerLevel()
+{
+    EnvConfigParam param = {
+        "HCCL_RDMA_SL",
+        HCCL_RDMA_SL_DEFAULT,
+        HCCL_RDMA_SL_MIN,
+        HCCL_RDMA_SL_MAX,
+        0
+    };
+    char* mmSysGetEnvValue = nullptr;
+    MM_SYS_GET_ENV(MM_ENV_HCCL_RDMA_SL, mmSysGetEnvValue);
+    std::string envValue = (mmSysGetEnvValue != nullptr) ? mmSysGetEnvValue : "EmptyString";
+    return ParseEnvConfig(param, envValue, g_envConfig.rdmaServerLevel);
 }

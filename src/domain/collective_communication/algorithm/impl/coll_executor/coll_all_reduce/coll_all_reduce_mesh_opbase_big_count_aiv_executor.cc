@@ -117,6 +117,10 @@ HcclResult CollAllReduceMeshOpbaseBigCountAivExecutor::KernelRun(const OpParam &
         }
     }
 
+    if (aivClearEnable_) {
+        ClearAivSyncBuf(buffersOut, localRank, localRankSize, param.stream.ptr());
+    }
+
     bool isOpbase = (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
     AivOpArgs opArgs {
         HcclCMDType::HCCL_CMD_ALLREDUCE, execMem.inputPtr, execMem.outputPtr, execMem.count,

@@ -137,11 +137,12 @@ HcclResult OpRetryAgentRunning::ProcessEvent(RetryContext* retryCtx)
     RetryCommandInfo commandinfo;
     ret = WaitCommandWithOpId(retryCtx->agentSocket_, commandinfo);
     if (ret == HCCL_SUCCESS) {
-        HCCL_RUN_INFO("[OpRetry][Agent]OpRetryAgentRunning recv command[%s] success,"
-            "tag[%s], index[%u], srcRank[%u], detRank[%u], isSendRecv[%d], streamId[%u]",
-            GetReadableCmd(commandinfo.command), commandinfo.opId.tag, commandinfo.opId.index, 
-            commandinfo.opId.srcRank, commandinfo.opId.detRank, commandinfo.opId.isSendRecv, commandinfo.opId.streamId);
         if (commandinfo.command == RETRY_CMD_STOP_AICPU) { // 接收到有效command信息
+            HCCL_RUN_INFO("[OpRetry][Agent]OpRetryAgentRunning recv command[%s] success,"
+                "tag[%s], index[%u], srcRank[%u], detRank[%u], isSendRecv[%d], streamId[%u]",
+                GetReadableCmd(commandinfo.command), commandinfo.opId.tag, commandinfo.opId.index, 
+                commandinfo.opId.srcRank, commandinfo.opId.detRank, commandinfo.opId.isSendRecv,
+                commandinfo.opId.streamId);
             CHK_RET(SetOpExecCmdWithOpId(retryCtx->h2dPtr_, KfcCommand::kStopLaunch, commandinfo.opId));
             retryCtx->curFaultOpId = commandinfo.opId;
             CHK_RET(CreateOpRetryAgentByState(RETRY_STATE_POLL_AICPU_STOPED, retryCtx));

@@ -86,7 +86,7 @@ struct TaskInfo {
 struct FFTSOpInfo {
     u32 streamID;
     u32 taskID;
-    std::string tag;
+    char tag[TAG_MAX_LEN + 1] = {0};
     AlgType algType;
     u32 index;
     std::string GetBaseInfoStr();

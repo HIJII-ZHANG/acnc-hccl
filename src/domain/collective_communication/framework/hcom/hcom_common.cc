@@ -1232,7 +1232,7 @@ bool HcomCheckrtMemcpyAddrAsync(void)
 
 bool HcomGetSecAddrCopyFlag(void)
 {
-    HCCL_INFO("[Hcom][HcomGetSecAddrCopyFlag] SecAddrCopyWithOffset falg is %d", g_notSupportSecAddrCopyWithOffset);
+    HCCL_INFO("[Hcom][HcomGetSecAddrCopyFlag] SecAddrCopyWithOffset flag is %d", g_notSupportSecAddrCopyWithOffset);
     return g_notSupportSecAddrCopyWithOffset;
 }
 

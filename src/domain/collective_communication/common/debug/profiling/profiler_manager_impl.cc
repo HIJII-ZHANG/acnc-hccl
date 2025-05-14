@@ -198,6 +198,10 @@ void ProfilerManagerImpl::TaskProfiler(ProfilerType profilerType, TaskParaHost &
 
 void ProfilerManagerImpl::TaskProfilerHandle(void *param, u32 length)
 {
+    if (UNLIKELY(param == nullptr)) {
+        HCCL_ERROR("[ProfilerManagerImpl][%s]param is nullptr.", __func__);
+        return;
+    }
     struct TaskPara *taskPara = (struct TaskPara *)param;
 
     if (sizeof(TaskPara) < length) {
@@ -219,17 +223,22 @@ void ProfilerManagerImpl::TaskProfilerHandle(void *param, u32 length)
         profilingManager.ReSetFftsDispatcherMode();
     }
 
-    if (GetExternalInputHcclIfProf() && ctxId == INVALID_UINT) {
+    if (GetIfProfile() && ctxId == INVALID_UINT) {
         (void)profilingManager.CallMsprofReportTaskApi(taskPara->isMainStream, taskPara->beginTime, profTaskType);
     }
 }
 
-void ProfilerManagerImpl::TaskAivProfilerHandle(void *param, u32 length){
+void ProfilerManagerImpl::TaskAivProfilerHandle(void *param, u32 length)
+{
+    if (UNLIKELY(param == nullptr)) {
+        HCCL_ERROR("[ProfilerManagerImpl][%s]param is nullptr.", __func__);
+        return;
+    }
     struct AivTaskPara* taskPara = (struct AivTaskPara *)param;
 
     TaskAivProfiler(ProfilerType::TASK_ALL, taskPara->stream, taskPara->aiv);
     
-    if (GetExternalInputHcclIfProf()){
+    if (GetIfProfile()){
         auto &profilingManager = hccl::ProfilingManager::Instance();
         (void)profilingManager.CallMsprofReportTaskApi(taskPara->isMainStream, taskPara->beginTime, ProfTaskType::TASK_AIV);
     }
@@ -290,7 +299,7 @@ void ProfilerManagerImpl::HandleTask(struct TaskPara *taskPara, u32 &ctxId, Prof
 
 void ProfilerManagerImpl::HandleGraphLaunchTask(struct TaskPara *taskPara)
 {
-    if (GetExternalInputHcclIfProf()) {
+    if (GetIfProfile()) {
         auto &profilingManager = hccl::ProfilingManager::Instance();
         if (!profilingManager.GetFftsLaunchApiState()) {
             // 上报批量下发的ContextId信息

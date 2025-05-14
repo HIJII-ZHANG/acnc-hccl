@@ -421,4 +421,26 @@ HcclResult ZeroCopyAddressMgr::ProcessOneAddrMap(const ZeroCopyRingBufferItem &i
 
     return HCCL_SUCCESS;
 }
+
+u32 ZeroCopyAddressMgr::GetCommRefCnt()
+{
+    return commRefCnt_;
+}
+
+HcclResult ZeroCopyAddressMgr::IncreCommRefCnt()
+{
+    commRefCnt_++;
+    return HCCL_SUCCESS;
+}
+
+HcclResult ZeroCopyAddressMgr::DecreCommRefCnt()
+{
+    if (commRefCnt_ == 0) {
+        HCCL_WARNING("[ZeroCopyAddressMgr][%s]commRefCnt_ is 0, cannot decrement", __func__);
+        return HCCL_SUCCESS;
+    }
+    commRefCnt_--;
+    return HCCL_SUCCESS;
+}
+
 }

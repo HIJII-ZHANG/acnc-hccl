@@ -246,7 +246,9 @@ HcclResult CommBase::SetTransportType(const u32 dstRank)
             transportType_[dstRank] = TransportType::TRANS_TYPE_HETEROG_P2P;
         } else {
             // Server内判断是否使用rdma
-            if (isUsedRdmaLevel0_ || isAlltoAllCommMesh_) {
+            if (isUsedRdmaLevel0_ || isAlltoAllCommMesh_ ||
+                (paraVector_[rank_].devicePhyId / HCCL_AISERVER_DEVICE_NUM != 
+                paraVector_[dstRank].devicePhyId / HCCL_AISERVER_DEVICE_NUM)) {
                 transportType_[dstRank] = TransportType::TRANS_TYPE_IBV_EXP;
             } else {
                 transportType_[dstRank] = TransportType::TRANS_TYPE_P2P;
@@ -1125,14 +1127,23 @@ HcclResult CommBase::GetIntraRankIPInfo(std::map<u32, HcclSocketRole> &rankRole,
             useSuperPodMode_ ? (DeviceIdType::DEVICE_ID_TYPE_SDID) : (DeviceIdType::DEVICE_ID_TYPE_PHY_ID);
         // rank个数小于等于1时，没有初始化ra资源，无法调用device侧hccp接口
         if (userRankSize > 1) {
-            CHK_RET(hrtRaGetSingleSocketVnicIpInfo(paraVector_[rank_].devicePhyId, deviceidType,
+            if(IsSupportMC2(tag_)) {
+                ipAddress = paraVector_[dstRank].nicIp.front();
+                CHK_PRT_RET(ipAddress.IsInvalid(),
+                HCCL_ERROR("[Get][IntraRankIPInfo] ipAddress is invalid when NIC, check the ip configuration for dstRank[%u]"
+                , dstRank), HCCL_E_PARA);
+            } else {
+                CHK_RET(hrtRaGetSingleSocketVnicIpInfo(paraVector_[rank_].devicePhyId, deviceidType,
                 linkInfo.devicePhyId, ipAddress));
+            }
         }
         linkInfo.ip = ipAddress;
         linkInfo.socketsPerLink = 1;
 
-        HCCL_DEBUG("[Get][IntraRankIPInfo] userRank[%u], destRank[%u], localRole[%d], port[%u], ip[%s]",
-            userRank_, linkInfo.userRank, localRole, linkInfo.port, linkInfo.ip.GetReadableAddress());
+        HCCL_DEBUG("[Get][IntraRankIPInfo] tag[%s], userRank[%u], destRank[%u], localRole[%d], port[%u], ip[%s], "
+        "devicePhyId[%u]",
+            tag_.c_str(), rank_, linkInfo.userRank, localRole, linkInfo.port, linkInfo.ip.GetReadableAddress(),
+            paraVector_[rank_].devicePhyId);
 
         if (localRole == HcclSocketRole::SOCKET_ROLE_CLIENT) {
             dstServerMap.insert(std::make_pair(linkInfo.userRank, linkInfo));
@@ -1258,5 +1269,17 @@ HcclResult CommBase::CheckExchangeInfo(const std::shared_ptr<Transport> &link, c
     }
 
     return HCCL_SUCCESS;
+}
+
+bool CommBase::IsSupportMC2(const std::string &tag)
+{
+    //配置HCCL_INTRA_PICE_ENABLE/HCCL_INTRA_ROCE_ENABLE环境变量进入分层方案
+    const std::string &suffix = HCCL_MC2_MULTISERVER_SUFFIX;
+    bool isMC2MultiServer = false;
+    if (tag.size() > suffix.size() &&
+        tag.compare(tag.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            isMC2MultiServer = true;
+        }
+    return isMC2MultiServer;
 }
 } // namespace hccl

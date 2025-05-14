@@ -306,6 +306,7 @@ public:
     u64 GetConfigOutCCLbufferSize();    // 获取通信域配置的输出buffer大小
     u32 GetRankTableCrc();
     u32 GetServerNum();
+    u32 GetModuleNum();
     HcclResult GetCommParams(HcclCommParams &params);       // 逆向解析获取HcclCommParams参数
     HcclResult GetCommRankTable(RankTable_t &rankTable);    // 逆向解析获取RankTable_t参数
     HcclResult SetQpQosAttr(u32 trafficClass, u32 serviceLevel); // 设置TC/SL配置

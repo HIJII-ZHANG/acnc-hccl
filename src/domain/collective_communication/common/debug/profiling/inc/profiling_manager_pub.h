@@ -31,8 +31,11 @@ public:
         uint32_t threadId);
     static HcclResult CallMsprofReportHostNodeBasicInfo(uint64_t endTime, const std::string profName,
         uint32_t threadId);
+    static HcclResult CallMsprofReportNodeInfo(uint64_t beginTime, uint64_t endTime,
+        const std::string profName, uint32_t threadId);
     static bool GetAllState();
     static HcclResult ClearStoragedProfilingInfo();
+    static void SetCaptureStatus(bool isCapture);
 };
 } // namespace hccl
 #endif // COMMON_PROFILING_PROFILING_MANAGER_H

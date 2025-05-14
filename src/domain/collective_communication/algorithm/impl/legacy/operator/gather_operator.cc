@@ -61,9 +61,10 @@ HcclResult GatherOperator::Gather(const std::string &tag, void *inputPtr, void *
 HcclResult GatherOperator::GatherStarExecutor(const std::string &tag, DeviceMem &inputMem, DeviceMem &outputMem,
     u64 count, HcclDataType dataType, HcclReduceOp op, u32 root, Stream &stream)
 {
-    std::unique_ptr<AlgTemplateBase> gstarTemplate(new (std::nothrow) GatherStar(dispatcher_, userRank_));
+    std::unique_ptr<AlgTemplateBase> gstarTemplate =
+        AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_GATHER_STAR, dispatcher_);
     CHK_SMART_PTR_NULL(gstarTemplate);
-
+    CHK_RET(gstarTemplate->Prepare(userRank_));
     std::vector<u32> nicRankList{0, 1};
     CHK_RET(gstarTemplate->Prepare(inputMem, outputMem, inputMem, count, dataType, stream, op, root,
         std::vector<Slice>(0), 0, nicRankList));

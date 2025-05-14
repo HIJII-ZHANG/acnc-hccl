@@ -32,13 +32,15 @@ public:
     virtual HcclResult Config(const HcclDispatcher &dispatcher,
         const HcclRankLinkInfo &localRankInfo, const RankTable_t *rankTable);
 
-    virtual HcclResult SetNetDevCtx(const HcclNetDevCtx &netDevCtx);
-    virtual HcclResult GetNetDevCtx(HcclNetDevCtx &netDevCtx);
+    virtual HcclResult SetNetDevCtx(const HcclNetDevCtx &netDevCtx, bool useRdma);
+    virtual HcclResult GetNetDevCtx(HcclNetDevCtx &netDevCtx, bool useRdma);
 
 protected:
-    HcclNetDevCtx netDevCtx_{};
+    HcclNetDevCtx netDevRdmaCtx_{};
+    HcclNetDevCtx netDevIpcCtx_{};
     HcclDispatcher dispatcher_{};
     HcclRankLinkInfo localRankInfo_{};
+    HcclRankLinkInfo localRankVnicInfo_{};
     const RankTable_t *rankTable_{};
     std::unique_ptr<HcclSocketManager> &socketManager_;
     std::unique_ptr<NotifyPool> &notifyPool_;

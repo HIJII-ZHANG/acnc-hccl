@@ -16,9 +16,12 @@
 namespace hccl {
 class GatherStar : public AlgTemplateBase {
 public:
-    explicit GatherStar(const HcclDispatcher dispatcher, u32 userRank);
+    explicit GatherStar(const HcclDispatcher dispatcher);
 
     ~GatherStar() override;
+
+    // should be called soon after template GatherStar instance created
+    HcclResult Prepare(u32 userRank) override;
 
     HcclResult RunAsync(const u32 rank, const u32 rankSize,
         const std::vector<std::shared_ptr<Transport>> &links) override;

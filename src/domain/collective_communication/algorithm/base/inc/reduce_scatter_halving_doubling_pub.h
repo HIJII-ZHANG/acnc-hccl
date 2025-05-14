@@ -18,11 +18,16 @@
 namespace hccl {
 class ReduceScatterHalvingDoubling : public AlgTemplateBase {
 public:
-    explicit ReduceScatterHalvingDoubling(const u32 blockSize, const HcclDispatcher dispatcher,
-        const u64 reduceAttrBitMap, const UserMemType hdInputMemType = UserMemType::OUTPUT_MEM,
-        const UserMemType hdOutputMemType = UserMemType::INPUT_MEM);
+    explicit ReduceScatterHalvingDoubling(const HcclDispatcher dispatcher);
 
     ~ReduceScatterHalvingDoubling() override;
+
+    HcclResult Prepare(DeviceMem &inputMem, DeviceMem &outputMem, DeviceMem &scratchMem, 
+        const u64 count, const HcclDataType dataType, const Stream &stream, 
+        const HcclReduceOp reductionOp, const u32 root,
+        const std::vector<Slice> &slices, const u64 baseOffset, 
+        const u32 blockSize, const u64 reduceAttrBitMap,
+        const UserMemType hdInputMemType, const UserMemType hdOutputMemType) override;
 
     HcclResult RunAsync(const u32 rank, const u32 rankSize, const std::vector<LINK> &links) override;
 
@@ -39,10 +44,10 @@ private:
     HcclResult CalculateSlices(const u64 size, const u32 sliceNum, std::vector<Slice> &slicesOut);
     HcclResult CalcStepSlices(const std::vector<Slice> &inputSlices,
         const u32 stepNum, const u32 rank, const SliceType type, std::vector<Slice> &slicesOut);
-    u32 blockSize_;
+    u32 blockSize_ = 0;
     std::vector<Slice> txSlices_; // 下标为step, 标识每个step的tx_size
     std::vector<Slice> rxSlices_; // 下标为step, 标识每个step的tx_size
-    const u64 reduceAttr_;               /* 0x1:表示data_type + reduce_type支持inlinereduce  */
+    u64 reduceAttr_ = 0;               /* 0x1:表示data_type + reduce_type支持inlinereduce  */
 
     UserMemType hdInputMemType_;   // 算法使用的input mem对应用户mem的类型
     UserMemType hdOutputMemType_;  // 算法使用的output mem对应用户mem的类型

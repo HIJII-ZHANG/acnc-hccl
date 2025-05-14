@@ -16,14 +16,16 @@
 namespace hccl {
 class AlignedAllGatherDoubleRing : public AlgTemplateBase {
 public:
-    explicit AlignedAllGatherDoubleRing(const HcclDispatcher dispatcher, const HcomCollOpInfo *opInfo,
-                                           const u32 userRank, std::vector<Stream> &subStreams,
-                                           const std::vector<std::shared_ptr<LocalNotify>> &mainSignals,
-                                           const std::vector<std::shared_ptr<LocalNotify>> &subSignals,
-                                           const std::vector<std::vector<u32>> &ringsOrders,
-                                           const std::vector<std::vector<Slice>> &userMemOutputSlicesOfDoubleRing);
+    explicit AlignedAllGatherDoubleRing(const HcclDispatcher dispatcher);
 
     ~AlignedAllGatherDoubleRing() override;
+
+    //  should be called soon after template AlignedAllGatherDoubleRing instance created
+    HcclResult Prepare(HcomCollOpInfo *opInfo, const u32 userRank, std::vector<Stream> &subStreams,
+        std::vector<std::shared_ptr<LocalNotify>> &mainSignals, std::vector<std::shared_ptr<LocalNotify>> &subSignals,
+        const std::vector<std::vector<u32>> &ringsOrders,
+        const std::vector<std::vector<Slice>> &userMemOutputSlicesOfDoubleRing) override;
+
     HcclResult RunAsync(const u32 rank, const u32 rankSize, const std::vector<LINK> &links) override;
 
 protected:
@@ -54,17 +56,17 @@ private:
     HcclResult MainWaitSub();
 
     LINK leftLink_;
-    LINK rightLink_;
+    LINK rightLink_;                     
 
-    const HcomCollOpInfo                     *opInfo_;
-    const u32                                 userRank_;
+    HcomCollOpInfo                     *opInfo_{nullptr};
+    u32                                 userRank_;
     std::vector<Stream>                       subStreams_;
     std::vector<std::shared_ptr<LocalNotify>> mainSignals_;
     std::vector<std::shared_ptr<LocalNotify>> subSignals_;
-    const std::vector<u32>                    ringsOrder_;
-    const std::vector<std::vector<u32>>       ringsOrders_;
-    const std::vector<Slice>                  userMemOutputSlices_;
-    const std::vector<std::vector<Slice>>     userMemOutputSlicesOfDoubleRing_;
+    std::vector<u32>                    ringsOrder_;
+    std::vector<std::vector<u32>>       ringsOrders_;
+    std::vector<Slice>                  userMemOutputSlices_;
+    std::vector<std::vector<Slice>>     userMemOutputSlicesOfDoubleRing_;
 };
 } // namespace hccl
 

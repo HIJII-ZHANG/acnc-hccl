@@ -37,6 +37,7 @@ protected:
     HcclResult parseJsonBuff(const char buff[], u32 buffLen, nlohmann::json& buffJson) const;
     HcclResult Json2Struct(const nlohmann::json& jClusterJson, RankTable_t &clusterInfo) const;
     HcclResult Struct2Json(const RankTable_t &clusterInfo, nlohmann::json& ClusterJson);
+    HcclResult SetClusterDeploy(const nlohmann::json& jClusterJson, RankTable_t &clusterInfo) const;
     HcclResult TransformRankListToJson(const RankTable_t &clusterInfo, nlohmann::json& rankListJson) const;
     u32 currentStep_; // topo detect 分为多个step， 用以校验server和agent的step是否一致。
     bool isByMasterInfo_ = false;

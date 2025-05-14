@@ -16,6 +16,7 @@
 #include "common.h"
 #include "device_capacity.h"
 #include "coll_alg_param.h"
+#include "op_context.h"
 
 namespace hccl {
 constexpr u64 MAX_ALLTOALL_MESH_ALGO_RANK_INTRA_MESH = 32;
@@ -34,7 +35,6 @@ bool IsSupportDirectFullmeshForAlltoallv(const OpParam& param, DevType deviceTyp
     bool isSingleMeshAggregation, u32 userRankSize);
 bool FullmeshPairwiseSatisfyHighPerfAlltoallMeshCondition(DevType deviceType, u32 rankSize, bool useSuperPodMode);
 bool SatisfyIntraSuperPod(DevType deviceType, u32 rankSize, bool useSuperPodMode, u32 superPodNum = 1);
-u64 GetGlobalMaxUserInSize(const std::vector<SendRecvInfo> &allMeshAggregationSendRecvInfo);
 bool HcclOpInplaceDefaultCase(const OpParam &param, u8 &isInplaceStatus);
 bool IsInputOutputOverlap(const OpParam &param, u64 inputDataSize, u64 outputDataSize, u8 &isInplaceStatus);
 bool IsInputOutPtrNotNullPtr(const OpParam &param, u8 &isInplaceStatus);

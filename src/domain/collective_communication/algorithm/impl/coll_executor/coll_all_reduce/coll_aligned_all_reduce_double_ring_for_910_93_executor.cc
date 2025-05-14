@@ -9,6 +9,7 @@
  */
 
 #include "coll_aligned_all_reduce_double_ring_for_910_93_executor.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 
@@ -49,13 +50,13 @@ HcclResult CollAlignedAllReduceDoubleRingFor91093Executor::DoubleRingReduceScatt
     std::vector<std::vector<u32>> rankOrders;
     CHK_RET(CollectMultiRingsRankOrder(ringNum, multiRingsOrder, rankOrders));
     // 初始化executor
-    std::unique_ptr<AlgTemplateBase> tempAlg;
-    tempAlg.reset(new (std::nothrow) AlignedReduceScatterDoubleRing(dispatcher_,
-        reduceAttr, opInfo, topoAttr_.userRank, algResResp_->slaveStreams, algResResp_->notifiesMain,
-        algResResp_->notifiesAux, rankOrders, userMemInputSlicesOfDoubleRing));
+    std::unique_ptr<AlgTemplateBase> tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_REDUCESCATTER_DB_RING, dispatcher_);
     CHK_SMART_PTR_NULL(tempAlg);
     ret = tempAlg->Prepare(inputMem, inputMem, outputMem, count, dataType, stream,
-        multRingsSliceZero, reductionOp, LEVEL0_BRIDGE_RANK_ID, baseOffset, disableDMAReduce);
+        multRingsSliceZero, reductionOp, LEVEL0_BRIDGE_RANK_ID, baseOffset, disableDMAReduce, 
+        reduceAttr, opInfo, topoAttr_.userRank, algResResp_->slaveStreams, algResResp_->notifiesMain, 
+        algResResp_->notifiesAux, rankOrders, userMemInputSlicesOfDoubleRing);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAlignedAllReduceDoubleRingFor91093Executor][DoubleRingReduceScatter] Double ring "
                    "reduce scatter failed,return[%d]", ret), ret);
@@ -67,7 +68,6 @@ HcclResult CollAlignedAllReduceDoubleRingFor91093Executor::DoubleRingReduceScatt
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAlignedAllReduceDoubleRingFor91093Executor][DoubleRingReduceScatter] Double ring "
                    "reduce scatter failed,return[%d]", ret), ret);
-
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     ret = RunTemplate(tempAlg, level0RingCommInfo);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
@@ -102,11 +102,11 @@ HcclResult CollAlignedAllReduceDoubleRingFor91093Executor::DoubleRingAllGather(
     std::vector<std::vector<u32>> rankOrders;
     CHK_RET(CollectMultiRingsRankOrder(ringNum, multiRingsOrder, rankOrders));
     // 初始化executor
-    std::unique_ptr<AlgTemplateBase> tempAlg;
-    tempAlg.reset(new (std::nothrow) AlignedAllGatherDoubleRing(dispatcher_,
-        opInfo, topoAttr_.userRank, algResResp_->slaveStreams, algResResp_->notifiesMain,
-        algResResp_->notifiesAux, rankOrders, userMemOutputSlicesOfDoubleRing));
+    std::unique_ptr<AlgTemplateBase> tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_ALIGNED_ALL_GATHER_DOUBLE_RING, dispatcher_);
     CHK_SMART_PTR_NULL(tempAlg);
+    CHK_RET(tempAlg->Prepare(const_cast<HcomCollOpInfo*>(opInfo), topoAttr_.userRank, algResResp_->slaveStreams, 
+        algResResp_->notifiesMain, algResResp_->notifiesAux, rankOrders, userMemOutputSlicesOfDoubleRing));
 
     ret = tempAlg->Prepare(outputMem, outputMem, inputMem, count, dataType, stream, multRingsSliceZero,
         HCCL_REDUCE_RESERVED, LEVEL0_BRIDGE_RANK_ID, baseOffset);
@@ -123,12 +123,13 @@ HcclResult CollAlignedAllReduceDoubleRingFor91093Executor::DoubleRingAllGather(
         HCCL_ERROR("[CollAlignedAllReduceDoubleRingFor91093Executor][DoubleRingAllGather]Double ring "
         "all gather failed, return[%d]", ret), ret);
 
+    // 空拷贝用于后续操作附着
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     ret = RunTemplate(tempAlg, level0ZeroCommInfo);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAlignedAllReduceDoubleRingFor91093Executor][DoubleRingAllGather] Double ring "
                    "all gather failed,return[%d]", ret), ret);
-
+    // 添加空task,保证执行时不乱序
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     return HCCL_SUCCESS;
 }

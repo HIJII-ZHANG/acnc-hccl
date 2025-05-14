@@ -9,23 +9,31 @@
  */
 
 #include "scatter_ring_concurrent_direct.h"
+#include "alg_template_register.h"
 
 namespace hccl {
-ScatterRingConcurrentDirect::ScatterRingConcurrentDirect(const HcclDispatcher dispatcher,
-                                                         const HcomCollOpInfo *opInfo, const u32 userRank,
-                                                         std::vector<Stream>                             &subStreams,
-                                                         const std::vector<std::shared_ptr<LocalNotify>> &mainSignals,
-                                                         const std::vector<std::shared_ptr<LocalNotify>> &subSignals,
-                                                         const std::vector<u32>                          &ringsOrder,
-                                                         const std::vector<Slice> &userMemInputSlices)
-    : AlgTemplateBase(dispatcher), opInfo_(opInfo), userRank_(userRank), subStreams_(subStreams),
-      mainSignals_(mainSignals), subSignals_(subSignals), ringsOrder_(ringsOrder),
-      userMemInputSlices_(userMemInputSlices)
+ScatterRingConcurrentDirect::ScatterRingConcurrentDirect(const HcclDispatcher dispatcher)
+    : AlgTemplateBase(dispatcher)
 {
 }
 
 ScatterRingConcurrentDirect::~ScatterRingConcurrentDirect()
 {
+}
+
+HcclResult ScatterRingConcurrentDirect::Prepare(HcomCollOpInfo *opInfo, const u32 userRank,
+    std::vector<Stream> &subStreams, const std::vector<std::shared_ptr<LocalNotify>> &mainSignals,
+    const std::vector<std::shared_ptr<LocalNotify>> &subSignals, const std::vector<u32> &ringsOrder,
+    const std::vector<Slice> &userMemSlices, bool isSdma)
+{
+    opInfo_ = opInfo;
+    userRank_ = userRank;
+    subStreams_ = subStreams;
+    mainSignals_ = mainSignals;
+    subSignals_ = subSignals;
+    ringsOrder_ = ringsOrder;
+    userMemInputSlices_ = userMemSlices;
+    return HCCL_SUCCESS;
 }
 
 // reduce scatter ring direct算法的函数入口
@@ -329,4 +337,5 @@ HcclResult ScatterRingConcurrentDirect::SubRecordMain()
     }
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_SCATTER_RING_CONCURRENT_DIRECT, ScatterRingConcurrentDirect);
 } // namespace hccl

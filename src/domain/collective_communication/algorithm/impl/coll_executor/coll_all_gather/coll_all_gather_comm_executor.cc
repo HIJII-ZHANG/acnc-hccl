@@ -77,16 +77,16 @@ HcclResult CollAllGatherCommExecutor::KernelRun(const OpParam &param, ExecMem &e
     // 构造ring algorithm对应的all_gather实例
     std::unique_ptr<AlgTemplateBase> tempAlg;
     if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
-        tempAlg.reset(new (std::nothrow) AllGatherNHR(dispatcher_));
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_GATHER_NHR, dispatcher_);
         HCCL_INFO("algather comm: using nhr algo inter-server.");
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
-        tempAlg.reset(new (std::nothrow) AllGatherNHRV1(dispatcher_));
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_GATHER_NHRV1, dispatcher_);
         HCCL_INFO("algather comm: using nhr_v1 algo inter-server.");
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
-        tempAlg.reset(new (std::nothrow) AllGatherNB(dispatcher_));
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_GATHER_NB, dispatcher_);
         HCCL_INFO("algather comm: using nonuniform-bruck algo inter-server.");
     } else {
-        tempAlg.reset(new (std::nothrow) AllGatherRing(dispatcher_));
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_GATHER_RING, dispatcher_);
         HCCL_INFO("algather comm: ring algo inter-server.");
     }
     CHK_SMART_PTR_NULL(tempAlg);

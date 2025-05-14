@@ -133,14 +133,14 @@ HcclResult CollReduceScatterVMeshOpbaseExecutor::KernelRun(const OpParam &param,
     }
 
     u64 reduceAttr = GetReduceAttr(execMem.inputMem, execMem.outputMem, dataType, param.reduceType);
-    std::unique_ptr<AlgTemplateBase> TempAlg;
-    TempAlg.reset(new (std::nothrow) ReduceScatterMeshDirect(dispatcher_, reduceAttr,
-        algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
-        topoAttr_.userRank, opInfoPtr));
+    std::unique_ptr<AlgTemplateBase> TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_REDUCESCATTER_MESH_DIRECT, dispatcher_);
     CHK_SMART_PTR_NULL(TempAlg);
 
     CHK_RET(TempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.scratchMem, execMem.count, dataType,
-        param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID, inputSlices, 0));
+        param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID, inputSlices, 0, reduceAttr,
+        algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
+        topoAttr_.userRank, opInfoPtr));
 
     CHK_RET(TempAlg->RegisterProfiler(
         (subCommInfo.localRankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + subCommInfo.localRank,

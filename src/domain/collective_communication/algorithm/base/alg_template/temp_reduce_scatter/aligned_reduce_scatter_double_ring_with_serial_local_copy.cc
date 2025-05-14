@@ -9,15 +9,11 @@
  */
 
 #include "aligned_reduce_scatter_double_ring_with_serial_local_copy.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 AlignedReduceScatterDoubleRingWithSerialLocalCopy::AlignedReduceScatterDoubleRingWithSerialLocalCopy(
-    const HcclDispatcher dispatcher, const u64 reduceAttrBitMap, const HcomCollOpInfo *opInfo,
-    const u32 userRank, std::vector<Stream> &subStreams, const std::vector<std::shared_ptr<LocalNotify>> &mainSignals,
-    const std::vector<std::shared_ptr<LocalNotify>> &subSignals, const std::vector<std::vector<u32>> &ringsOrders,
-    const std::vector<std::vector<Slice>> &userMemInputSlicesOfDoubleRing)
-    : AlignedReduceScatterDoubleRing(dispatcher, reduceAttrBitMap,
-        opInfo, userRank, subStreams, mainSignals, subSignals, ringsOrders, userMemInputSlicesOfDoubleRing)
+    const HcclDispatcher dispatcher) : AlignedReduceScatterDoubleRing(dispatcher)
 {
 }
 
@@ -386,4 +382,5 @@ HcclResult AlignedReduceScatterDoubleRingWithSerialLocalCopy::SubRecordMain()
     }
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_REDUCESCATTER_DB_RING_SLC, AlignedReduceScatterDoubleRingWithSerialLocalCopy);
 } // namespace hccl

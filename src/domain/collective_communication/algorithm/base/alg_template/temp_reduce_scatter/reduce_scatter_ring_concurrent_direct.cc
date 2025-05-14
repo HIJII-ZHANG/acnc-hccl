@@ -9,21 +9,35 @@
  */
 
 #include "reduce_scatter_ring_concurrent_direct.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 ReduceScatterRingConcurrentDirect::ReduceScatterRingConcurrentDirect(
-    const HcclDispatcher dispatcher, const u64 reduceAttrBitMap, const HcomCollOpInfo *opInfo,
-    const u32 userRank, std::vector<Stream> &subStreams, const std::vector<std::shared_ptr<LocalNotify>> &mainSignals,
-    const std::vector<std::shared_ptr<LocalNotify>> &subSignals, const std::vector<u32> &ringsOrder,
-    const std::vector<Slice> &userMemInputSlices, bool isSdma)
-    : AlgTemplateBase(dispatcher), reduceAttr_(reduceAttrBitMap), opInfo_(opInfo), userRank_(userRank),
-      subStreams_(subStreams), mainSignals_(mainSignals), subSignals_(subSignals), ringsOrder_(ringsOrder),
-      userMemInputSlices_(userMemInputSlices), isSdma_(isSdma)
+    const HcclDispatcher dispatcher) : AlgTemplateBase(dispatcher)
 {
 }
 
 ReduceScatterRingConcurrentDirect::~ReduceScatterRingConcurrentDirect()
 {
+}
+
+HcclResult ReduceScatterRingConcurrentDirect::Prepare(const u64 reduceAttrBitMap, const HcomCollOpInfo *opInfo,
+                                                      const u32 userRank, std::vector<Stream> &subStreams,
+                                                      const std::vector<std::shared_ptr<LocalNotify>> &mainSignals,
+                                                      const std::vector<std::shared_ptr<LocalNotify>> &subSignals,
+                                                      const std::vector<u32> &ringsOrder,
+                                                      const std::vector<Slice> &userMemInputSlices, bool isSdma)
+{
+    reduceAttr_ = reduceAttrBitMap;
+    opInfo_ = opInfo;
+    userRank_ = userRank;
+    subStreams_ = subStreams;
+    mainSignals_ = mainSignals;
+    subSignals_ = subSignals;
+    ringsOrder_ = ringsOrder;
+    userSlices_ = userMemInputSlices;
+    isSdma_ = isSdma;
+    return HCCL_SUCCESS;
 }
 
 // reduce scatter ring direct算法的函数入口
@@ -88,9 +102,9 @@ HcclResult ReduceScatterRingConcurrentDirect::CheckParameters(const u32 rank, co
                            ringsOrder_.size(), rankSize),
                 HCCL_E_PARA);
     // 判断userMemInputSlices数量是否正确
-    CHK_PRT_RET(userMemInputSlices_.size() % rankSize != 0,
+    CHK_PRT_RET(userSlices_.size() % rankSize != 0,
         HCCL_ERROR("[ReduceScatterRingConcurrentDirect] userMemInputSlices size[%u] can not divided by size[%u]",
-                   userMemInputSlices_.size(), rankSize),
+                   userSlices_.size(), rankSize),
         HCCL_E_PARA);
     HCCL_INFO("ReduceScatterRingConcurrentDirect CheckParameters success");
     return HCCL_SUCCESS;
@@ -99,7 +113,7 @@ HcclResult ReduceScatterRingConcurrentDirect::CheckParameters(const u32 rank, co
 HcclResult ReduceScatterRingConcurrentDirect::OneRankMemcpy()
 {
     for (u32 sliceIdx = 0; sliceIdx < slices_.size(); sliceIdx++) {
-        const Slice &srcSlice = userMemInputSlices_[sliceIdx];
+        const Slice &srcSlice = userSlices_[sliceIdx];
         const Slice &dstSlice = slices_[sliceIdx];
         DeviceMem src = DeviceMem::create(static_cast<u8 *>(opInfo_->inputAddr) + srcSlice.offset, srcSlice.size);
         DeviceMem dst;
@@ -188,12 +202,12 @@ HcclResult ReduceScatterRingConcurrentDirect::RunInitStep(const u32 rank, const 
 
     for (u32 sliceIdx = 0; sliceIdx < sliceSize; sliceIdx++) {
         // 第-1步，片内将部分数据从userIn搬到cclIn
-        const Slice &srcInitSlice0 = userMemInputSlices_[initSlice0Idx * sliceSize + sliceIdx];
+        const Slice &srcInitSlice0 = userSlices_[initSlice0Idx * sliceSize + sliceIdx];
         DeviceMem    srcSubInit
             = DeviceMem::create(static_cast<u8 *>(opInfo_->inputAddr) + srcInitSlice0.offset, srcInitSlice0.size);
         const Slice &dstInitSlice0 = slices_[initSlice0Idx * sliceSize + sliceIdx];
         DeviceMem    dstSubInit    = inputMem_.range(dstInitSlice0.offset, dstInitSlice0.size);
-        const Slice &srcInitSlice1 = userMemInputSlices_[initSlice1Idx * sliceSize + sliceIdx];
+        const Slice &srcInitSlice1 = userSlices_[initSlice1Idx * sliceSize + sliceIdx];
         DeviceMem    srcInit
             = DeviceMem::create(static_cast<u8 *>(opInfo_->inputAddr) + srcInitSlice1.offset, srcInitSlice1.size);
         const Slice &dstInitSlice1 = slices_[initSlice1Idx * sliceSize + sliceIdx];
@@ -206,7 +220,8 @@ HcclResult ReduceScatterRingConcurrentDirect::RunInitStep(const u32 rank, const 
                 "Memcpy operation: step[-1] stream[main] src rank[%u] starts to copy(rcv) offset[%llu], size[%llu] on "
                 "userMemInput to offset[%llu], size[%llu] on userMemOut_",
                 userRank_, srcInitSlice1.offset, srcInitSlice1.size, lastStepOffset_, dstInitSlice1.size);
-            dstInit = DeviceMem::create(static_cast<u8 *>(opInfo_->outputAddr) + lastStepOffset_, dstInitSlice1.size);
+            dstInit = DeviceMem::create(static_cast<u8 *>(opInfo_->outputAddr) + lastStepOffset_,
+                dstInitSlice1.size);
         } else {
             HCCL_DEBUG(
                 "Memcpy operation: step[-1] stream[main] src rank[%u] starts to copy(rcv) offset[%llu], size[%llu] on "
@@ -421,7 +436,6 @@ HcclResult ReduceScatterRingConcurrentDirect::RunReduceScatter(const u32 rank, c
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
     CHK_RET(MainRecordSub()); // 主流通知从流开始通信
     CHK_RET(SubWaitMain());   // 从流等待主流通知
-
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem_, outputMem_, subStreams_[0], dispatcher_));
     u32 sliceSize = slices_.size() / rankSize;
@@ -439,7 +453,7 @@ HcclResult ReduceScatterRingConcurrentDirect::RunReduceScatter(const u32 rank, c
             rxSliceVector.push_back(slices_[rxSliceIdx * sliceSize + sliceIdx]);
             cclSliceVector.push_back(slices_[subSliceIdx * sliceSize + sliceIdx]);
             txSliceVector.push_back(slices_[txSliceIdx * sliceSize + sliceIdx]);
-            subSliceVector.push_back(userMemInputSlices_[subSliceIdx * sliceSize + sliceIdx]);
+            subSliceVector.push_back(userSlices_[subSliceIdx * sliceSize + sliceIdx]);
         }
 
         // 主流
@@ -498,4 +512,5 @@ HcclResult ReduceScatterRingConcurrentDirect::SubRecordMain()
     }
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_REDUCESCATTER_RING_DIRECT, ReduceScatterRingConcurrentDirect);
 } // namespace hccl

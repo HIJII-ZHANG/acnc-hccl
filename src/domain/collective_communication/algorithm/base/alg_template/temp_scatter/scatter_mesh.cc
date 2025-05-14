@@ -9,16 +9,23 @@
  */
 
 #include "scatter_mesh.h"
+#include "alg_template_register.h"
 
 namespace hccl {
-ScatterMesh::ScatterMesh(const HcclDispatcher dispatcher,
-    const u32 interRank, const u32 interRankSize)
-    : AlgTemplateBase(dispatcher), interRank_(interRank), interRankSize_(interRankSize)
+ScatterMesh::ScatterMesh(const HcclDispatcher dispatcher)
+    : AlgTemplateBase(dispatcher)
 {
 }
 
 ScatterMesh::~ScatterMesh()
 {
+}
+
+HcclResult ScatterMesh::Prepare(u32 interRank, u32 interRankSize)
+{
+    interRank_ = interRank;
+    interRankSize_ = interRankSize;
+    return HCCL_SUCCESS;
 }
 
 void ScatterMesh::PrepareSlicesData(const u32 unitSize, const u64 totalCount, const u32 rankSize) const
@@ -153,4 +160,5 @@ HcclResult ScatterMesh::RunRecvScatter(const u32 srcRank, const Slice &slice, co
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[Run][SendScatter]RxWaitDone failed"), ret);
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_SCATTER_MESH, ScatterMesh);
 }  // namespace hccl

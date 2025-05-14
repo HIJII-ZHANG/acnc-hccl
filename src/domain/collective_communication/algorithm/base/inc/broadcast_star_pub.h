@@ -16,9 +16,14 @@
 namespace hccl {
 class BroadcastStar : public AlgTemplateBase {
 public:
-    explicit BroadcastStar(const HcclDispatcher dispatcher, u32 userRank);
-
+    explicit BroadcastStar(const HcclDispatcher dispatcher);
     ~BroadcastStar() override;
+
+    HcclResult Prepare(DeviceMem &inputMem, DeviceMem &outputMem, DeviceMem &scratchMem, 
+        const u64 count, const HcclDataType dataType, const Stream &stream, 
+        const HcclReduceOp reductionOp, const u32 root, 
+        const std::vector<Slice> &slices, const u64 baseOffset, 
+        std::vector<u32> nicRankList, u32 userRank) override;
 
     HcclResult RunAsync(const u32 rank, const u32 rankSize,
         const std::vector<std::shared_ptr<Transport>> &links) override;
@@ -30,7 +35,7 @@ private:
         const std::vector<std::shared_ptr<Transport>> &links);
     HcclResult ExecuteBarrierSrcRank(std::shared_ptr<Transport> link, Stream &stream) const;
 
-    u32 userRank_;
+    u32 userRank_ = 0;
 };
 } // namespace hccl
 

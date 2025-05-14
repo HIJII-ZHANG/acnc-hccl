@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "coll_aligned_reduce_scatter_double_ring_for_910_93_executor.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 CollAlignedReduceScatterDoubleRingFor91093Executor::CollAlignedReduceScatterDoubleRingFor91093Executor(
@@ -51,13 +52,13 @@ HcclResult CollAlignedReduceScatterDoubleRingFor91093Executor::DoubleRingReduceS
     std::vector<std::vector<u32>> rankOrders;
     CHK_RET(CollectMultiRingsRankOrder(ringNum, multiRingsOrder, rankOrders));
     // 初始化executor
-    std::unique_ptr<AlgTemplateBase> tempAlg;
-    tempAlg.reset(new (std::nothrow) AlignedReduceScatterDoubleRing(
-        dispatcher_, reduceAttr, opInfo, topoAttr_.userRank, algResResp_->slaveStreams,
-        algResResp_->notifiesMain, algResResp_->notifiesAux, rankOrders, userMemInputSlicesOfDoubleRing));
+    std::unique_ptr<AlgTemplateBase> tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_REDUCESCATTER_DB_RING, dispatcher_);
     CHK_SMART_PTR_NULL(tempAlg);
     ret = tempAlg->Prepare(inputMem, inputMem, outputMem, count, dataType, stream, multRingsSliceZero,
-        reductionOp, LEVEL0_BRIDGE_RANK_ID, baseOffset, disableDMAReduce);
+        reductionOp, LEVEL0_BRIDGE_RANK_ID, baseOffset, disableDMAReduce,
+        reduceAttr, opInfo, topoAttr_.userRank, algResResp_->slaveStreams,
+        algResResp_->notifiesMain, algResResp_->notifiesAux, rankOrders, userMemInputSlicesOfDoubleRing);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAlignedReduceScatterDoubleRingFor91093Executor][DoubleRingReduceScatter] Double ring reduce scatter failed"
         "failed,return[%d]", ret), ret);
@@ -70,7 +71,6 @@ HcclResult CollAlignedReduceScatterDoubleRingFor91093Executor::DoubleRingReduceS
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAlignedReduceScatterDoubleRingFor91093Executor][DoubleRingReduceScatter] Double ring reduce scatter failed "
         "failed,return[%d]", ret), ret);
-
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     ret = RunTemplate(tempAlg, level0RingCommInfo);
     CHK_PRT_RET(ret != HCCL_SUCCESS,

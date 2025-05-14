@@ -10,16 +10,23 @@
 
 #include "reduce_scatter_halving_doubling_pub.h"
 #include "reduce_scatter_recursive_hd.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 ReduceScatterRecursiveHalvingDoubling::ReduceScatterRecursiveHalvingDoubling(
-    const HcclDispatcher dispatcher, const u64 reduceAttrBitMap)
-    : RecursiveHalvingDoublingBase(dispatcher), reduceAttr(reduceAttrBitMap)
+    const HcclDispatcher dispatcher) : RecursiveHalvingDoublingBase(dispatcher)
 {
 }
 
 ReduceScatterRecursiveHalvingDoubling::~ReduceScatterRecursiveHalvingDoubling()
 {
+}
+
+HcclResult ReduceScatterRecursiveHalvingDoubling::Prepare(u64 reduceAttrBitMap, HcomCollOpInfo *opInfo)
+{
+    (void)opInfo;
+    reduceAttr = reduceAttrBitMap;
+    return HCCL_SUCCESS;
 }
 
 // reducescatter recursiveHD 入口函数
@@ -170,12 +177,13 @@ HcclResult ReduceScatterRecursiveHalvingDoubling::ReduceScatterInBlock(u32 rank,
         rankInBlock = rank - part1Size_ / 2; // 通过rank减去part1除2的大小即不处于第一部分的block内rank号
     }
 
-    ReduceScatterHalvingDoubling executor(blockSize_, dispatcher_, reduceAttr,
-        UserMemType::INPUT_MEM, UserMemType::OUTPUT_MEM);
-    CHK_RET(executor.Prepare(inputMem_, inputMem_, scratchMem_, count_, dataType_, stream_,
-        reductionOp_, root_, slices_, baseOffset_));
+    std::unique_ptr<AlgTemplateBase> executor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_REDUCESCATTER_HD, dispatcher_);
+    CHK_RET(executor->Prepare(inputMem_, inputMem_, scratchMem_, count_, dataType_, stream_,
+        reductionOp_, root_, slices_, baseOffset_, blockSize_, reduceAttr,
+        UserMemType::INPUT_MEM, UserMemType::OUTPUT_MEM));
 
-    CHK_RET(executor.RegisterProfiler(profilerInput_.planeID, profilerInput_.stage, profilerInput_.step, stream_));
+    CHK_RET(executor->RegisterProfiler(profilerInput_.planeID, profilerInput_.stage, profilerInput_.step, stream_));
 
     std::vector<LINK> subLinks;
     CHK_RET(BuildSubLinks(links, subLinks, rankSize));
@@ -183,7 +191,7 @@ HcclResult ReduceScatterRecursiveHalvingDoubling::ReduceScatterInBlock(u32 rank,
     CHK_PRT_RET(subLinks.size() == 0,
         HCCL_ERROR("[ReduceScatterRecursiveHalvingDoubling][ReduceScatterInBlock]rank[%u] "\
             "build sub links failed", rank), HCCL_E_PARA);
-    CHK_RET(executor.RunAsync(rankInBlock, blockSize_, subLinks));
+    CHK_RET(executor->RunAsync(rankInBlock, blockSize_, subLinks));
 
     return HCCL_SUCCESS;
 }
@@ -211,7 +219,8 @@ HcclResult ReduceScatterRecursiveHalvingDoubling::ScatterInPartOne(u32 rank, u32
 
             u64 offset = peerRank * bytesPerSlice; // 计算对端rank的slice偏移
             void *srcAddr = reinterpret_cast<s8 *>(inputMem_.ptr()) + offset;
-            ret = ExecuteTxSync(links[peerRank], UserMemType::INPUT_MEM, offset, srcAddr, bytesPerSlice, stream_);
+            ret = ExecuteTxSync(links[peerRank], UserMemType::INPUT_MEM, offset + baseOffset_, srcAddr, bytesPerSlice,
+                stream_);
             CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[Scatter][InPartOne]tx sync to peerank[%u] failed",
                 peerRank), ret);
             ret = links[peerRank]->TxWaitDone(stream_);
@@ -232,7 +241,8 @@ HcclResult ReduceScatterRecursiveHalvingDoubling::ScatterInPartOne(u32 rank, u32
 
             u64 offset = rank * bytesPerSlice; // 本rank slice偏移
             void *dstAddr = reinterpret_cast<s8 *>(inputMem_.ptr()) + offset;
-            ret = ExecuteRxSync(links[peerRank], UserMemType::INPUT_MEM, offset, dstAddr, bytesPerSlice, stream_);
+            ret = ExecuteRxSync(links[peerRank], UserMemType::INPUT_MEM, offset + baseOffset_, dstAddr, bytesPerSlice,
+                stream_);
             CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[Scatter][InPartOne]rx sync from peerank[%u] failed",
                 peerRank), ret);
             ret = links[peerRank]->RxWaitDone(stream_);
@@ -242,4 +252,5 @@ HcclResult ReduceScatterRecursiveHalvingDoubling::ScatterInPartOne(u32 rank, u32
 
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_REDUCESCATTER_RECURSIVE_HD, ReduceScatterRecursiveHalvingDoubling);
 }  // namespace hccl

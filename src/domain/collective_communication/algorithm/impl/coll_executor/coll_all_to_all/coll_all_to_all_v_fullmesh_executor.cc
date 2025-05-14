@@ -119,10 +119,8 @@ HcclResult CollRunAlltoAllVFullMesh::KernelRun(const OpParam &param, ExecMem &ex
         }
         CHK_RET(AddSubStreamToProfiling());
 
-        std::unique_ptr<AlltoAllVMeshReadOnly> alltoallReadOnly = nullptr;
-        alltoallReadOnly.reset(new (std::nothrow) AlltoAllVMeshReadOnly(dispatcher_, const_cast<Stream&>(param.stream),
-            algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux, topoAttr_.userRank,
-            topoAttr_.userRankSize, level0CommInfo.links, allMeshAggregationSendRecvInfo_));
+        std::unique_ptr<AlgTemplateBase> alltoallReadOnly = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_ALL_2_ALL_V_MESH_READ_ONLY, dispatcher_);
         CHK_SMART_PTR_NULL(alltoallReadOnly);
 
         AlltoAllUserRankInfo userRankInfo;
@@ -133,12 +131,17 @@ HcclResult CollRunAlltoAllVFullMesh::KernelRun(const OpParam &param, ExecMem &ex
         CalcIntraMeshAggregationAlltoAllMemInfo(userRankInfo, allMeshAggregationSendRecvInfo_, sendAddrInfosIntra,
             recvAddrInfosIntra, topoAttr_.userRankSize, true);
         if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-            CHK_RET(alltoallReadOnly->Prepare(algResResp_->paramInputMem, algResResp_->paramOutputMem, execMem.inputMem,
-                execMem.outputMem, sendAddrInfosIntra, recvAddrInfosIntra, workflowMode_));
+            CHK_RET(alltoallReadOnly->Prepare(algResResp_->paramInputMem, algResResp_->paramOutputMem,
+                execMem.inputMem, execMem.outputMem, sendAddrInfosIntra, recvAddrInfosIntra, workflowMode_,
+                const_cast<Stream&>(param.stream), algResResp_->slaveStreams,
+                algResResp_->notifiesMain, algResResp_->notifiesAux, topoAttr_.userRank,
+                topoAttr_.userRankSize, level0CommInfo.links, allMeshAggregationSendRecvInfo_));
         } else {
             CHK_RET(alltoallReadOnly->Prepare(algResResp_->paramInputMem, algResResp_->paramOutputMem,
                 algResResp_->paramInputMem, algResResp_->paramOutputMem, sendAddrInfosIntra,
-                recvAddrInfosIntra, workflowMode_));
+                recvAddrInfosIntra, workflowMode_, const_cast<Stream&>(param.stream), algResResp_->slaveStreams,
+                algResResp_->notifiesMain, algResResp_->notifiesAux, topoAttr_.userRank,
+                topoAttr_.userRankSize, level0CommInfo.links, allMeshAggregationSendRecvInfo_));
         }
         CHK_RET(alltoallReadOnly->RunAsync());
         return HCCL_SUCCESS;
@@ -154,33 +157,29 @@ HcclResult CollRunAlltoAllVFullMesh::KernelRun(const OpParam &param, ExecMem &ex
         }
     }
 
-    std::unique_ptr<AlltoAllVPairWise> pairWisePtr = nullptr;
+    std::unique_ptr<AlgTemplateBase> pairWisePtr = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_ALL_2_ALL_V_PAIRWISE, dispatcher_);
+    CHK_SMART_PTR_NULL(pairWisePtr);
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE &&
         !isAlltoAllZCopyMode_) { // 单算子 && Buffer Copy模式
-        pairWisePtr.reset(new (std::nothrow)AlltoAllVPairWise(dispatcher_));
-        CHK_SMART_PTR_NULL(pairWisePtr);
         CHK_RET(pairWisePtr->Prepare(sendInfo, recvInfo, execMem.inputMem, execMem.outputMem, isAlltoAllZCopyMode_,
-            const_cast<Stream&>(param.stream)));
+            const_cast<Stream&>(param.stream), workflowMode_, rankSendDisplsMap, rankRecvDisplsMap));
         CHK_RET(RunAlltoAllTemplate(pairWisePtr, level0CommInfo));
     } else if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE &&
         isAlltoAllZCopyMode_) {
-        pairWisePtr.reset(new (std::nothrow)AlltoAllVPairWise(dispatcher_, rankSendDisplsMap, rankRecvDisplsMap,
-            HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE));
-        CHK_SMART_PTR_NULL(pairWisePtr);
         DeviceMem dstMem = execMem.inputMem.range(0, algResResp_->paramInputMem.size());
         CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dstMem, algResResp_->paramInputMem, const_cast<Stream&>(param.stream)));
 
         CHK_RET(pairWisePtr->Prepare(sendInfo, recvInfo, execMem.inputMem, execMem.outputMem,
-            isAlltoAllZCopyMode_, const_cast<Stream&>(param.stream)));
+            isAlltoAllZCopyMode_, const_cast<Stream&>(param.stream),
+            workflowMode_, rankSendDisplsMap, rankRecvDisplsMap));
         CHK_RET(RunAlltoAllTemplate(pairWisePtr, level0CommInfo)); // inputMem_ -> outputMem_
 
         DeviceMem srcMem = execMem.outputMem.range(0, algResResp_->paramOutputMem.size());
         CHK_RET(HcclD2DMemcpyAsync(dispatcher_, algResResp_->paramOutputMem, srcMem, const_cast<Stream&>(param.stream)));
     } else if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB) {
-        pairWisePtr.reset(new (std::nothrow)AlltoAllVPairWise(dispatcher_, rankSendDisplsMap, rankRecvDisplsMap,
-            HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB));
-        CHK_SMART_PTR_NULL(pairWisePtr);
-        CHK_RET(pairWisePtr->Prepare(sendInfo, recvInfo, isAlltoAllZCopyMode_, const_cast<Stream&>(param.stream)));
+        CHK_RET(pairWisePtr->Prepare(sendInfo, recvInfo, isAlltoAllZCopyMode_, const_cast<Stream&>(param.stream),
+        workflowMode_, rankSendDisplsMap, rankRecvDisplsMap));
         // 保证最新的commMesh是为该次alltoallv创建（不支持多线程）
         CHK_RET(RunAlltoAllTemplate(pairWisePtr, level0CommInfo));
     } else {

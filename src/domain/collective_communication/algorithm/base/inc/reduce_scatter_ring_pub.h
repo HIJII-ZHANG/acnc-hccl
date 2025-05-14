@@ -18,10 +18,10 @@
 namespace hccl {
 class ReduceScatterRing : public AlgTemplateBase {
 public:
-    explicit ReduceScatterRing(const HcclDispatcher dispatcher,
-        const u64 reduceAttrBitMap);
+    explicit ReduceScatterRing(const HcclDispatcher dispatcher);
     ~ReduceScatterRing() override;
 
+    HcclResult Prepare(u64 reduceAttrBitMap, HcomCollOpInfo *opInfo = nullptr) override;
     HcclResult RunAsync(const u32 rank, const u32 rankSize, const std::vector<LINK> &links) override;
 
 protected:
@@ -41,7 +41,7 @@ private:
     std::unique_ptr<Sender> senderInfo_;
     std::unique_ptr<Reducer> reducerInfo_;
 
-    const u64 reduceAttr_; /* 0x1:表示data_type + reduce_type支持inlinereduce  */
+    u64 reduceAttr_ = 0; /* 0x1:表示data_type + reduce_type支持inlinereduce  */
 
     // reduce scatter ring chunk实现相关函数
     HcclResult RunReduceScatterChunk(const u32 rank, const u32 rankSize,

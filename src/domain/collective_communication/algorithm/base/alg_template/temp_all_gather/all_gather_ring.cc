@@ -9,6 +9,7 @@
  */
 
 #include "all_gather_ring.h"
+#include "alg_template_register.h"
 
 namespace hccl {
 AllGatherRing::AllGatherRing(const HcclDispatcher dispatcher) : AlgTemplateBase(dispatcher)
@@ -357,4 +358,5 @@ HcclResult AllGatherRing::AllGatherSlicesPrep(u32 rankSize, u32 nicSize)
     }
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_ALL_GATHER_RING, AllGatherRing);
 }  // namespace hccl

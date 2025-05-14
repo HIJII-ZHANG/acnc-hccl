@@ -18,16 +18,15 @@
 namespace hccl {
 class ReduceScatterRingConcurrentDirect : public AlgTemplateBase {
 public:
-    explicit ReduceScatterRingConcurrentDirect(const HcclDispatcher dispatcher,
-                                               const u64 reduceAttrBitMap, const HcomCollOpInfo *opInfo,
-                                               const u32 userRank, std::vector<Stream> &subStreams,
-                                               const std::vector<std::shared_ptr<LocalNotify>> &mainSignals,
-                                               const std::vector<std::shared_ptr<LocalNotify>> &subSignals,
-                                               const std::vector<u32>                          &ringsOrder,
-                                               const std::vector<Slice>                        &userMemInputSlices,
-                                               bool isSdma = true);
+    explicit ReduceScatterRingConcurrentDirect(const HcclDispatcher dispatcher);
     ~ReduceScatterRingConcurrentDirect() override;
 
+    HcclResult Prepare(const u64 reduceAttrBitMap, const HcomCollOpInfo *opInfo, 
+        const u32 userRank, std::vector<Stream> &subStreams, 
+        const std::vector<std::shared_ptr<LocalNotify>> &mainSignals, 
+        const std::vector<std::shared_ptr<LocalNotify>> &subSignals, 
+        const std::vector<u32> &ringsOrder, 
+        const std::vector<Slice> &userMemInputSlices, bool isSdma = true) override;
     HcclResult RunAsync(const u32 rank, const u32 rankSize, const std::vector<LINK> &links) override;
 
 protected:
@@ -63,16 +62,16 @@ private:
     std::unique_ptr<Sender>  senderInfo_;
     std::unique_ptr<Reducer> reducerInfo_;
 
-    const u64                                 reduceAttr_; /* 0x1:表示data_type + reduce_type支持inlinereduce  */
-    const HcomCollOpInfo                     *opInfo_;
-    const u32                                 userRank_;
+    u64                                 reduceAttr_ = 0; /* 0x1:表示data_type + reduce_type支持inlinereduce  */
+    const HcomCollOpInfo                     *opInfo_{nullptr};
+    u32                                 userRank_ = 0;
     std::vector<Stream>                       subStreams_;
     std::vector<std::shared_ptr<LocalNotify>> mainSignals_;
     std::vector<std::shared_ptr<LocalNotify>> subSignals_;
-    const std::vector<u32>                    ringsOrder_;
-    const std::vector<Slice>                  userMemInputSlices_;
+    std::vector<u32>                    ringsOrder_;
+    std::vector<Slice>                  userSlices_;
     u64                                       lastStepOffset_ = 0;
-    bool                                      isSdma_;
+    bool                                      isSdma_ = false;
     DeviceMem                                 finalSrc_;
     DeviceMem                                 finalDst_;
 };

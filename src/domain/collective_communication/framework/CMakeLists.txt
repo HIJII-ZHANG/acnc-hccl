@@ -11,9 +11,10 @@ add_library(hccl  SHARED)
 set(hccl_include_list
     ${HCCL_BASE_DIR}/algorithm/base/inc
     ${HCCL_BASE_DIR}/algorithm/pub_inc
-    ${HCCL_BASE_DIR}/algorithm/alg_research/aiv
+    ${HCCL_BASE_DIR}/algorithm/alg_research/alg_template
     ${HCCL_BASE_DIR}/pub_inc
     ${HCCL_BASE_DIR}/pub_inc/hccl
+    ${HCCL_BASE_DIR}/algorithm/base/alg_aiv_template
     ${HCCL_BASE_DIR}/algorithm/base/alg_template
     ${HCCL_BASE_DIR}/algorithm/base/mc2_handler
     ${HCCL_BASE_DIR}/algorithm/base/alg_template/component/inc
@@ -43,6 +44,7 @@ set(hccl_include_list
     ${HCCL_BASE_DIR}/framework/inc/
     ${HCCL_BASE_DIR}/framework/op_base/src
     ${HCCL_BASE_DIR}/common/health/
+    ${HCCL_BASE_DIR}/common/stream/
 )
 
 if(BUILD_OPEN_PROJECT)
@@ -53,6 +55,7 @@ if(BUILD_OPEN_PROJECT)
     target_include_directories(hccl PRIVATE
         ${HCCL_BASE_DIR}/../../../inc
         ${HCCL_BASE_DIR}/../../../inc/hccl
+        ${HCCL_BASE_DIR}/../../../hccl/
         ${ASCEND_CANN_PACKAGE_PATH}/include
         ${ASCEND_CANN_PACKAGE_PATH}/include/experiment
         ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/hccl
@@ -60,6 +63,7 @@ if(BUILD_OPEN_PROJECT)
         ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/msprof/
         ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/runtime/
         ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/slog/toolchain/
+        ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/mmpa
         ${ASCEND_CANN_PACKAGE_PATH}/include/ascendc/highlevel_api/
         ${THIRD_PARTY_NLOHMANN_PATH}
     )
@@ -81,6 +85,8 @@ else()
         ${TOP_DIR}/open_source/json/include
         ${TOP_DIR}/abl/slog/inc/toolchain                   # experiment/slog/
         ${TOP_DIR}/abl/atrace/inc/utrace
+        ${TOP_DIR}/abl/mmpa/inc/mmpa
+        ${TOP_DIR}/ace/comop/hccl/
     )
 endif()
 
@@ -126,11 +132,14 @@ else()
     target_link_libraries(hccl
             $<BUILD_INTERFACE:kernel_tiling_headers>
             $<BUILD_INTERFACE:slog_headers>
+            $<BUILD_INTERFACE:mmpa_headers>
             -Wl,--no-as-needed
             c_sec
             slog
+            mmpa
             hccl_alg
             hccl_plf
+            hccl_v2
             -Wl,--as-needed
             -lrt
             -ldl

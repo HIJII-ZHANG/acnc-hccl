@@ -9,12 +9,11 @@
  */
 
 #include "all_gather_mesh_atomic.h"
+#include "alg_template_register.h"
 
 namespace hccl {
-AllGatherMeshAtomic::AllGatherMeshAtomic(const HcclDispatcher dispatcher,
-    std::vector<Stream> &meshStreams, const std::vector<std::shared_ptr<LocalNotify>> &meshSignal,
-    const std::vector<std::shared_ptr<LocalNotify>> &meshSignalAux, u32 interRank, u32 interRankSize, u32 userRank)
-    : AllGatherMesh(dispatcher, meshStreams, meshSignal, meshSignalAux, interRank, interRankSize, userRank)
+AllGatherMeshAtomic::AllGatherMeshAtomic(const HcclDispatcher dispatcher)
+    : AllGatherMesh(dispatcher)
 {}
 
 AllGatherMeshAtomic::~AllGatherMeshAtomic() {}
@@ -38,21 +37,21 @@ HcclResult AllGatherMeshAtomic::RunAllGather(const std::vector<LINK> &links, con
 
         if (round == interRankSize_ - 1) {
             for (u32 signalIndex = 0; signalIndex < interRankSize_ - 2; signalIndex++) { // rankSize-2: stream num
-                    CHK_RET(LocalNotify::Wait(subStream, dispatcher_, meshSignal_[signalIndex], profilerInput_.stage));
+                    CHK_RET(LocalNotify::Wait(subStream, dispatcher_, (*meshSignal_)[signalIndex], profilerInput_.stage));
             }
             // 为子图增加一个从stream到主stream的附着点
             DeviceMem src = DeviceMem::create(inputMem_.ptr(), 0);
             DeviceMem dst = DeviceMem::create(outputMem_.ptr(), 0);
             CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dst, src, stream_));
             for (u32 signalIndex = 0; signalIndex < interRankSize_ - 2; signalIndex++) { // rankSize-2: stream num
-                CHK_RET(LocalNotify::Post(subStream, dispatcher_, meshSignalAux_[signalIndex],
+                CHK_RET(LocalNotify::Post(subStream, dispatcher_, (*meshSignalAux_)[signalIndex],
                     profilerInput_.stage));
             }
         } else {
             u32 signalIndex = round - 1;
-            CHK_RET(LocalNotify::Post(subStream, dispatcher_, meshSignal_[signalIndex],
+            CHK_RET(LocalNotify::Post(subStream, dispatcher_, (*meshSignal_)[signalIndex],
                 profilerInput_.stage));
-            CHK_RET(LocalNotify::Wait(subStream, dispatcher_, meshSignalAux_[signalIndex], profilerInput_.stage));
+            CHK_RET(LocalNotify::Wait(subStream, dispatcher_, (*meshSignalAux_)[signalIndex], profilerInput_.stage));
         }
         // 本rank要收数据
         void *srcMemPtr = nullptr;
@@ -70,4 +69,5 @@ HcclResult AllGatherMeshAtomic::RunAllGather(const std::vector<LINK> &links, con
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_ALL_GATHER_MESH_ATOMIC, AllGatherMeshAtomic);
 } // namespace hccl

@@ -8,16 +8,22 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include "alg_template_register.h"
 #include "reduce_ring.h"
 
 namespace hccl {
-ReduceRing::ReduceRing(const HcclDispatcher dispatcher, const u64 reduceAttrBitMap)
-    : AlgTemplateBase(dispatcher), reduceAttr_(reduceAttrBitMap)
+ReduceRing::ReduceRing(const HcclDispatcher dispatcher) : AlgTemplateBase(dispatcher)
 {
 }
 
 ReduceRing::~ReduceRing()
 {
+}
+
+HcclResult ReduceRing::Prepare(u64 reduceAttrBitMap, HcomCollOpInfo *opInfo)
+{
+    reduceAttr_ = reduceAttrBitMap;
+    return HCCL_SUCCESS;
 }
 
 // reduce算法的入口函数
@@ -146,4 +152,5 @@ HcclResult ReduceRing::RunAsync(const u32 rank, const u32 rankSize,
     HCCL_INFO("ReduceRing finished: rank[%u]", rank);
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_REDUCE_RING, ReduceRing);
 }  // namespace hccl

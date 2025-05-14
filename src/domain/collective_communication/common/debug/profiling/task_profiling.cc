@@ -274,38 +274,44 @@ HcclResult TaskProfiling::Run(const std::string &opName, const std::string &tag)
 
 HcclResult TaskProfiling::Save(u32 captureStreamID, u32 streamID, u32 taskID, TaskType &taskType, const TaskParaReduce &paraReduce)
 {
-    TaskData taskData(streamID, taskID, taskType, paraReduce);
+    TaskData taskData(captureStreamID, taskID, taskType, paraReduce);
     Run(taskData);
     return HCCL_SUCCESS;
 }
 
 HcclResult TaskProfiling::Save(u32 &streamID, u32 &taskID, TaskType &taskType, const TaskParaReduce &paraReduce)
 {
-    return Save(streamID, streamID, taskID, taskType, paraReduce);
+    TaskData taskData(streamID, taskID, taskType, paraReduce);
+    Run(taskData);
+    return HCCL_SUCCESS;
 }
 
 HcclResult TaskProfiling::Save(u32 captureStreamID, u32 streamID, u32 taskID, TaskType &taskType, const TaskParaDMA &paraDMA)
 {
-    TaskData taskData(streamID, taskID, taskType, paraDMA);
+    TaskData taskData(captureStreamID, taskID, taskType, paraDMA);
     Run(taskData);
     return HCCL_SUCCESS;
 }
 
 HcclResult TaskProfiling::Save(u32 &streamID, u32 &taskID, TaskType &taskType, const TaskParaDMA &paraDMA)
 {
-    return Save(streamID, streamID, taskID, taskType, paraDMA);
+    TaskData taskData(streamID, taskID, taskType, paraDMA);
+    Run(taskData);
+    return HCCL_SUCCESS;
 }
 
 HcclResult TaskProfiling::Save(u32 captureStreamID, u32 streamID, u32 taskID, TaskType &taskType, const TaskParaNotify &paraNotify)
 {
-    TaskData taskData(streamID, taskID, taskType, paraNotify);
+    TaskData taskData(captureStreamID, taskID, taskType, paraNotify);
     Run(taskData);
     return HCCL_SUCCESS;
 }
 
 HcclResult TaskProfiling::Save(u32 &streamID, u32 &taskID, TaskType &taskType, const TaskParaNotify &paraNotify)
 {
-    return Save(streamID, streamID, taskID, taskType, paraNotify);
+    TaskData taskData(streamID, taskID, taskType, paraNotify);
+    Run(taskData);
+    return HCCL_SUCCESS;
 }
 
 HcclResult TaskProfiling::Save(u32 captureStreamID, u32 streamID, u32 taskID)

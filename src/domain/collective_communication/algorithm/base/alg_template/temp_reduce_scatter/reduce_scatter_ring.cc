@@ -9,17 +9,23 @@
  */
 
 #include "reduce_scatter_ring.h"
+#include "alg_template_register.h"
 
 namespace hccl {
-ReduceScatterRing::ReduceScatterRing(const HcclDispatcher dispatcher,
-    const u64 reduceAttrBitMap)
-    : AlgTemplateBase(dispatcher), reduceAttr_(reduceAttrBitMap)
-
+ReduceScatterRing::ReduceScatterRing(const HcclDispatcher dispatcher)
+    : AlgTemplateBase(dispatcher)
 {
 }
 
 ReduceScatterRing::~ReduceScatterRing()
 {
+}
+
+HcclResult ReduceScatterRing::Prepare(u64 reduceAttrBitMap, HcomCollOpInfo *opInfo)
+{
+    (void)opInfo;
+    reduceAttr_ = reduceAttrBitMap;
+    return HCCL_SUCCESS;
 }
 
 HcclResult ReduceScatterRing::RunVectorSourceReducer(const LINK &link, const std::vector<Slice> &txSlices,
@@ -469,4 +475,5 @@ HcclResult ReduceScatterRing::ReduceScatterSlicesPrep(u32 rankSize, u32 nicSize)
     }
     return HCCL_SUCCESS;
 }
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_REDUCESCATTER_RING, ReduceScatterRing);
 }  // namespace hccl

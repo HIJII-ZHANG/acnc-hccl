@@ -14,8 +14,6 @@
 #include "stream_active_manager.h"
 #include "all_gather_operator.h"
 #include <vector>
-#include "allltoall_pipeline_mesh_pairwise_ccl_enough_pub.h"
-#include "allltoall_pipeline_mesh_pairwise_ping_pong_pub.h"
 #include "coll_alg_exec_registry.h"
 #include "coll_alg_op_registry.h"
 #include "coll_all_to_all_executor.h"

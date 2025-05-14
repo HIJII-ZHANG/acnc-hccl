@@ -116,12 +116,16 @@ HcclResult CollReduceScatterVAIVBigCountExecutor::KernelRun(const OpParam &param
         extraArgs.maxCount = std::max(extraArgs.maxCount, extraArgs.sendCounts[i]);
     }
 
+    if (aivClearEnable_) {
+        ClearAivSyncBuf(buffersOut, localRank, localRankSize, param.stream.ptr());
+    }
+
     bool isOpbase = (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
 
     execMem.count = (static_cast<const u64 *>(param.VDataDes.counts))[topoAttr_.userRank];
 
     AivOpArgs opArgs {
-            HcclCMDType::HCCL_CMD_REDUCE_SCATTER_V, execMem.inputPtr, execMem.outputPtr, execMem.count,
+            HcclCMDType::HCCL_CMD_REDUCE_SCATTER_V, execMem.inputPtr, execMem.outputPtr, extraArgs.maxCount,
             param.VDataDes.dataType, param.reduceType, param.root, isOpbase
     };
     AivTopoArgs topoArgs { localRank, localRankSize };

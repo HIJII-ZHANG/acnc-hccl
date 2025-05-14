@@ -20,6 +20,7 @@
 #include "hccl_comm_pub.h"
 #include "task_abort_handler_pub.h"
 #include "coll_alg_utils.h"
+#include "env_config.h"
 #include "i_hccl_one_sided_service.h"
 
 namespace hccl {
@@ -169,36 +170,37 @@ HcclResult hcclComm::SetQpQosAttr(u32 trafficClass, u32 serviceLevel)
     if (trafficClass == HCCL_COMM_TRAFFIC_CLASS_CONFIG_NOT_SET && serviceLevel == HCCL_COMM_SERVICE_LEVEL_CONFIG_NOT_SET) {
         HCCL_INFO("[SetQpQosAttr]The TC and SL do not use the config configuration. " \
             "It will use environment variables to configure. TC[%u], SL[%u]",
-            GetExternalInputRdmaTrafficClass(), GetExternalInputRdmaServerLevel());
+            EnvConfig::GetExternalInputRdmaTrafficClass(), EnvConfig::GetExternalInputRdmaServerLevel());
         return HCCL_SUCCESS;
     } else if (trafficClass != HCCL_COMM_TRAFFIC_CLASS_CONFIG_NOT_SET && serviceLevel == HCCL_COMM_SERVICE_LEVEL_CONFIG_NOT_SET) {
-        serviceLevel = GetExternalInputRdmaServerLevel();
+        serviceLevel = EnvConfig::GetExternalInputRdmaServerLevel();
         HCCL_INFO("[SetQpQosAttr]The SL is not configured. It will use the environment value[%u]", serviceLevel);
     } else if (trafficClass == HCCL_COMM_TRAFFIC_CLASS_CONFIG_NOT_SET && serviceLevel != HCCL_COMM_SERVICE_LEVEL_CONFIG_NOT_SET) {
-        trafficClass = GetExternalInputRdmaTrafficClass();
+        trafficClass = EnvConfig::GetExternalInputRdmaTrafficClass();
         HCCL_INFO("[SetQpQosAttr]The TC is not configured. It will use the environment value[%u]", trafficClass);
     }
 
     // 若转换出错或者设置的RDMATrafficClass不在有效范围内，则报错
-    if (trafficClass < HCCL_RDMA_TC_MIN || trafficClass > HCCL_RDMA_TC_MAX) {
+    if (trafficClass < EnvConfig::HCCL_RDMA_TC_MIN || trafficClass > EnvConfig::HCCL_RDMA_TC_MAX) {
         HCCL_ERROR("[SetQpQosAttr]rdmaTrafficClass is invalid. except:[%u, %u], actual:[%u]",
-            HCCL_RDMA_TC_MIN, HCCL_RDMA_TC_MAX, trafficClass);
+            EnvConfig::HCCL_RDMA_TC_MIN, EnvConfig::HCCL_RDMA_TC_MAX, trafficClass);
         return HCCL_E_PARA;
     }
     // 若设置的RDMATrafficClass不是4的整数倍，则报错
-    if (trafficClass % HCCL_RDMA_TC_BASE != 0) {
+    if (trafficClass % EnvConfig::HCCL_RDMA_TC_BASE != 0) {
         HCCL_ERROR("[SetQpQosAttr]rdmaTrafficClass[%u] is not a multiple of [%u]",
-            trafficClass, HCCL_RDMA_TC_BASE);
+            trafficClass, EnvConfig::HCCL_RDMA_TC_BASE);
         return HCCL_E_PARA;
     }
 
     // 校验config中SL是否合法
-    if (serviceLevel < HCCL_RDMA_SL_MIN || serviceLevel > HCCL_RDMA_SL_MAX) {
+    if (serviceLevel < EnvConfig::HCCL_RDMA_SL_MIN || serviceLevel > EnvConfig::HCCL_RDMA_SL_MAX) {
         HCCL_ERROR("[SetQpQosAttr]rdmaServiceLevel is invalid. except:[%u, %u], actual:[%u]",
-            HCCL_RDMA_SL_MIN, HCCL_RDMA_SL_MAX, serviceLevel);
+            EnvConfig::HCCL_RDMA_SL_MIN, EnvConfig::HCCL_RDMA_SL_MAX, serviceLevel);
         return HCCL_E_PARA;
     }
 
+    HCCL_INFO("[SetQpQosAttr] rdmaTrafficClass[%u], rdmaServiceLevel[%u]", trafficClass, serviceLevel);
     communicator_->SetQpQosAttr(trafficClass, serviceLevel);
 
     return HCCL_SUCCESS;
@@ -1334,6 +1336,11 @@ u32 hcclComm::GetRankTableCrc()
 u32 hcclComm::GetServerNum()
 {
     return communicator_->GetServerNum();
+}
+
+u32 hcclComm::GetModuleNum()
+{
+    return communicator_->GetModuleNum();
 }
 
 HcclResult hcclComm::GetCommParams(HcclCommParams &params)

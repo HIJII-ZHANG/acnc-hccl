@@ -16,10 +16,11 @@
 namespace hccl {
 class AllGatherHalvingDoubling : public AlgTemplateBase {
 public:
-    explicit AllGatherHalvingDoubling(u32 blockSize, const HcclDispatcher dispatcher,
-                                      UserMemType hdInputMemType = UserMemType::OUTPUT_MEM,
-                                      UserMemType hdOutputMemType = UserMemType::INPUT_MEM);
+    explicit AllGatherHalvingDoubling(const HcclDispatcher dispatcher);
     ~AllGatherHalvingDoubling() override;
+    
+    // should be called soon after template AllGatherHalvingDoubling instance created
+    HcclResult Prepare(u32 blockSize, UserMemType hdInputMemType, UserMemType hdOutputMemType) override;
 
     HcclResult RunAsync(const u32 rank, const u32 rankSize, const std::vector<LINK> &links) override;
 
@@ -40,8 +41,8 @@ private:
     std::vector<Slice> rxSlices_;        // 下标为step, 标识每个step的rx_size
     u32 interRank_;
     u32 interRankSize_;
-    UserMemType hdInputMemType_;   // 算法使用的input mem对应用户mem的类型
-    UserMemType hdOutputMemType_;  // 算法使用的output mem对应用户mem的类型
+    UserMemType hdInputMemType_{UserMemType::OUTPUT_MEM};   // 算法使用的input mem对应用户mem的类型
+    UserMemType hdOutputMemType_{UserMemType::INPUT_MEM};  // 算法使用的output mem对应用户mem的类型
 };
 }  // namespace hccl
 

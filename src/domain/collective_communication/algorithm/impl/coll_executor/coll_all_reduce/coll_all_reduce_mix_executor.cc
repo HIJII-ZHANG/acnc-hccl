@@ -195,18 +195,23 @@ HcclResult CollAllReduceMixExecutor::KernelRun(const OpParam &param, ExecMem &ex
 
     std::unique_ptr<AlgTemplateBase> level1Executor;
     if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
-        level1Executor.reset(new (std::nothrow) AllReduceRing(dispatcher_, reduceAttr));
+        level1Executor = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_RING, 
+            dispatcher_);
         HCCL_INFO("[CollAllReduceMixExecutor][KernelRun]allreduce mix: using ring algo inter-server.");
+        CHK_SMART_PTR_NULL(level1Executor);
+        CHK_RET(level1Executor->Prepare(reduceAttr));
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
         u64 curSize = execMem.count * perDataSize; // 单位 byte
         HCCL_DEBUG("[CollAllReduceMixExecutor][KernelRun] curSize[%llu] deviceNumPerAggregation[%u] commLevel0Size[%u]",
             curSize, topoAttr_.deviceNumPerAggregation, level0CommInfo.localRankSize);
         if (curSize / topoAttr_.deviceNumPerAggregation <= NHR_ALLREDUCE_SMALL_SIZE) {
-            level1Executor.reset(new (std::nothrow) AllReduceNHROneshot(dispatcher_, reduceAttr));
+            level1Executor = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_NHR_ONESHOT, dispatcher_);
         } else {
-            level1Executor.reset(new (std::nothrow) AllReduceNHR(dispatcher_, reduceAttr));
+            level1Executor = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_NHR, dispatcher_);
         }
         HCCL_INFO("[CollAllReduceMixExecutor][KernelRun]allreduce mix: using nhr algo inter-server.");
+        CHK_SMART_PTR_NULL(level1Executor);
+        CHK_RET(level1Executor->Prepare(reduceAttr));
     } else {
         HCCL_ERROR("[CollAllReduceMixExecutor][KernelRun]allreduce mix: algType[%u] is not supported.", algType_.algoLevel1);
         return HCCL_E_NOT_SUPPORT;
@@ -244,13 +249,11 @@ HcclResult CollAllReduceMixExecutor::KernelRun(const OpParam &param, ExecMem &ex
             param.DataDes.dataType, multRingsSliceZero, param.stream,
             PROF_STAGE_2, 0, allgatherOpInfoPtr));
     } else if (topoAttr_.deviceType == DevType::DEV_TYPE_910B) {
-        std::unique_ptr<AlgTemplateBase> level0Executor;
-        level0Executor.reset(
-            new (std::nothrow) AllGatherMeshAtomic(dispatcher_, algResResp_->slaveStreams,
-            algResResp_->notifiesMain, algResResp_->notifiesAux, level0CommInfo.localRank, level0CommInfo.localRankSize,
-            topoAttr_.userRank));
-
+        std::unique_ptr<AlgTemplateBase> level0Executor = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_ALL_GATHER_MESH_ATOMIC, dispatcher_);
         CHK_SMART_PTR_NULL(level0Executor);
+        CHK_RET(level0Executor->Prepare(algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux, topoAttr_.userRank, 
+            nullptr, level0CommInfo.localRank, level0CommInfo.localRankSize));
 
         u32 rankSize = level0CommInfo.localRankSize;
         CHK_RET(level0Executor->Prepare(execMem.outputMem, execMem.outputMem, execMem.inputMem, execMem.count,

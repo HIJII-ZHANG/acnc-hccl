@@ -27,6 +27,7 @@
 #include "hccl_hash_utils.h"
 #include "workflow_pub.h"
 #include "comm_base_pub.h"
+#include "coll_alg_param.h"
 
 namespace hccl {
 
@@ -202,7 +203,8 @@ private:
     HcclResult MakeRemoteLinkInfo(const u32 remoteRank, bool isInterRdma,
         u32 socketsPerLink, HcclRankLinkInfo &remoteLinkInfo);
     HcclResult CreateDestSockets(const std::string &newTag, RankId remoteRank, u64 taskNum,
-        std::vector<std::shared_ptr<HcclSocket> > &connectSockets, bool &isInterRdma, bool forceRdma = false, bool isBackup = false);
+        std::vector<std::shared_ptr<HcclSocket> > &connectSockets, bool &isInterRdma, bool forceRdma = false, bool isBackup = false,
+        u32 subCommIndex = 0);
     u32 GetSocketsPerLink(u64 taskNum);
     HcclResult SetMachinePara(const std::string &tag, MachineType machineType, const std::string &serverId, u32 dstRank,
         const bool supportDataReceivedAck, const LinkMode linkMode,
@@ -219,17 +221,17 @@ private:
         const std::vector<std::shared_ptr<HcclSocket> > sockets, const DeviceMem inputMem, const DeviceMem outputMem,
         bool isUsedRdma, std::shared_ptr<Transport> &link, bool isAicpuModeEn,
         u32 notifyNum = 0, bool isBackup = false, const DeviceMem expMem = DeviceMem());
-    HcclResult ConstructTransTag(const std::string& tag, std::string& transTag, bool isInterRdma);
+    HcclResult ConstructTransTag(const std::string& tag, std::string& transTag, bool isInterRdma, u32 subCommIndex = 0);
     HcclResult ExceptionHandle(const std::string &tag, OpCommTransport &opTransportResponse);
 
     HcclResult LoadMultiQpSrcPortFromFile();
     HcclResult GetConfigSrcPorts(MachinePara &machinePara);
     HcclResult createSubCommLinkThreads(const std::string &tag, const TransportIOMem &transMem,
-        struct SubCommLinkPara &subCommLinkPara, bool isAicpuModeEn, bool isBackup);
+        struct SubCommLinkPara &subCommLinkPara, bool isAicpuModeEn, bool isBackup, u32 subCommIndex);
     HcclResult waitSubCommLinkThreadsComplete(struct SubCommLinkPara &subCommLinkPara);
     HcclResult checkSubCommLinkThreadsStatus(const std::string &tag, struct SubCommLinkPara &subCommLinkPara, bool isBackup);
     HcclResult AllocSubCommLinks(const std::string &tag, const TransportIOMem &transMem,
-        struct SingleSubCommTransport &singleSubCommTransport, bool isAicpuModeEn, bool isBackup);
+        struct SingleSubCommTransport &singleSubCommTransport, bool isAicpuModeEn, bool isBackup, u32 subCommIndex);
 
     std::mutex mutex_;	// 用于控制互斥资源的访问
     CCLBufferManager &cclBufferManager_;

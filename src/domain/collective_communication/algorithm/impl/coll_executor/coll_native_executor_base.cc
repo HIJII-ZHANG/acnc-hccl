@@ -227,7 +227,6 @@ HcclResult CollNativeExecutorBase::ActiveSlaveStreams(const Stream &stream)
 
 HcclResult CollNativeExecutorBase::AddSubStreamToProfiling()
 {
-#ifndef OPEN_HCCL_TEST
     if (((workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) &&
         hccl::ProfilingManagerPub::GetAddtionInfoState() &&
         hccl::ProfilingManagerPub::GetTaskApiState())) {
@@ -238,7 +237,7 @@ HcclResult CollNativeExecutorBase::AddSubStreamToProfiling()
         // profiling加入从环的stream
         HCCL_PROFILER_ADD_STREAM_BY_STREAMID(algResResp_->slaveStreams[streamIndex].id(), tag_, streamIndex + 1, algType_);
     }
-#endif
+
     return HCCL_SUCCESS;
 }
 

@@ -23,6 +23,7 @@
 #include "alg_template_base_pub.h"
 #include "workflow_pub.h"
 #include "common.h"
+#include "common_pub.h"
 
 namespace hccl {
 constexpr u32 HCCL_RANK_SIZE_EQ_TWO = 2;
@@ -116,7 +117,7 @@ public:
     HcclResult SetHDCModeInfo(
         std::unordered_map<std::string, std::map<u32, HcclIpAddress>> &rankDevicePhyIdNicInfoMap,
         std::vector<u32> &ranksPort, bool isSetHDCModeInfo, bool isUseRankPort);
-
+    bool IsSupportMC2(const std::string &tag);
     void Break()
     {
         for (auto &ptr : transportInfo_) {

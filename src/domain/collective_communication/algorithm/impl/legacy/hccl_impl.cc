@@ -825,7 +825,7 @@ HcclResult hcclImpl::CreateCommByAlg(const std::string &tag, const AlgType algTy
         isAicpuModeEn, meshSinglePlane);
     // defalut、whole_nhr和whole_nb算法不创建外层拓扑
     if (algType.algoLevel0 != AlgTypeLevel0::ALG_LEVEL0_WHOLE_RING &&
-        algType.algoLevel0 != AlgTypeLevel0::ALG_LEVEL0_RESERVED && ! isA2MC2MultiServer) {
+        algType.algoLevel0 != AlgTypeLevel0::ALG_LEVEL0_RESERVED && !isA2MC2MultiServer) {
         commThreadPtrLevel0_.reset(new (std::nothrow) std::thread(&hcclImpl::CreateCommThread, this,
             hrtErrMGetErrorContextPub(), std::ref(tag), std::ref(inputMem), std::ref(outputMem), std::ref(expMem),
             std::ref(commInfoLevel0), std::ref(commInfo.commLevel0), std::ref(commThreadResultLevel0)));

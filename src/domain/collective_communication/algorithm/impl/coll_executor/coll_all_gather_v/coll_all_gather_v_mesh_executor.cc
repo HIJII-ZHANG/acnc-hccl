@@ -96,10 +96,11 @@ HcclResult CollAllGatherVMeshExecutor::KernelRun(const OpParam &param, ExecMem &
     DeviceMem currentOutputMem = execMem.outputMem;
     CHK_SMART_PTR_NULL(currentOutputMem);
 
-    std::unique_ptr<AlgTemplateBase> level0TempAlg;
-    level0TempAlg.reset(new (std::nothrow) AllGatherMeshAtomic(dispatcher_, algResResp_->slaveStreams,
-        algResResp_->notifiesMain, algResResp_->notifiesAux, commIndex, level0RankSize, topoAttr_.userRank));
+    std::unique_ptr<AlgTemplateBase> level0TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_ALL_GATHER_MESH_ATOMIC, dispatcher_);
     CHK_SMART_PTR_NULL(level0TempAlg);
+    CHK_RET(level0TempAlg->Prepare(algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
+        topoAttr_.userRank, nullptr, commIndex, level0RankSize));
     CHK_RET(level0TempAlg->Prepare(currentOutputMem, currentOutputMem, execMem.inputMem,
         execMem.count , param.VDataDes.dataType, param.stream, HCCL_REDUCE_RESERVED,
         LEVEL0_BRIDGE_RANK_ID, outputSlices, 0));

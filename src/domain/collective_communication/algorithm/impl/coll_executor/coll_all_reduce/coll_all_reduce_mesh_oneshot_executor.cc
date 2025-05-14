@@ -97,16 +97,17 @@ HcclResult CollAllReduceMeshOneshotExecutor::KernelRun(const OpParam &param, Exe
 
     std::unique_ptr<AlgTemplateBase> level0TempAlg;
     if (level0CommInfo.localRankSize == DEVICE_TWO) {
-        level0TempAlg.reset(new (std::nothrow) AllReduceMeshDirectOneshot(dispatcher_,
-            reduceAttr, algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
-            level0CommInfo.localRank, level0CommInfo.localRankSize, topoAttr_.userRank, &opInfo));
+        level0TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_ALL_REDUCE_MESH_DIRECT_ONESHOT, dispatcher_);
     } else {
-        level0TempAlg.reset(new (std::nothrow) AllReduceChunkMesh(dispatcher_,
-            reduceAttr, algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
-            level0CommInfo.localRank, level0CommInfo.localRankSize, topoAttr_.userRank, &opInfo));
+        level0TempAlg = 
+            AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_CHUNK_MESH, dispatcher_);
     }
 
     CHK_SMART_PTR_NULL(level0TempAlg);
+    CHK_RET(level0TempAlg->Prepare(reduceAttr, algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
+        level0CommInfo.localRank, level0CommInfo.localRankSize, topoAttr_.userRank, &opInfo));
+        
     CHK_RET(level0TempAlg->Prepare(execMem.outputMem, execMem.outputMem, execMem.inputMem, execMem.count,
         param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID, dataSegsSlice, 0));
 

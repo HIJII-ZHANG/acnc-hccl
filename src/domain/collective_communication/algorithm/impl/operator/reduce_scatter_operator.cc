@@ -201,19 +201,27 @@ HcclResult ReduceScatterOperator::SelectAlgfor910B(const OpParam& param, std::st
                     deviceNumPerAggregation_ > DEVICE_TWO) {
                     algName = "ReduceScatterDeterExecutor";
                 } else {
-                    algName = "ReduceScatterMeshExecutor";
+                    if (dataSize <= HCCL_SMALL_COUNT_1_MB) {
+						algName = "ReduceScatterMeshGraphExecutor";
+		    		} else {
+						algName = "ReduceScatterMeshExecutor";
+		    		}
                 }
             }
         }
         if (algName.empty()) {
-            algName = "ReduceScatterMeshExecutor";
+			if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE || dataSize > HCCL_SMALL_COUNT_1_MB) {
+				algName = "ReduceScatterMeshExecutor";
+			} else {
+				algName = "ReduceScatterMeshGraphExecutor";
+			}
         }
     } else if (isRingTopo) {
         algName = "ReduceScatterRingExecutor";
     } else {
         algName = "ReduceScatterComm";
     }
-    HCCL_INFO("[SelectAlgfor910B] reduce_scatter SelectAlgfor910B is algName [%s]", algName.c_str());
+    HCCL_INFO("[SelectAlgfor910B] reduce_scatter SelectAlgfor910B is algName [%s], current mode is [%u]", algName.c_str(), workflowMode_);
     return HCCL_SUCCESS;
 }
 
@@ -263,14 +271,12 @@ HcclResult ReduceScatterOperator::SelectAlgfor91093(const OpParam& param, std::s
         IsSupportSDMAReduce(param.inputPtr, param.outputPtr, param.DataDes.dataType, param.reduceType) &&
         (deviceNumPerAggregation_ > HCCL_DEVICE_NUM_TWO) && (serverNum_ != 1) && (superPodNum_ == 1) &&
         !dmaReduceLimit && !GetExternalInputInterHccsDisable();
-    if (multiModuleDiffDeviceNumMode_ || multiSuperPodDiffServerNumMode_ || 
-        (smallCountOptimMultiServer && !isPowOfTwo &&
-        (param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] <= HCCL_SMALL_COUNT_256_KB))) {
+    if (multiModuleDiffDeviceNumMode_ || multiSuperPodDiffServerNumMode_) {
         algName = "ReduceScatterComm";
-        if ((deviceNumPerAggregation_ > HCCL_DEVICE_NUM_TWO) && (serverNum_ != 1) && (superPodNum_ == 1) &&
-            !dmaReduceLimit && !GetExternalInputInterHccsDisable()) {
-                algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_HD;
-        }
+    } else if (smallCountOptimMultiServer && !isPowOfTwo &&
+        (param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] <= HCCL_SMALL_COUNT_256_KB)) {
+        algName = "ReduceScatterComm";
+        algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_HD;
     } else if (smallCountOptimSingleServer || 
         (smallCountOptimMultiServer && isPowOfTwo&&
         (param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] <= HCCL_SMALL_COUNT_512_KB))) {

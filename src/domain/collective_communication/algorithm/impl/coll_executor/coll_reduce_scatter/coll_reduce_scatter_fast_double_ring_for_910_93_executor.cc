@@ -48,13 +48,13 @@ HcclResult CollReduceScatterFastDoubleRingFor91093Executor::DoubleRingReduceScat
     std::vector<std::vector<u32>> rankOrders;
     CHK_RET(CollectMultiRingsRankOrder(ringNum, multiRingsOrder, rankOrders));
     // 初始化executor
-    std::unique_ptr<AlgTemplateBase> tempAlg;
-    tempAlg.reset(new (std::nothrow) AlignedReduceScatterDoubleRingWithSerialLocalCopy(
-        dispatcher_, reduceAttr, opInfo, topoAttr_.userRank, algResResp_->slaveStreams,
-        algResResp_->notifiesMain, algResResp_->notifiesAux, rankOrders, userMemInputSlicesOfDoubleRing));
+    std::unique_ptr<AlgTemplateBase> tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+        TemplateType::TEMPLATE_REDUCESCATTER_DB_RING_SLC, dispatcher_);
     CHK_SMART_PTR_NULL(tempAlg);
     ret = tempAlg->Prepare(inputMem, inputMem, outputMem, count, dataType, stream, multRingsSliceZero,
-        reductionOp, LEVEL0_BRIDGE_RANK_ID, baseOffset, disableDMAReduce);
+        reductionOp, LEVEL0_BRIDGE_RANK_ID, baseOffset, disableDMAReduce, reduceAttr, opInfo,
+        topoAttr_.userRank, algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
+        rankOrders, userMemInputSlicesOfDoubleRing);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollReduceScatterFastDoubleRingFor91093Executor][DoubleRingReduceScatter] Double ring reduce scatter failed"
         "failed,return[%d]", ret), ret);

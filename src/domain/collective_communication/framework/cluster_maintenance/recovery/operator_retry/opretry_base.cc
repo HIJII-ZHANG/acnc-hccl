@@ -448,8 +448,7 @@ HcclResult OpRetryBase::Recv(std::shared_ptr<HcclSocket> socket, void *data, u64
         u64 resetSize = totalSize - recvSize; // 待接收长度
         void* recvPtr = reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(data) + recvSize);
         HcclResult ret = socket->IRecv(recvPtr, resetSize, compSize);
-        CHK_PRT_RET(ret != HCCL_SUCCESS,
-            HCCL_WARNING("Recv fail, recvPtr[%p], resetSize[%llu Byte], compSize[%llu Byte]", recvPtr, resetSize, compSize), ret);
+        CHK_PRT_RET(ret != HCCL_SUCCESS, , ret);
 
         recvSize += compSize;
         if (recvSize == 0) { // 未收到数据

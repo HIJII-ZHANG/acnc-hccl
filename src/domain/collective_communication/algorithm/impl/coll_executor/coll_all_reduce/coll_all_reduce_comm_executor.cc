@@ -111,32 +111,44 @@ HcclResult CollAllReduceCommExecutor::KernelRun(const OpParam &param, ExecMem &e
     if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
         u64 curSize = execMem.count * SIZE_TABLE[param.DataDes.dataType]; // 单位 byte
         if (curSize <= NHR_ALLREDUCE_SMALL_SIZE) {
-            tempAlg.reset(new (std::nothrow) AllReduceNHROneshot(dispatcher_, reduceAttr));
+            tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_NHR_ONESHOT, dispatcher_);
         } else {
-            tempAlg.reset(new (std::nothrow) AllReduceNHR(dispatcher_, reduceAttr));
+            tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_NHR, dispatcher_);
         }
         HCCL_INFO("allreduce comm: using nhr algo inter-server.");
+        CHK_SMART_PTR_NULL(tempAlg);
+        CHK_RET(tempAlg->Prepare(reduceAttr));
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
-        tempAlg.reset(new (std::nothrow) AllReduceNHRV1(dispatcher_, reduceAttr));
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_NHR_V1, dispatcher_);
         HCCL_INFO("allreduce comm: using nhr_v1 algo inter-server.");
+        CHK_SMART_PTR_NULL(tempAlg);
+        CHK_RET(tempAlg->Prepare(reduceAttr));
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC) {
         // 获取通信域分组信息
-        std::vector<std::vector<std::vector<u32>>> globalSubGroups;
-        CHK_RET(topoMatcher_->GetGlobalSubGroups(commPlane, globalSubGroups));
-        tempAlg.reset(new (std::nothrow) AllReduceAHC(dispatcher_, reduceAttr, execMem.count, globalSubGroups[0]));
+        std::vector<std::vector<std::vector<u32>>> gloableSubGroups;
+        CHK_RET(topoMatcher_->GetGlobalSubGroups(commPlane, gloableSubGroups));
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_AHC, dispatcher_);
         HCCL_INFO("allreduce comm: using ahc algo inter-server.");
+        CHK_SMART_PTR_NULL(tempAlg);
+        CHK_RET(tempAlg->Prepare(reduceAttr, execMem.count, gloableSubGroups[0]));
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE) {
         // 获取通信域分组信息
-        std::vector<std::vector<std::vector<u32>>> globalSubGroups;
-        CHK_RET(topoMatcher_->GetGlobalSubGroups(commPlane, globalSubGroups));
-        tempAlg.reset(new (std::nothrow) AllReduceAHCBroke(dispatcher_, reduceAttr, execMem.count, globalSubGroups[0]));
+        std::vector<std::vector<std::vector<u32>>> gloableSubGroups;
+        CHK_RET(topoMatcher_->GetGlobalSubGroups(commPlane, gloableSubGroups));
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_AHC_BROKE, dispatcher_);
         HCCL_INFO("allreduce comm: using ahc-broke algo inter-server.");
+        CHK_SMART_PTR_NULL(tempAlg);
+        CHK_RET(tempAlg->Prepare(reduceAttr, execMem.count, gloableSubGroups[0]));
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
-        tempAlg.reset(new (std::nothrow) AllReduceNB(dispatcher_, reduceAttr));
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_NB, dispatcher_);
         HCCL_INFO("allreduce comm: using nonuniform-bruck algo inter-server.");
+        CHK_SMART_PTR_NULL(tempAlg);
+        CHK_RET(tempAlg->Prepare(reduceAttr));
     } else {
-        tempAlg.reset(new (std::nothrow) AllReduceRing(dispatcher_, reduceAttr));
+        tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_RING, dispatcher_);
         HCCL_INFO("allreduce comm: using ring algo inter-server.");
+        CHK_SMART_PTR_NULL(tempAlg);
+        CHK_RET(tempAlg->Prepare(reduceAttr));
     }
     CHK_SMART_PTR_NULL(tempAlg);
 
