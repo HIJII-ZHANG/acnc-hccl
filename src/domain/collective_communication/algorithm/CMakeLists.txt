@@ -66,7 +66,6 @@ target_include_directories(hccl_alg PRIVATE
 )
 
 if(BUILD_OPEN_PROJECT)
-    add_dependencies(hccl_alg hccl_aiv_op_ascend910B)
     target_compile_definitions(hccl_alg PRIVATE
         OPEN_BUILD_PROJECT
         LOG_CPP)
