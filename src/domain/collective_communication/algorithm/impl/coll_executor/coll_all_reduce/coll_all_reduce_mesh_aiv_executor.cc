@@ -48,7 +48,7 @@ HcclResult CollAllReduceMeshAivExecutor::CalcCommInfo(std::vector<LevelNSubCommT
 HcclResult CollAllReduceMeshAivExecutor::CalcTransportMemType(TransportMemType &inputType, TransportMemType &outputType)
 {
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-        inputType = TransportMemType::AIV_INPUT;
+        inputType = TransportMemType::CCL_INPUT;
         outputType = TransportMemType::AIV_OUTPUT;
     } else {
         inputType = TransportMemType::PARAM_INPUT;
@@ -68,6 +68,20 @@ HcclResult CollAllReduceMeshAivExecutor::CalcLevel0CommInfo(TransportMemType inp
     CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel0, opTransport[COMM_LEVEL0], inputType, outputType));
     return HCCL_SUCCESS;
 }
+
+u32 CollAllReduceMeshAivExecutor::CalBlockDim(u32 rankSize, u64 dataSize, HcclCMDType cmdType)
+{
+    u32 blockDim = rankSize; // 默认情况使用rankSize个AIV
+
+    bool isOpBase = (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
+    if (isOpBase) {
+        blockDim = BLOCK_DIM_FACTOR_TWO * rankSize; // 单机场景，单算子AllReduce大数据使用2倍 rankSize个aiv
+    }
+
+    HCCL_INFO("[CollAllReduceMeshAivExecutor][CalBlockDim] blockDim is set to [%u]", blockDim);
+    return blockDim;
+}
+
 HcclResult CollAllReduceMeshAivExecutor::Orchestrate(OpParam& param, AlgResourceResponse& algRes)
 {
     HcclUs startut = TIME_NOW();
@@ -80,15 +94,13 @@ HcclResult CollAllReduceMeshAivExecutor::Orchestrate(OpParam& param, AlgResource
     execMem.inputPtr = param.inputPtr;
     execMem.outputPtr = param.outputPtr;
 
-    if (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) { // 图模式
+    if (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
         execMem.inputMem = algRes.paramInputMem;
-        execMem.outputMem = algRes.aivOutputMem; // 存放flag
-        execMem.scratchMem = algRes.scratchMem; // 不需要
-        ret = KernelRun(param, execMem);
-    } else { // 单算子小数据量
-        execMem.inputMem = algRes.aivInputMem;
         execMem.outputMem = algRes.aivOutputMem;
-        execMem.scratchMem = algRes.scratchMem; // 不需要
+        ret = KernelRun(param, execMem);
+    } else {
+        execMem.inputMem = algRes.cclInputMem;
+        execMem.outputMem = algRes.aivOutputMem;
         ret = KernelRun(param, execMem);
     }
 
@@ -134,11 +146,14 @@ HcclResult CollAllReduceMeshAivExecutor::KernelRun(const OpParam &param, ExecMem
         HcclCMDType::HCCL_CMD_ALLREDUCE, execMem.inputPtr, execMem.outputPtr, execMem.count,
         param.DataDes.dataType, param.reduceType, 0, isOpbase
     };
-    AivTopoArgs topoArgs { localRank, localRankSize };
-    AivResourceArgs resourceArgs { param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size() };
+    AivTopoArgs topoArgs { localRank, localRankSize, MAX_RANK_SIZE, 0, 1, topoAttr_.deviceType };
+    blockDim_ = CalBlockDim(localRankSize);
+    AivResourceArgs resourceArgs {
+        param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size(), blockDim_
+    };
     AivAlgArgs algArgs {};
     struct AivProfilingInfo aivProfilingInfo;
-    
+    aivProfilingInfo.counter = opCounter_;
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
         HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
         HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
@@ -155,7 +170,6 @@ HcclResult CollAllReduceMeshAivExecutor::KernelRun(const OpParam &param, ExecMem
         HCCL_PROFILER_DEL_TAG(param.tag);
     }
 
-    blockDim_ = aivProfilingInfo.blockDim;
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAllReduceMeshAivExecutor][KernelRun]allreduce aiv failed, return[%d]", ret), ret);
 

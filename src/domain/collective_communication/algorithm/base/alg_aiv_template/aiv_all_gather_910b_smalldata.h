@@ -55,5 +55,7 @@ __aicore__ inline void aiv_all_gather_910b_smalldata(KERNEL_ARGS_DEF)
 {
     AivAllGatherSmall910B op;
     op.Init(KERNEL_CLASS_INIT, false);
+    op.HeadCounter();
     op.Process<T>(input, output, len, tag);
+    op.TailCounter();
 }

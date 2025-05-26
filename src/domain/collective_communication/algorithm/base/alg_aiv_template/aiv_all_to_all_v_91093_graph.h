@@ -122,6 +122,9 @@ __aicore__ inline void aiv_all_to_all_v_91093_graph(KERNEL_ARGS_DEF, ExtraArgsV2
 {
     AivAll2AllVGraph91093 op;
     uint32_t baseFlagOffset = DOUBLE * rankSize * FLAG_SIZE;
-    op.Init(buffOut0, rank, rankSize, tag, baseFlagOffset);
+    op.Init(buffOut0, rank, rankSize, tag, baseFlagOffset, true);
+    op.InitOpCounter(headCountMem, tailCountMem, addOneMem, counterMemSize, isEnableCounter);
+    op.HeadCounter();
     op.Process<T>(buffOut0, input, output, tag, extraArgs);
+    op.TailCounter();
 }

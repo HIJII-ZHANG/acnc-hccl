@@ -40,45 +40,6 @@ HcclResult ReduceScatterMeshAtomic::Prepare(DeviceMem &inputMem, DeviceMem &outp
         root, slices, baseOffset);
 }
 
-HcclResult ReduceScatterMeshAtomic::RunReduceScatterHighPerf(const std::vector<LINK> &links)
-{
-    // 拼接所有stream
-    HCCL_INFO("[ReduceScatterMeshAtomic]RunReduceScatterHighPerf");
-    vector<Stream> streamVct;
-    streamVct.reserve(localRankSize_ - 1); // 有ranksize-1个对端，每个对端对应一条stream
-    streamVct.push_back(stream_);          // 增加主stream
-    streamVct.insert(streamVct.end(), meshStreams_.begin(), meshStreams_.end()); // 增加从stream
-
-    // 每个stream只负责一个对端的交互
-    for (u32 streamIndex = 0; streamIndex < localRankSize_ - 1; streamIndex++) {
-        u32 remoteRank = (streamIndex + localRank_ + 1) % localRankSize_;
-        const LINK &dstLink = links[remoteRank];
-        Stream &stream = streamVct[streamIndex];
-        Slice &rxSlice = slices_[localRank_];
-
-        CHK_RET(dstLink->TxAck(stream)); // record remoteSendDoneNotify_
-        CHK_RET(dstLink->RxAck(stream)); // wait localSendDoneNotify_
-        DeviceMem dstMem = inputMem_.range(rxSlice.offset, rxSlice.size);
-        DeviceMem srcMem = scratchMem_.range(scratchSlices_[remoteRank].offset, scratchSlices_[remoteRank].size);
-        void *remoteMem = nullptr;
-        CHK_RET(dstLink->GetRemoteMem(UserMemType::INPUT_MEM, &remoteMem));
-        if ((INLINE_REDUCE_BITMASK & reduceAttr_) != 0) {
-            CHK_RET(HcclReduceAsync(dispatcher_, static_cast<s8 *>(remoteMem) + baseOffset_ + rxSlice.offset,
-                rxSlice.size / SIZE_TABLE[dataType_], dataType_, reductionOp_, stream,
-                dstMem.ptr(), dstLink->GetRemoteRank(), dstLink->GetLinkType(), INLINE_REDUCE_BIT));
-        } else {
-            DeviceMem srcDevMem(static_cast<s8 *>(remoteMem) + baseOffset_ + rxSlice.offset, rxSlice.size);
-            CHK_RET(HcclD2DMemcpyAsync(dispatcher_, srcMem, srcDevMem, stream,
-                dstLink->GetRemoteRank(), dstLink->GetLinkType()));
-        }
-        CHK_RET(dstLink->TxDataSignal(stream));
-        CHK_RET(dstLink->RxDataSignal(stream));
-        CHK_RET(dstLink->RxWaitDone(stream));
-        CHK_RET(dstLink->TxWaitDone(stream));
-    }
-    return HCCL_SUCCESS;
-}
-
 HcclResult ReduceScatterMeshAtomic::RunReduceScatter(const std::vector<LINK> &links)
 {
     // 拼接所有stream
@@ -135,7 +96,7 @@ HcclResult ReduceScatterMeshAtomic::RunReduceScatter(const std::vector<LINK> &li
         CHK_RET(dstLink->TxDataSignal(stream));
         CHK_RET(dstLink->RxDataSignal(stream));
     }
-    // 添加空task,保证执行时不乱序
+
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem_, outputMem_, streamVct[0], dispatcher_));
     return HCCL_SUCCESS;
 }
@@ -174,11 +135,7 @@ HcclResult ReduceScatterMeshAtomic::RunAsync(const u32 rank, const u32 rankSize,
             profilerInput_.stage));
     }
 
-    if (GetExternalInputHcclHighPerfEnable() != 0) {
-        CHK_RET(RunReduceScatterHighPerf(links));
-    } else {
-        CHK_RET(RunReduceScatter(links));
-    }
+    CHK_RET(RunReduceScatter(links));
 
     for (u32 streamIndex = 0; streamIndex < rankSize - 2; streamIndex++) { // rankSize - 2 stream num
         HCCL_DEBUG("rank[%u] streamindex[%u] wait signal[%p] ",
@@ -188,20 +145,8 @@ HcclResult ReduceScatterMeshAtomic::RunAsync(const u32 rank, const u32 rankSize,
             profilerInput_.stage));
     }
 
-    // 添加空task,保证执行时不乱序
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
 
-    if ((GetExternalInputHcclHighPerfEnable() != 0) &&
-        (INLINE_REDUCE_BITMASK & reduceAttr_) == 0) {
-        for (u32 streamIndex = 0; streamIndex < localRankSize_ - 1; streamIndex++) {
-            u32 remoteRank = (streamIndex + localRank_ + 1) % localRankSize_;
-            Slice &rxSlice = slices_[localRank_];
-            DeviceMem dstMem = inputMem_.range(rxSlice.offset, rxSlice.size);
-            DeviceMem srcMem = scratchMem_.range(scratchSlices_[remoteRank].offset, scratchSlices_[remoteRank].size);
-            CHK_RET(HcclReduceAsync(dispatcher_, srcMem.ptr(), rxSlice.size / SIZE_TABLE[dataType_], dataType_,
-                reductionOp_, stream_, dstMem.ptr(), INVALID_VALUE_RANKID, LinkType::LINK_ONCHIP, reduceAttr_));
-        }
-    }
     if (inputMem_ != outputMem_) {
         DeviceMem src = inputMem_.range(slices_[localRank_].offset, slices_[localRank_].size);
         HCCL_DEBUG("rank[%u] copy result from to output[%p] offset[%llu] size[%llu] ", localRank_, outputMem_.ptr(),
@@ -244,16 +189,9 @@ HcclResult ReduceScatterMeshAtomic::MemSlice()
     }
 
     scratchSlices_.resize(localRankSize_);
-    if (GetExternalInputHcclHighPerfEnable() != 0) {
-        for (u32 i = 0; i < localRankSize_; i++) {
-            scratchSlices_[i].size = slices_[localRank_].size;
-            scratchSlices_[i].offset = slices_[localRank_].size * i;
-        }
-    } else {
-        for (u32 i = 0; i < localRankSize_; i++) {
-            scratchSlices_[i].size = slices_[i].size;
-            scratchSlices_[i].offset = (scratchMem_.size() < inputMem_.size()) ? 0 : slices_[i].offset;
-        }
+    for (u32 i = 0; i < localRankSize_; i++) {
+        scratchSlices_[i].size = slices_[i].size;
+        scratchSlices_[i].offset = (scratchMem_.size() < inputMem_.size()) ? 0 : slices_[i].offset;
     }
 
     if (HcclCheckLogLevel(DLOG_DEBUG)) {

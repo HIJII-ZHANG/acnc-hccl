@@ -55,14 +55,14 @@ __aicore__ inline void AivAll2AllVCNoLoop910B::Process(GM_ADDR input, GM_ADDR ou
         CpGM2GMWithFlagWrap(cclGMSelf + localSendOffset, inputGM + localSendOffset, localSendCount, ctrlFlagsGM, 16);
 
         PipeBarrier<PIPE_ALL>();
-        CheckFlagNew((__gm__ int32_t *)(flagAddrSelf + countResetFlagOffset + block_idx * FLAG_SIZE), tag);
+        WaitSignalValue((__gm__ int32_t *)(flagAddrSelf + countResetFlagOffset + block_idx * FLAG_SIZE), localCheckTensor, tag);
         PipeBarrier<PIPE_ALL>();
-        SetFlagNew(ctrlFlagsGM, 0);
+        SetSignalValue(ctrlFlagsGM, localSetTensor, 0);
 
     } else { // 后rankSize个aiv负责cclother->usrout
         // 读对端数据前确认对端已进入本算子
-        SetFlagNew((__gm__ int32_t *)(flagAddrOther + initAckFlagOffset + rank_ * FLAG_SIZE), tag);
-        CheckFlagNew((__gm__ int32_t *)(flagAddrSelf + initAckFlagOffset + targetRank * FLAG_SIZE), tag);
+        SetSignalValue((__gm__ int32_t *)(flagAddrOther + initAckFlagOffset + rank_ * FLAG_SIZE), localSetTensor, tag);
+        WaitSignalValue((__gm__ int32_t *)(flagAddrSelf + initAckFlagOffset + targetRank * FLAG_SIZE), localCheckTensor, tag);
         PipeBarrier<PIPE_ALL>();
 
         uint64_t remoteSendOffset = 0; // 远端ccl发送给本端output的数据偏移，远端卡号为block_idx，可能为本rank
@@ -88,16 +88,9 @@ __aicore__ inline void AivAll2AllVCNoLoop910B::Process(GM_ADDR input, GM_ADDR ou
                 break;
             }
 
-            GlobalTensor<int32_t> globalFlagX;
-            globalFlagX.SetGlobalBuffer(ctrlFlagsGMX, UB_FLAG_PAD_COUNT);
             LocalTensor<int32_t> localFlagX = flagInQue.AllocTensor<int32_t>();
 
-            DataCopy(localFlagX, globalFlagX, UB_FLAG_PAD_COUNT);
-
-            set_flag(PIPE_MTE2, PIPE_S, EVENT_ID0);
-            wait_flag(PIPE_MTE2, PIPE_S, EVENT_ID0);
-
-            uint64_t preparedBatchCount = localFlagX.GetValue(0);
+            uint64_t preparedBatchCount = GetSignalValue(ctrlFlagsGMX, localFlagX);
 
             flagInQue.FreeTensor(localFlagX);
 
@@ -122,17 +115,17 @@ __aicore__ inline void AivAll2AllVCNoLoop910B::Process(GM_ADDR input, GM_ADDR ou
 
         // 通知对端，自己已经把对端的那片数据拉回来了
         PipeBarrier<PIPE_ALL>();
-        SetFlagNew((__gm__ int32_t *)(flagAddrOther + finalAckFlagOffset + rank_ * FLAG_SIZE), tag);
+        SetSignalValue((__gm__ int32_t *)(flagAddrOther + finalAckFlagOffset + rank_ * FLAG_SIZE), localSetTensor, tag);
         PipeBarrier<PIPE_ALL>();
         
         // 确认对端已经将对应的数据拉走
-        CheckFlagNew((__gm__ int32_t *)(flagAddrSelf + finalAckFlagOffset + targetRank * FLAG_SIZE), tag);
+        WaitSignalValue((__gm__ int32_t *)(flagAddrSelf + finalAckFlagOffset + targetRank * FLAG_SIZE), localCheckTensor, tag);
         PipeBarrier<PIPE_ALL>();
-        SetFlagNew((__gm__ int32_t *)(flagAddrSelf + finalAckFlagOffset + targetRank * FLAG_SIZE), 0);
+        SetSignalValue((__gm__ int32_t *)(flagAddrSelf + finalAckFlagOffset + targetRank * FLAG_SIZE), localSetTensor, 0);
         PipeBarrier<PIPE_ALL>();
 
         // 用于清零count flag
-        SetFlagNew((__gm__ int32_t *)(flagAddrSelf + countResetFlagOffset + targetRank * FLAG_SIZE), tag);
+        SetSignalValue((__gm__ int32_t *)(flagAddrSelf + countResetFlagOffset + targetRank * FLAG_SIZE), localSetTensor, tag);
     }
 }
 
@@ -141,5 +134,7 @@ __aicore__ inline void aiv_all_to_all_vc_910b_no_loop(EXTERN_KERNEL_ARGS_DEF)
 {
     AivAll2AllVCNoLoop910B op;
     op.Init(KERNEL_CLASS_INIT, true);
+    op.HeadCounter();
     op.Process<T>(input, output, tag, extraArgs);
+    op.TailCounter();
 }

@@ -46,16 +46,16 @@ __aicore__ inline void AivAll2AllSmall910B::Process(GM_ADDR input, GM_ADDR outpu
  
         PipeBarrier<PIPE_ALL>();
  
-        SetFlagNew((__gm__ int32_t *)(flagAddrOther + initAckFlagOffset + rank_ * FLAG_SIZE), tag);
-        CheckFlagNew((__gm__ int32_t *)(flagAddrSelf + initAckFlagOffset + block_idx * FLAG_SIZE), tag);
+        SetSignalValue((__gm__ int32_t *)(flagAddrOther + initAckFlagOffset + rank_ * FLAG_SIZE), localSetTensor, tag);
+        WaitSignalValue((__gm__ int32_t *)(flagAddrSelf + initAckFlagOffset + block_idx * FLAG_SIZE), localCheckTensor, tag);
  
         PipeBarrier<PIPE_ALL>();
  
         CpGM2GM(outputGM + dstOffset, cclGMOther + srcOffset, len);
  
         PipeBarrier<PIPE_ALL>();
-        SetFlagNew((__gm__ int32_t *)(flagAddrOther + finalAckFlagOffset + rank_ * FLAG_SIZE), tag);
-        CheckFlagNew((__gm__ int32_t *)(flagAddrSelf + finalAckFlagOffset + block_idx * FLAG_SIZE), tag);
+        SetSignalValue((__gm__ int32_t *)(flagAddrOther + finalAckFlagOffset + rank_ * FLAG_SIZE), localSetTensor, tag);
+        WaitSignalValue((__gm__ int32_t *)(flagAddrSelf + finalAckFlagOffset + block_idx * FLAG_SIZE), localCheckTensor, tag);
     } else {
         CpGM2GM(outputGM + dstOffset, inputGM + srcOffset, len);
     }
@@ -66,5 +66,7 @@ __aicore__ inline void aiv_all_to_all_910b_smalldata(KERNEL_ARGS_DEF)
 {
     AivAll2AllSmall910B op;
     op.Init(KERNEL_CLASS_INIT, false);
+    op.HeadCounter();
     op.Process<T>(input, output, len, tag);
+    op.TailCounter();
 }

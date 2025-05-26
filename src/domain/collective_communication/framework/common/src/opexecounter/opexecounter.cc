@@ -87,6 +87,10 @@ HcclResult OpExeCounter::DeInitCounter()
     }
     refCount_--;
     if (refCount_ == 0) {
+        std::pair<int32_t, int32_t> counter;
+        CHK_RET(GetCounter(counter));
+        HCCL_RUN_INFO("[OpExeCounter][DeInitCounter] head counter[%d], tail counter[%d]",
+            counter.first, counter.second);
         if (headCountMem_ != nullptr) {
             CHK_PRT(hrtFree(headCountMem_));
             headCountMem_ = nullptr;
@@ -160,6 +164,22 @@ HcclResult OpExeCounter::GetOpCountInfo(OpCounterInfo &opCounterInfo)
     return HCCL_SUCCESS;
 }
 
+HcclResult OpExeCounter::ClearOpCounterMem()
+{
+    if (!isNeedOpCounter_) {
+        HCCL_DEBUG("do not need add counter");
+        return HCCL_SUCCESS;
+    }
+    if (headCountMem_ == nullptr || tailCountMem_ == nullptr) {
+        HCCL_ERROR("[OpExeCounter][ClearOpCounterMem] headCountMem or tailCountMem  is nullptr");
+        return HCCL_E_PTR;
+    }
+    CHK_RET(hrtMemSet(headCountMem_, memSize_, memSize_));
+    CHK_RET(hrtMemSet(tailCountMem_, memSize_, memSize_));
+    HCCL_DEBUG("[OpExeCounter][ClearOpCounterMem] headCountMem or tailCountMem is to success set 0");
+    return HCCL_SUCCESS;
+}
+
 HcclResult FftsHeadCounter(const HcclDispatcher &dispatcher, Stream &stream)
 {
     if (!GetExternalInputHcclEnableFfts() || GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB) {
@@ -182,10 +202,10 @@ HcclResult FftsTailCounter(const HcclDispatcher &dispatcher, Stream &stream)
     return OpExeCounter::GetInstance(devLogicID).AddCounter(dispatcher, stream, TAIL);
 }
 
-HcclResult StarsCounter(const HcclDispatcher &dispatcher, Stream &stream, int flag, bool isAicpuMode, bool isRetry)
+HcclResult StarsCounter(const HcclDispatcher &dispatcher, Stream &stream, int flag, bool isAicpuMode, bool isRetry, bool isAivMode)
 {
-    // 不需要STARS头尾计数的场景: AICPU展开不开重执行 或者 HOST展开FFTS+模式
-    if ((isAicpuMode && !isRetry) ||
+    // 不需要STARS头尾计数的场景: AICPU展开不开重执行 或者 AIV 或者 HOST展开FFTS+模式
+    if ((isAicpuMode && !isRetry) || isAivMode ||
         (!isAicpuMode && GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && GetExternalInputHcclEnableFfts())) {
         HCCL_DEBUG("do not need add stars mode counter");
         return HCCL_SUCCESS;
@@ -201,6 +221,13 @@ HcclResult GetOpCountInfo(OpCounterInfo &opCounterInfo)
     s32 devLogicID = 0;
     CHK_RET(hrtGetDevice(&devLogicID));
     return OpExeCounter::GetInstance(devLogicID).GetOpCountInfo(opCounterInfo);
+}
+
+HcclResult ClearOpCounterMem()
+{
+    s32 devLogicID = 0;
+    CHK_RET(hrtGetDevice(&devLogicID));
+    return OpExeCounter::GetInstance(devLogicID).ClearOpCounterMem();
 }
 
 __attribute__((constructor)) void CallBackInit()

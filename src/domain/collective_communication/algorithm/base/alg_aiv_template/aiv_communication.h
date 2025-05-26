@@ -23,6 +23,8 @@
 #include "aiv_all_reduce_910b_smalldata_graph.h"
 #include "aiv_all_reduce_910b_rdma_smalldata_graph.h"
 #include "aiv_all_reduce_910b_rdma_middata_graph.h"
+#include "aiv_all_reduce_91093_smalldata.h"
+#include "aiv_all_reduce_91093_bigdata_graph.h"
 
 #include "aiv_all_to_all_vc_910b_no_loop.h"
 #include "aiv_all_to_all_vc_910b_graph.h"
@@ -36,6 +38,8 @@
 #include "aiv_all_to_all_v_91093.h"
 #include "aiv_all_to_all_v_91093_graph.h"
 #include "aiv_all_to_all_v_91093_single.h"
+#include "aiv_all_to_all_91093_single_graph.h"
+#include "aiv_all_to_all_91093_single_pingpong.h"
 
 #include "aiv_all_gather_910b_graph.h"
 #include "aiv_all_gather_91093_smalldata_graph.h"
@@ -82,7 +86,13 @@ extern "C" __global__ __aicore__ void aiv_all_reduce_##type(KERNEL_ARGS_DEF) { \
             return aiv_all_reduce_910b_smalldata<type>(KERNEL_ARGS_CALL); \
         } \
     } else { \
-        if (aivRdmaStep >= 0) { \
+        if (devType == DEV_TYPE_910_93) { \
+            if (len * sizeof(type) <= AIV_A3_ALL_REDUCE_GRAPH_GUIYI_SIZE) { \
+                return aiv_all_reduce_91093_smalldata<type>(KERNEL_ARGS_CALL); \
+            } else { \
+                return aiv_all_reduce_91093_bigdata_graph<type>(KERNEL_ARGS_CALL); \
+            } \
+        } else if (aivRdmaStep >= 0) { \
             if (!useAivRdmaSmall) { \
                 return aiv_all_reduce_910b_rdma_middata_graph<type>(KERNEL_ARGS_CALL); \
             } else { \
@@ -106,7 +116,11 @@ extern "C" __global__ __aicore__ void aiv_all_to_all_vc_##type(EXTERN_KERNEL_ARG
             return aiv_all_to_all_vc_910b_no_loop<type>(EXTERN_KERNEL_ARGS_CALL); \
         } \
     } else { \
-        return aiv_all_to_all_vc_910b_graph<type>(EXTERN_KERNEL_ARGS_CALL); \
+        if (devType == DEV_TYPE_910_93) { \
+            return aiv_all_to_all_vc_91093_single_graph<type>(KERNEL_ARGS_CALL, &extraArgs); \
+        } else { \
+            return aiv_all_to_all_vc_910b_graph<type>(EXTERN_KERNEL_ARGS_CALL); \
+        } \
     } \
 }
 
@@ -148,6 +162,14 @@ extern "C" __global__ __aicore__ void aiv_all_to_all_##type(KERNEL_ARGS_DEF) { \
     } else if (isOpBase) { \
         if (len * sizeof(type) < AIV_ALL_TO_ALL_BIG_SIZE) { \
             return aiv_all_to_all_910b_smalldata<type>(KERNEL_ARGS_CALL); \
+        } \
+    } else { \
+        if (devType == DEV_TYPE_910_93) { \
+            if (len * sizeof(type) > AIV_A3_ALL_TO_ALL_GRAPH_GUIYI_SIZE) { \
+                return aiv_all_to_all_91093_single_graph<type>(KERNEL_ARGS_CALL); \
+            } else { \
+                return aiv_all_to_all_91093_single_pingpong<type>(KERNEL_ARGS_CALL); \
+            } \
         } \
     } \
 }

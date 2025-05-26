@@ -187,7 +187,7 @@ __aicore__ inline void aiv_reduce_scatter_910b_bigdata(KERNEL_ARGS_DEF)
 {
     AivReduceScatterBig910B op;
     op.Init(KERNEL_CLASS_INIT, true);
-
+    op.HeadCounter();
     uint64_t maxCountPerLoop = bufferSize / UB_ALIGN_SIZE * UB_ALIGN_SIZE / rankSize / sizeof(T);
     uint64_t countLeft = len;
 
@@ -211,4 +211,5 @@ __aicore__ inline void aiv_reduce_scatter_910b_bigdata(KERNEL_ARGS_DEF)
     if (tag == 1000) {
         op.EndSync<T>(tag, flagOffsetBase);
     }
+    op.TailCounter();
 }

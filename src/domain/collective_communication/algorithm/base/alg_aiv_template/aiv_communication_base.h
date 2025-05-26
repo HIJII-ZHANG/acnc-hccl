@@ -12,6 +12,7 @@
 #define AIV_COMMUNICATION_BASE_H
 
 #include "kernel_operator.h"
+#include "sync_interface.h"
 
 using namespace AscendC;
 
@@ -46,7 +47,8 @@ GM_ADDR buffOut8, GM_ADDR buffOut9, GM_ADDR buffOut10, GM_ADDR buffOut11, \
 GM_ADDR buffOut12, GM_ADDR buffOut13, GM_ADDR buffOut14, GM_ADDR buffOut15, \
 GM_ADDR input, GM_ADDR output, uint32_t rank, uint32_t rankSize, uint64_t len, \
 uint32_t dataType, uint32_t reduceOp, uint32_t root, int32_t tag, bool isOpBase, uint64_t bufferSize, \
-int32_t aivRdmaStep, bool useAivRdmaSmall, int32_t serverNum, uint32_t devType
+int32_t aivRdmaStep, bool useAivRdmaSmall, int32_t serverNum, uint32_t devType, GM_ADDR headCountMem, \
+GM_ADDR tailCountMem, GM_ADDR addOneMem, uint32_t counterMemSize, bool isEnableCounter
 
 #define KERNEL_ARGS_CALL \
 buffIn0, buffIn1, buffIn2, buffIn3, buffIn4, buffIn5, buffIn6, buffIn7, \
@@ -54,14 +56,14 @@ buffIn8, buffIn9, buffIn10, buffIn11, buffIn12, buffIn13, buffIn14, buffIn15, \
 buffOut0, buffOut1, buffOut2, buffOut3, buffOut4, buffOut5, buffOut6, buffOut7, \
 buffOut8, buffOut9, buffOut10, buffOut11, buffOut12, buffOut13, buffOut14, buffOut15, \
 input, output, rank, rankSize, len, dataType, reduceOp, root, tag, isOpBase, bufferSize, aivRdmaStep, useAivRdmaSmall, \
-serverNum, devType
+serverNum, devType, headCountMem, tailCountMem, addOneMem, counterMemSize, isEnableCounter
 
 #define KERNEL_CLASS_INIT \
 buffIn0, buffIn1, buffIn2, buffIn3, buffIn4, buffIn5, buffIn6, buffIn7, \
 buffIn8, buffIn9, buffIn10, buffIn11, buffIn12, buffIn13, buffIn14, buffIn15, \
 buffOut0, buffOut1, buffOut2, buffOut3, buffOut4, buffOut5, buffOut6, buffOut7, \
 buffOut8, buffOut9, buffOut10, buffOut11, buffOut12, buffOut13, buffOut14, buffOut15, \
-rank, rankSize, dataType, reduceOp, root
+rank, rankSize, dataType, reduceOp, root, headCountMem, tailCountMem, addOneMem, counterMemSize, isEnableCounter
 
 #define EXTERN_KERNEL_ARGS_DEF \
 KERNEL_ARGS_DEF, ExtraArgs extraArgs
@@ -87,8 +89,10 @@ constexpr uint64_t AIV_REDUCE_SCATTER_MID_SIZE = 2 * 1024 * 1024;
 constexpr uint64_t AIV_REDUCE_SCATTER_V_MID_SIZE = 2 * 1024 * 1024;
 constexpr uint64_t AIV_ALL_TO_ALL_BIG_SIZE = 512 * 1024;
 
+constexpr uint64_t AIV_A3_ALL_REDUCE_GRAPH_GUIYI_SIZE = 190 * 1024;
 constexpr uint64_t AIV_A3_REDUCE_SCATTER_GRAPH_GUIYI_SIZE = 760 * 1024;
 constexpr uint64_t AIV_A3_ALL_GATHER_GRAPH_GUIYI_SIZE = 760 * 1024;
+constexpr uint64_t AIV_A3_ALL_TO_ALL_GRAPH_GUIYI_SIZE = 760 * 1024;
 constexpr uint32_t BLOCK_DIM_THREE_PER_RANK_A3 = 3;
 constexpr uint32_t BLOCK_DIM_FOUR_PER_RANK_A3 = 4;
 constexpr uint32_t MAX_BLOCK_DIM = 48;
@@ -99,7 +103,6 @@ constexpr uint64_t UB_ALIGN_SIZE = 32;
 constexpr uint64_t UB_FLAG_SIZE = 32;
 constexpr uint64_t UB_FLAG_SIZE_4 = UB_FLAG_SIZE * 4;
 constexpr uint64_t UB_FLAG_SIZE_8 = UB_FLAG_SIZE * 8;
-constexpr uint64_t UB_FLAG_PAD_COUNT = 8;
 constexpr uint64_t UB_MAX_DATA_SIZE = 190 * 1024;
 constexpr uint64_t UB_DB_DATA_BATCH_SIZE = UB_MAX_DATA_SIZE / 2;
 
@@ -183,6 +186,11 @@ constexpr uint32_t MAX_FLAG_SIZE_PER_KERNEL = 6 * MAX_RANK_SIZE * FLAG_SIZE;
 #define AIV_ALL_REDUCE_910B_RDMA_SMALLDATA_STEP2 46
 #define AIV_ALL_REDUCE_910B_RDMA_SMALLDATA_GRAPH_STEP3 47
 #define AIV_ALL_REDUCE_910B_RDMA_SMALLDATA_STEP3 48
+#define AIV_ALL_TO_ALL_91093_SINGLE_PINGPONG 49
+#define AIV_ALL_TO_ALL_91093_SINGLE_GRAPH 50
+#define AIV_ALL_TO_ALL_VC_91093_SINGLE_GRAPH 51
+#define AIV_ALL_REDUCE_91093_SMALLDATA 52
+#define AIV_ALL_REDUCE_91093_BIGDATA_GRAPH 53
 
 #define BASE_FLAG_OFFSET (MAX_FLAG_SIZE_PER_KERNEL)
 
@@ -200,7 +208,9 @@ public:
                                 GM_ADDR buffOut6, GM_ADDR buffOut7, GM_ADDR buffOut8, GM_ADDR buffOut9,
                                 GM_ADDR buffOut10, GM_ADDR buffOut11, GM_ADDR buffOut12, GM_ADDR buffOut13,
                                 GM_ADDR buffOut14, GM_ADDR buffOut15, uint32_t rank, uint32_t rankSize,
-                                uint32_t dataType, uint32_t reduceOp, uint32_t root, bool useDoubleBuffer)
+                                uint32_t dataType, uint32_t reduceOp, uint32_t root, GM_ADDR headCountMem,
+                                GM_ADDR tailCountMem, GM_ADDR addOneMem, uint32_t counterMemSize, bool isEnableCounter,
+                                bool useDoubleBuffer)
     {
         InitBuffArray(buffIn0, buffIn1, buffIn2, buffIn3, buffIn4,
                 buffIn5, buffIn6, buffIn7, buffIn8, buffIn9,
@@ -233,8 +243,9 @@ public:
         }
 
         pipe.InitBuffer(flagInQue, AIV_PING_PONG_FACTOR_TWO, UB_FLAG_SIZE);
+        InitOpCounter(headCountMem, tailCountMem, addOneMem, counterMemSize, isEnableCounter);
     }
-    
+
     __aicore__ inline void InitBuffArray(GM_ADDR buffIn0, GM_ADDR buffIn1, GM_ADDR buffIn2, GM_ADDR buffIn3, GM_ADDR buffIn4,
                                 GM_ADDR buffIn5, GM_ADDR buffIn6, GM_ADDR buffIn7, GM_ADDR buffIn8, GM_ADDR buffIn9,
                                 GM_ADDR buffIn10, GM_ADDR buffIn11, GM_ADDR buffIn12, GM_ADDR buffIn13,
@@ -287,6 +298,9 @@ public:
     __aicore__ inline uint64_t CalActualCount(uint32_t sliceIdx, uint64_t sliceCount, uint64_t avgLengthPerSlice,
         uint64_t tailLength);
 
+    __aicore__ inline void CalBlockCountAndOffset(uint64_t len, uint32_t blockNumPerGroup, uint32_t blockIdxInGroup,
+        uint32_t padCount, uint64_t &count, uint64_t &blockOffset);
+
     template<typename T>
     __aicore__ inline void SetAtomicOp(uint32_t atomicOp);
 
@@ -316,9 +330,31 @@ public:
 
     __aicore__ inline void CheckFlagGE(__gm__ int32_t *ctrlFlagGM, int32_t checkValue);
 
-    template<HardEvent event> 
-    __aicore__ inline void SyncFunc();
+    __aicore__ inline void InitOpCounter(GM_ADDR headCountMem, GM_ADDR tailCountMem, GM_ADDR addOneMem, uint32_t counterMemSize,
+        bool isEnableCounter)
+    {
+        headCountMem_ = headCountMem;
+        tailCountMem_ = tailCountMem;
+        addOneMem_ = addOneMem;
+        counterMemSize_ = counterMemSize;
+        isEnableCounter_ = isEnableCounter;
+    }
 
+    __aicore__ inline void HeadCounter()
+    {
+        if (block_idx == 0 && isEnableCounter_) {
+            CpGM2GM((__gm__ int32_t*)headCountMem_, (__gm__ int32_t*)addOneMem_, counterMemSize_ / sizeof(int32_t), true,
+                HcclReduceOp::HCCL_REDUCE_SUM);
+        }
+    }
+
+    __aicore__ inline void TailCounter()
+    {
+        if (block_idx == 0 && isEnableCounter_) {
+            CpGM2GM((__gm__ int32_t*)tailCountMem_, (__gm__ int32_t*)addOneMem_, counterMemSize_ / sizeof(int32_t), true,
+                HcclReduceOp::HCCL_REDUCE_SUM);
+        }
+    }
 protected:
     GM_ADDR GM_IN[MAX_RANK_SIZE];
     GM_ADDR GM_OUT[MAX_RANK_SIZE];
@@ -342,6 +378,12 @@ protected:
     TQue<QuePosition::VECIN, 1> flagInQue;
 
     TQueBind<QuePosition::VECIN, QuePosition::VECOUT, 1> inOutQue;
+
+    GM_ADDR headCountMem_;
+    GM_ADDR tailCountMem_;
+    GM_ADDR addOneMem_;
+    uint32_t counterMemSize_;
+    bool isEnableCounter_;
 };
 
 __aicore__ inline uint64_t AivCommBase::CeilDiv(uint64_t a, uint64_t b)
@@ -362,6 +404,18 @@ __aicore__ inline uint64_t AivCommBase::CalActualCount(uint32_t sliceIdx, uint64
     } else {
         return 0;
     }
+}
+
+__aicore__ inline void AivCommBase::CalBlockCountAndOffset(uint64_t len, uint32_t blockNumPerGroup,
+uint32_t blockIdxInGroup, uint32_t padCount, uint64_t &count, uint64_t &blockOffset)
+{
+    uint64_t avgLengthPerBlock = CeilDiv(len, blockNumPerGroup);
+    uint64_t avgLengthPerSlice = CeilDiv(avgLengthPerBlock, padCount) * padCount; // 32B对齐
+    uint64_t sliceCount = CeilDiv(len, avgLengthPerSlice);
+    uint64_t tailLength = len - (sliceCount - 1) * avgLengthPerSlice;
+ 
+    count = CalActualCount(blockIdxInGroup, sliceCount, avgLengthPerSlice, tailLength);
+    blockOffset = blockIdxInGroup * avgLengthPerSlice;
 }
 
 template<typename T>
@@ -413,7 +467,7 @@ __aicore__ inline void AivCommBase::CpGM2GM(__gm__ T *outputGM, __gm__ T *inputG
     inputGT.SetGlobalBuffer(inputGM, count);
     GlobalTensor<T> outputGT;
     outputGT.SetGlobalBuffer(outputGM, count);
-    
+
     if (atomic) {
         SetAtomicOp<T>(atomicOp);
     }
@@ -459,7 +513,7 @@ __aicore__ inline void AivCommBase::CpGM2GMWithFlagWrap(__gm__ T *outputGM, __gm
     if (useDoubleBuffer_) {
         maxCountPerLoop = UB_DB_DATA_BATCH_SIZE / sizeof(T);
     }
-    
+
     uint64_t curOffset = 0;
     while (count > 0) {
         uint64_t curCount = count > maxCountPerLoop ? maxCountPerLoop : count;
@@ -478,8 +532,7 @@ __aicore__ inline void AivCommBase::CpGM2GMWithFlagWrap(__gm__ T *outputGM, __gm
 
         if (curBatchCount % flushFrequency == 0 || count == 0) {
             SyncFunc<HardEvent::MTE3_S>();
-
-            SetFlagNew(ctrlFlagGM, curBatchCount + tag);
+            SetSignalValue(ctrlFlagGM, localSetTensor, curBatchCount + tag);
         }
     }
 }
@@ -566,13 +619,6 @@ __aicore__ inline void AivCommBase::CheckFlagGE(__gm__ int32_t *ctrlFlagGM, int3
             break;
         }
     }
-}
-
-template<HardEvent event> 
-__aicore__ inline void AivCommBase::SyncFunc() {
-    int32_t eventID = static_cast<int32_t>(GetTPipePtr()->FetchEventID(event));
-    SetFlag<event>(eventID);
-    WaitFlag<event>(eventID);
 }
 
 #endif  /* AIV_COMMUNICATION_BASE_H */

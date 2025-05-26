@@ -45,12 +45,6 @@ private:
 
     HcclResult SelectAlgfor91093(const OpParam& param, std::string& algName);
 
-    HcclResult SelectAlgforAHC();
-
-    HcclResult AHCAlgSelect(CommPlane ahcSubGroupLevel);
-
-    HcclResult PrepareAHCSubGroups(AlgTypeLevel1 &algType, CommPlane algLevel);
-
     HcclResult MeshTopoSelector(std::string& algName, u64 unitSize);
 
     HcclResult DeterministicSelector(const OpParam& param, std::string& algName);

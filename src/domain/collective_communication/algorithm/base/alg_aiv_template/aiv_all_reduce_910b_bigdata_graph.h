@@ -35,7 +35,7 @@ __aicore__ inline void AivAllReduceBigGraph910B::Process(GM_ADDR input, GM_ADDR 
 
     GM_ADDR flagAddrSelf = GM_OUT[rank_] + flagOffset;
     GM_ADDR flagAddrOther = GM_OUT[block_idx] + flagOffset;
-    
+
     __gm__ T *outputGm = (__gm__ T *)output;
     __gm__ T *cclGmSelf = (__gm__ T *)(GM_IN[rank_]);
     __gm__ T *cclGmOther = (__gm__ T *)(GM_IN[block_idx]);
@@ -47,7 +47,7 @@ __aicore__ inline void AivAllReduceBigGraph910B::Process(GM_ADDR input, GM_ADDR 
     CheckFlagNew((__gm__ int32_t *)(flagAddrOther + 3 * FLAG_SIZE + rank_ * FLAG_SIZE * 2), tag);
 
     PipeBarrier<PIPE_ALL>();
-    
+
     // ReduceScatter
     if (block_idx != rank_) {
         count = CalActualCount(rank_, sliceCount, avgLengthPerSlice, tailLength);
@@ -61,7 +61,7 @@ __aicore__ inline void AivAllReduceBigGraph910B::Process(GM_ADDR input, GM_ADDR 
         // 本aiv reduce完成，使用第2个flag
         SetFlagNew((__gm__ int32_t*)(flagAddrSelf + FLAG_SIZE), tag, true);
     }
-    
+
     // 全卡同步
     PipeBarrier<PIPE_ALL>();
     if (block_idx == rank_) {
@@ -81,9 +81,9 @@ __aicore__ inline void AivAllReduceBigGraph910B::Process(GM_ADDR input, GM_ADDR 
     }
 
     // 每个aiv读相应对端的flag
-    CheckFlagGE((__gm__ int32_t *)(flagAddrOther + 2 * FLAG_SIZE), tag);
+    WaitSignalGEValue((__gm__ int32_t *)(flagAddrOther + 2 * FLAG_SIZE), localCheckGETensor, tag);
     PipeBarrier<PIPE_ALL>();
-    SetFlagNew((__gm__ int32_t *)(flagAddrOther + 2 * FLAG_SIZE), -tag, true);
+    AddSignalValue((__gm__ int32_t *)(flagAddrOther + 2 * FLAG_SIZE), localSetTensor, -tag);
 
     PipeBarrier<PIPE_ALL>();
 
@@ -108,5 +108,7 @@ __aicore__ inline void aiv_all_reduce_910b_bigdata_graph(KERNEL_ARGS_DEF)
 {
     AivAllReduceBigGraph910B op;
     op.Init(KERNEL_CLASS_INIT, true);
+    op.HeadCounter();
     op.Process<T>(input, output, len, tag);
+    op.TailCounter();
 }

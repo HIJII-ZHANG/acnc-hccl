@@ -47,8 +47,6 @@ protected:
     virtual HcclResult RunAllGather(const std::vector<LINK> &links,
                                 const std::vector<Slice> &outputSlices,
                                 const std::vector<Slice> &inputSlices);
-    HcclResult RunAllGatherHighPerf(const std::vector<LINK> &links, const std::vector<Slice> &outputSlices,
-                                       const std::vector<Slice> &inputSlices);
     std::vector<Stream> meshStreams_; /** 多steam**/
 
     std::vector<std::shared_ptr<LocalNotify>> *meshSignal_{nullptr};  /* 每个ring创建一个signal */

@@ -73,8 +73,19 @@ HcclResult CollExecutorBase::SetAivClearEnable(bool aivClearEnable)
     return HCCL_SUCCESS;
 }
 
+u32 CollExecutorBase::CalBlockDim(u32 rankSize, u64 dataSize, HcclCMDType cmdType)
+{
+    return rankSize;
+}
+
 HcclResult CollExecutorBase::GetBlockDim(u32& blockDim){
    blockDim = blockDim_; 
+   return HCCL_SUCCESS;
+}
+
+HcclResult CollExecutorBase::SetOpCounter(const OpCounterInfo& opCounter)
+{
+   opCounter_ = opCounter; 
    return HCCL_SUCCESS;
 }
 }

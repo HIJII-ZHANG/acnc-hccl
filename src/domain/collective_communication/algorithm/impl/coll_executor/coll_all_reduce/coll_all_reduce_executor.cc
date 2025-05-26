@@ -53,6 +53,53 @@ HcclResult CollAllReduceExecutor::Orchestrate(OpParam& param, AlgResourceRespons
         ret = KernelRun(param, execMem);
     } else if ((param.inputPtr == algRes.cclInputMem.ptr()) && (param.outputPtr == algRes.cclOutputMem.ptr())) {
         ret = AvoidSubgraphLoop(param, algRes);
+    } else if (param.isZeroCopy) {
+        u64 totalSize = param.DataDes.count * SIZE_TABLE[param.DataDes.dataType];
+        ExecMem execMem;
+        execMem.count = param.DataDes.count;
+        execMem.inputMem = DeviceMem::create(algRes.paramInputMem.ptr(), totalSize);
+        execMem.outputMem = DeviceMem::create(algRes.paramOutputMem.ptr(), totalSize);
+        execMem.scratchMem = algRes.scratchMem;
+        execMem.inputPtr = param.inputPtr;
+        execMem.outputPtr = param.outputPtr;
+
+        u32 perDataSize = 0;
+        CHK_RET(SalGetDataTypeSize(param.DataDes.dataType, perDataSize));
+        std::vector<Slice> dataSegsSlice; // 数据分成ranksize份，每份的起始偏移和大小
+        std::vector<std::vector<Slice> > multRingsSliceZero; // 数据基于该rank上环0的偏移
+        // 根据数据量计算每个环上数据的偏移和大小
+        CHK_RET(AlgTemplateBase::PrepareSliceData(execMem.count, perDataSize, topoAttr_.deviceNumPerAggregation, 0, dataSegsSlice));
+
+        //  多环数据切分
+        if (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) {
+            multRingsSliceZero = PrepareMultiRingSlice(dataSegsSlice, param.tag, false, topoAttr_.nicList);
+        } else {
+            multRingsSliceZero.push_back(dataSegsSlice);
+        }
+
+        u32 level0ServerIndex = topoAttr_.userRank % topoAttr_.deviceNumPerAggregation;
+        u64 hdCount = dataSegsSlice[level0ServerIndex].size / perDataSize;
+        
+        // 3 steps of KernelRun
+        ret = KernelRunIntraServerReduceScatter(param, execMem, multRingsSliceZero, dataSegsSlice);
+        CHK_PRT_RET(ret != HCCL_SUCCESS,
+            HCCL_ERROR("[CollAllReduceExecutor][Orchestrate]errNo[0x%016llx]all reudce excutor level0 reducescatter failed",
+                HCCL_ERROR_CODE(ret)), ret);
+
+        if (topoAttr_.userRankSize > topoAttr_.deviceNumPerAggregation) {
+            ret = RunLoop(param, algRes);
+            CHK_PRT_RET(ret != HCCL_SUCCESS,
+                HCCL_ERROR("[CollAllReduceExecutor][Orchestrate]errNo[0x%016llx]all reduce executor runloop failed. RunLoop",
+                    HCCL_ERROR_CODE(ret)), ret);
+        }
+        else {
+            ret = KernelRunInterServerAllReduce(param, execMem);
+            CHK_PRT_RET(ret != HCCL_SUCCESS,
+                HCCL_ERROR("[CollAllReduceExecutor][Orchestrate]errNo[0x%016llx]all reudce excutor level1 and/or level2 allreduce failed",
+                    HCCL_ERROR_CODE(ret)), ret);
+        }
+
+        ret = KernelRunIntraServerAllGather(param, execMem, multRingsSliceZero, hdCount);
     } else {
         if (algOpContext_.opRetryHandler.isInplacePreSync == true) {
             /*当重执行场景，UserInMem > CCLBuffer时，需要在allreduce算子前增加一个PreSync函数，提升重执行成功概率*/
@@ -173,7 +220,15 @@ HcclResult CollAllReduceExecutor::RunLoop(OpParam &param, AlgResourceResponse &a
     HCCL_DEBUG("[CollAllReduceExecutor][RunLoop]tag[%s], userRankSize is [%u], maxCountPerLoop is [%llu].",
         param.tag.c_str(), topoAttr_.userRankSize, maxCountPerLoop);
 
-    for (u64 countLeft = param.DataDes.count, curCount = 0, inputOffset = 0, outputOffset = 0;
+    u64 countLeftInit = param.DataDes.count;
+    if (param.isZeroCopy) {
+        std::vector<Slice> dataSegsSlice;
+        CHK_RET(AlgTemplateBase::PrepareSliceData(param.DataDes.count, unitSize, topoAttr_.deviceNumPerAggregation, 0, dataSegsSlice));
+        u32 level0ServerIndex = topoAttr_.userRank % topoAttr_.deviceNumPerAggregation;
+        countLeftInit = dataSegsSlice[level0ServerIndex].size / unitSize;
+    }
+
+    for (u64 countLeft = countLeftInit, curCount = 0, inputOffset = 0, outputOffset = 0;
             countLeft > 0; countLeft -= curCount) {
         curInputPtr += inputOffset;
         curOutputPtr += outputOffset;
@@ -248,7 +303,12 @@ HcclResult CollAllReduceExecutor::RunLoopInner(OpParam &param, const ReduceType 
         CHK_RET(HcclD2DMemcpyAsync(dispatcher_, inCommMem, inMem, param.stream));
         HCCL_DEBUG("[CollAllReduceExecutor][RunLoop]copy from user in to ccl in.");
     }
-    HcclResult ret = KernelRun(param, execMem);
+    HcclResult ret = HCCL_SUCCESS;
+    if (!param.isZeroCopy) {
+        ret = KernelRun(param, execMem);
+    } else {
+        ret = KernelRunInterServerAllReduce(param, execMem);
+    }
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAllReduceExecutor][RunLoop]errNo[0x%016llx]kernel run error, tag[%s], " \
         "inputMem ptr[%p], outputMem ptr[%p], count[%llu], dataType[%d], reduce op type[%d]",

@@ -61,6 +61,8 @@ HcclResult AllGatherRingConcurrentDirect::RunAsync(const u32 rank, const u32 ran
         CHK_RET(ExecuteBarrier(leftLink_, rightLink_));
     }
 
+    CHK_RET(LaunchTaskExtend(dispatcher_, stream_, subStreams_));
+
     HCCL_INFO("AllGatherRingConcurrentDirect finished: rank[%u] end", rank);
     return HCCL_SUCCESS;
 }

@@ -200,7 +200,7 @@ HcclResult CollReduceScatterMeshGraphExecutor::KernelRun(const OpParam &param, E
             level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_REDUCESCATTER_NHR, dispatcher_);
             HCCL_INFO("reducescatter mesh: using nhr algo inter-server.");
             CHK_SMART_PTR_NULL(level1TempAlg);
-			CHK_RET(level1TempAlg->Prepare(reduceAttr));
+			CHK_RET(level1TempAlg->Prepare(reduceAttr, false));
             CHK_RET(level1TempAlg->Prepare(level1ReduceScatterInput, level1ReduceScatterInput, level1ReduceScatterScratch, ringCount,
                 param.DataDes.dataType, param.stream, param.reduceType, LEVEL0_BRIDGE_RANK_ID, std::vector<Slice>(0), level1SliceOffset));
         } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {

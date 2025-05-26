@@ -532,8 +532,7 @@ u32 CommBase::GetInterRemotePort(s32 devicePhyId, u32 dstUserRank)
     if (isUseRankPort_ && dstUserRank < ranksPort_.size() && ranksPort_[dstUserRank] != HCCL_INVALID_PORT) {
         HCCL_INFO("[GetInterRemotePort] port[%u] from ranks port", ranksPort_[dstUserRank]);
         return ranksPort_[dstUserRank];
-    } else if (!GetExternalInputHcclDeviceNicDisable() && !GetExternalInputHcclHostRdmaEnable()
-        && (!isUseRankPort_ && !Is310PDevice())) {
+    } else if (!isUseRankPort_ && !Is310PDevice()) {
         HCCL_INFO("[GetInterRemotePort] port[%u]", HETEROG_CCL_PORT);
         return HETEROG_CCL_PORT;
     } else if (GetExternalInputHcclIfBasePort() == HCCL_INVALID_PORT) {
@@ -1196,7 +1195,7 @@ HcclResult CommBase::GetSuperNodeIntraRankIPInfo(std::map<u32, HcclSocketRole> &
     for (auto rankIter = rankRole.begin(); rankIter != rankRole.end(); rankIter++) {
         u32 dstUserRank = paraVector_[rankIter->first].userRank;
         HcclIpAddress ipAddr(paraVector_[rankIter->first].nicIp[0]);
-        if (!GetExternalInputInterVnicDisable()) {
+        if (!GetExternalInputInterHccsDisable()) {
             CHK_RET(hrtRaGetSingleSocketVnicIpInfo(devicePhyId_, DeviceIdType::DEVICE_ID_TYPE_SDID,
                 paraVector_[rankIter->first].superDeviceId, ipAddr));
         }

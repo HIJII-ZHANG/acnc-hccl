@@ -268,6 +268,7 @@ private:
     std::mutex ctxMapMutex_;
     std::map<HcclIpAddress, HcclNetDevCtx> netDevCtxMap_;
     std::map<HcclIpAddress, std::shared_ptr<HcclSocket>> listenSocketMap_;
+    s32 stuckDetectTime_;
 };
 } // namespace hccl
 

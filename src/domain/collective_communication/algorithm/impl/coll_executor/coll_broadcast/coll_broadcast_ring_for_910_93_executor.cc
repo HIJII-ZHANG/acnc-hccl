@@ -417,6 +417,394 @@ HcclResult CollBroadCastRingFor91093::DoubleRingScatter(const std::string &tag, 
     return HCCL_SUCCESS;
 }
 
+HcclResult CollBroadCastRingFor91093::KernelRunPreIntraServer(const OpParam &param, ExecMem &execMem)
+{
+    HCCL_INFO("[BroadCastOperator][CollBroadCastRingFor91093] The CollBroadCastRingFor91093 starts.");
+    u32 perDataSize = 0;
+    CHK_RET(SalGetDataTypeSize(param.DataDes.dataType, perDataSize));
+    CHK_PRT_RET(perDataSize == 0,
+        HCCL_ERROR("[CollBroadCastRingFor91093][KernelRun]errNo[0x%01611x] datatype[%d] is invalid",
+            HCCL_ERROR_CODE(HCCL_E_PARA), param.DataDes.dataType), HCCL_E_PARA);
+    std::vector<Slice> dataSegsSlice; // 数据分成ranksize份，每份的起始偏移和大小
+    std::vector<std::vector<Slice>> mulRingSlice;  // 数据基于该rank上环0的偏移
+
+    u32 ringNum = (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) ? \
+        (LEVEL0_PLANE_NUM_IN_NPRING_DOUBLE) : (LEVEL0_PLANE_NUM_IN_NPRING_SINGLE);
+
+    CHK_RET(CheckCommSize(COMM_LEVEL0, ringNum));
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+
+    // 按ranksize得到内存切分slice数
+    u32 sliceNum = level0CommInfo.localRankSize;
+    // 将根节点数据切分成sliceNum份
+    CHK_RET(AlgTemplateBase::PrepareSliceData(execMem.count, perDataSize, sliceNum, 0, dataSegsSlice));
+    HCCL_DEBUG("[CollBroadCastRingFor91093][KernelRun]ringNum[%u] sliceNum[%u]", ringNum, sliceNum);
+
+    // 用于找到scatter后数据在userIn的起始位置
+    l0SliceList_ = dataSegsSlice;
+
+    /* 节点内 scatter */
+    if (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) {
+        // 将每slice再切分成2份，按各ring的dev顺序排列
+        mulRingSlice = PrepareMultiRingSlice(dataSegsSlice, param.tag, false, topoAttr_.nicList);
+        CHK_PRT_RET(mulRingSlice.size() != ringNum,
+            HCCL_ERROR("[CollBroadCastRingFor91093][KernelRun] ringNum[%u] !=mulRingSlice size[%zu]",
+            ringNum, mulRingSlice.size()), HCCL_E_INTERNAL);
+    } else {
+        mulRingSlice.push_back(dataSegsSlice); // 应该offset全为0，而大小和dataSegsSlice中一样,里面的offset不使用
+    }
+
+    // l0通信域root节点slice size设置为0
+    if (level0CommInfo.localRank == param.root) {
+        for (u32 i = 0; i < mulRingSlice.size(); i++) {
+            for (u32 j = 0; j < mulRingSlice[i].size(); j++) {
+                mulRingSlice[i][j].size = 0;
+            }
+        }
+    }
+
+    HcomCollOpInfo *scatterOpInfoPtr = nullptr;
+    HcomCollOpInfo scatterOpInfo = {
+        "", execMem.inputPtr, nullptr, param.DataDes.count, param.DataDes.dataType, param.root};
+
+    if (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) {
+        scatterOpInfoPtr = &scatterOpInfo;
+        CHK_RET(ActiveSlaveStreams(param.stream));
+        CHK_RET(DoubleRingScatter(param.tag, execMem.inputMem, execMem.outputMem, execMem.count, param.DataDes.dataType,
+                             mulRingSlice, param.root, param.stream, scatterOpInfoPtr));
+    } else {
+        if (DMAReduceFlag_) {
+            scatterOpInfoPtr = &scatterOpInfo;
+        }
+        CHK_RET(MultiRingScatter(param.tag, execMem.inputMem, execMem.outputMem, execMem.count, param.DataDes.dataType,
+                             mulRingSlice, param.root, param.stream, scatterOpInfoPtr));
+    }
+
+    HCCL_INFO("[CollBroadCastRingFor91093][KernelRun] level0-scatter run success");
+
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollBroadCastRingFor91093::KernelRunInterServer(const OpParam &param, ExecMem &execMem)
+{
+    HCCL_INFO("[BroadCastOperator][CollBroadCastRingFor91093] KernelRunInterServer starts.");
+    u32 perDataSize = 0;
+    CHK_RET(SalGetDataTypeSize(param.DataDes.dataType, perDataSize));
+    CHK_PRT_RET(perDataSize == 0,
+        HCCL_ERROR("[CollBroadCastRingFor91093][KernelRun]errNo[0x%01611x] datatype[%d] is invalid",
+            HCCL_ERROR_CODE(HCCL_E_PARA), param.DataDes.dataType), HCCL_E_PARA);
+    std::vector<Slice> dataSegsSlice; // 数据分成ranksize份，每份的起始偏移和大小
+    std::vector<std::vector<Slice>> mulRingSlice;  // 数据基于该rank上环0的偏移
+
+    u32 ringNum = (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) ? \
+        (LEVEL0_PLANE_NUM_IN_NPRING_DOUBLE) : (LEVEL0_PLANE_NUM_IN_NPRING_SINGLE);
+
+    CHK_RET(CheckCommSize(COMM_LEVEL0, ringNum));
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+
+    // 按ranksize得到内存切分slice数
+    u32 sliceNum = level0CommInfo.localRankSize;
+    // 将根节点数据切分成sliceNum份
+    CHK_RET(AlgTemplateBase::PrepareSliceData(execMem.count, perDataSize, sliceNum, 0, dataSegsSlice));
+    HCCL_DEBUG("[CollBroadCastRingFor91093][KernelRun]ringNum[%u] sliceNum[%u]", ringNum, sliceNum);
+
+    const u32 zeroOffset = 0;
+    // 由于l0数据可能无法均分所以需要修正slice, 同时顶格拷贝数据到cclIn，因此起始offset全部为零
+    u32 l0UserRank = level0CommInfo.localRank;
+    dataSegsSlice[l0UserRank].size = (dataSegsSlice[l0UserRank].size > l0SliceList_[l0UserRank].size) ? l0SliceList_[l0UserRank].size : dataSegsSlice[l0UserRank].size;
+    l0SliceList_[l0UserRank].size -= dataSegsSlice[l0UserRank].size;
+    dataSegsSlice[l0UserRank].offset = zeroOffset;
+    // 用于从userIn和cclIn之间搬运数据
+    Slice localSlice = dataSegsSlice[l0UserRank];
+
+    if (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) {
+        // 将每slice再切分成2份，按各ring的dev顺序排列
+        mulRingSlice = PrepareMultiRingSlice(dataSegsSlice, param.tag, false, topoAttr_.nicList);
+        CHK_PRT_RET(mulRingSlice.size() != ringNum,
+            HCCL_ERROR("[CollBroadCastRingFor91093][KernelRun] ringNum[%u] !=mulRingSlice size[%zu]",
+            ringNum, mulRingSlice.size()), HCCL_E_INTERNAL);
+    } else {
+        mulRingSlice.push_back(dataSegsSlice); // 应该offset全为0，而大小和dataSegsSlice中一样,里面的offset不使用
+    }
+
+    u64 level1DataSize = 0;
+    u32 commIndex = 0;
+    u32 segmentIdx = 0;
+    CHK_RET(PrepareLevel1CommInfo(segmentIdx, commIndex, level1DataSize, level0CommInfo, mulRingSlice, param.tag));
+    u64 level1DataCount = level1DataSize / perDataSize;
+    HCCL_DEBUG("[CollBroadCastRingFor91093][KernelRun]usrRank[%u] level1 use level1DataCount[%llu]",
+        topoAttr_.userRank, level1DataCount);
+
+    // level 1 通信域获取
+    CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
+    SubCommInfo level1CommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
+    HCCL_DEBUG("[CollBroadCastRingFor91093][KernelRun]commIdx:%u TagCommInfo[%s].commLevel1.size():%llu",
+        commIndex, param.tag.c_str(), level1CommInfo.localRankSize);
+
+    // 将数据从userIn拷贝到cclIn上
+    if (level1CommInfo.localRankSize > 1 || topoAttr_.superPodNum > 1) {
+        DeviceMem dstMem = execMem.inputMem.range(zeroOffset, localSlice.size);
+        DeviceMem srcMem = DeviceMem::create(execMem.inputPtr, localSlice.size);
+        CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dstMem, srcMem, const_cast<Stream&>(param.stream)));
+    }
+
+    if (topoAttr_.superPodNum <= 1) {
+        HCCL_INFO("Broadcast double ring No level2.");
+        /* step2: server间 broadcast */
+        bool isUsedRegister = false;
+        std::unique_ptr<AlgTemplateBase> level1TempAlg;
+        u64 curSize = execMem.count * SIZE_TABLE[param.DataDes.dataType];
+        if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
+            HCCL_DEBUG("broadcast ring: curSize[%llu] deviceNumPerAggregation[%u] commLevel0Size[%u]",
+                curSize, topoAttr_.deviceNumPerAggregation, level0CommInfo.localRankSize);
+            if (curSize / topoAttr_.deviceNumPerAggregation <= NHR_BCAST_SMALL_SIZE) {
+                level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_BROADCAST_NHR_ONESHOT, dispatcher_);
+            } else {
+                level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_BROADCAST_NHR, dispatcher_);
+            }
+            HCCL_INFO("broadcast ring: using nhr algo inter-server.");
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
+            isUsedRegister = true;
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_BROADCAST_NHR_V1,
+                dispatcher_);
+            HCCL_INFO("broadcast ring: using nhr_v1 algo inter-server.");
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
+            const u32 level1RankSize = level1CommInfo.localRankSize;
+            if (ShouldUseBinaryBroadcastOfNB(curSize / topoAttr_.deviceNumPerAggregation, level1RankSize,
+                                             topoAttr_.userRankSize, topoAttr_.deviceNumPerAggregation)) {
+                level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_BROADCAST_NB_BINARY, dispatcher_);
+            } else {
+                level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_BROADCAST_NB, dispatcher_);
+            }
+            HCCL_INFO("broadcast ring: using nonuniform-bruck algo inter-server.");
+        } else {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_RECURSIVE_HD, dispatcher_);
+            HCCL_INFO("broadcast ring: using Recursive halving-doubling algo inter-server.");
+        }
+        CHK_SMART_PTR_NULL(level1TempAlg);
+
+        u32 subUserrankRoot = topoMatcher_->GetSubRootUserRank(topoAttr_.userRank, param.root);
+        CHK_PRT_RET(subUserrankRoot == INVALID_VALUE_RANKID,
+            HCCL_ERROR("[CollBroadCastRingFor91093][KernelRun]subUserrankRoot[%u] is invalid,userRank[%u],root[%u]",
+            subUserrankRoot, topoAttr_.userRank, param.root), HCCL_E_INTERNAL);
+        u32 planeRoot = 0;
+        CHK_RET(GetRankByUserRank(COMM_LEVEL1, commIndex, subUserrankRoot, planeRoot));
+        u32 ranksize = level1CommInfo.localRankSize;
+        // 节点间的hd 使用环0来记录
+        if (isUsedRegister) {
+            PrepareData prepareData;
+            prepareData.inputMem = execMem.inputMem;
+            prepareData.outputMem = execMem.inputMem;
+            prepareData.scratchMem = execMem.outputMem;
+            prepareData.count = level1DataCount;
+            prepareData.dataType = param.DataDes.dataType;
+            prepareData.stream = param.stream;
+            prepareData.reductionOp = HCCL_REDUCE_RESERVED;
+            prepareData.root = planeRoot;
+            prepareData.baseOffset = dataSegsSlice[segmentIdx].offset;
+            CHK_RET(level1TempAlg->Prepare(prepareData));
+        } else {
+            CHK_RET(level1TempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.outputMem, level1DataCount,
+                param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, planeRoot, std::vector<Slice>(0),
+                dataSegsSlice[segmentIdx].offset));
+        }
+
+        CHK_RET(level1TempAlg->RegisterProfiler((ranksize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1CommInfo.localRank,
+            PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
+
+        CHK_RET(RunTemplate(level1TempAlg, level1CommInfo));
+
+        HCCL_INFO("Broadcast double ring stage1 run success");
+    } else {
+        HCCL_INFO("Broadcast double ring with Level2.");
+        /* step2: 节点间 scatter */
+        // 按level1RankSize得到内存切分slice数
+        u32 level1RankSize = level1CommInfo.localRankSize;
+        u64 level1Offset = dataSegsSlice[segmentIdx].offset;
+        CHK_RET(AlgTemplateBase::PrepareSliceData(level1DataCount, perDataSize, level1RankSize, 0, dataSegsSlice));
+
+        DeviceMem level1InputMem = execMem.inputMem.range(level1Offset, level1DataSize);
+        CHK_SMART_PTR_NULL(level1InputMem);
+        DeviceMem level1OutputMem = execMem.outputMem.range(level1Offset, level1DataSize);
+        CHK_SMART_PTR_NULL(level1OutputMem);
+
+        if (level1RankSize > 1) {
+            std::unique_ptr<AlgTemplateBase> level1TempAlg;
+            if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
+                level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_SCATTER_NHR, dispatcher_);
+                HCCL_INFO("broadcast ring: using nhr algo inter-server.");
+            } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
+                level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_SCATTER_NB, dispatcher_);
+                HCCL_INFO("broadcast ring: using nonuniform-bruck algo inter-server.");
+            } else {
+                HCCL_ERROR("broadcast level1 only supports NB/NHR algo. not support algType_[%u]", algType_.algoLevel1);
+                return HCCL_E_NOT_SUPPORT;
+            }
+            CHK_SMART_PTR_NULL(level1TempAlg);
+
+            /* 获取每个超节点内的subroot */
+            u32 subPodRoot = topoMatcher_->GetSubRootWithSuperPod(topoAttr_.userRank, param.root);
+            /* 获取超节点内的节点在每个level1通信域的对应卡subServerRootUsrRank */
+            u32 subServerRootUsrRank = topoMatcher_->GetSubRootUserRank(topoAttr_.userRank, subPodRoot);
+            u32 level1RootRank = INVALID_VALUE_RANKID;
+            /* 用此卡subServerRootUsrRank 获取每个level1通信域的相对root idx */
+            CHK_RET(GetRankByUserRank(COMM_LEVEL1, commIndex, subServerRootUsrRank, level1RootRank));
+            CHK_PRT_RET(level1RootRank == INVALID_VALUE_RANKID,
+                HCCL_ERROR("[CollBroadCastRingFor91093][KernelRun] get rootRank IDX in level1 failed."), HCCL_E_PARA);
+
+            CHK_RET(level1TempAlg->Prepare(level1InputMem, level1InputMem, level1InputMem, level1DataCount,
+                param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED, level1RootRank, dataSegsSlice,
+                level1Offset));
+            CHK_RET(level1TempAlg->RegisterProfiler(
+                (level1RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1CommInfo.localRank,
+                PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
+
+            CHK_RET(RunTemplate(level1TempAlg, level1CommInfo));
+            HCCL_INFO("Broadcast double ring [superpod] level1 run success");
+        }
+
+        /* step3: 超节点间 broadcast */
+        CHK_RET(CheckCommSize(COMM_LEVEL2, COMM_INDEX_0 + 1));
+        SubCommInfo level2CommInfo = GetSubCommInfo(COMM_LEVEL2, COMM_INDEX_0);
+        u32 level2RankSize = level2CommInfo.localRankSize;
+        u32 localRank = level1CommInfo.localRank;
+        u32 subUserrankRootSupperPod = topoMatcher_->GetSubRootUserRankWithSuperPod(topoAttr_.userRank, param.root);
+        CHK_PRT_RET(subUserrankRootSupperPod == INVALID_VALUE_RANKID,
+            HCCL_ERROR("[CollBroadCastRingFor91093][KernelRun]subUserrankRootSupperPod[%u] is invalid,userRank[%u],"
+            "root[%u]", subUserrankRootSupperPod, topoAttr_.userRank, param.root), HCCL_E_INTERNAL);
+        u32 planeRootSupperPod = 0;
+        CHK_RET(GetRankByUserRank(COMM_LEVEL2, COMM_INDEX_0, subUserrankRootSupperPod, planeRootSupperPod));
+        HCCL_DEBUG("level2 get root info as: subUserrankRootSupperPod[%u], planeRootSupperPod[%u]",
+            subUserrankRootSupperPod, planeRootSupperPod);
+
+        std::unique_ptr<AlgTemplateBase> level2TempAlg;
+        if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NB) {
+            level2TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_NB, dispatcher_);
+            HCCL_INFO("[superpod]Broadcast level2-broadcast: using nonuniform-bruck algo inter-superPod.");
+        } else if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NHR) {
+            level2TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_NHR, dispatcher_);
+            HCCL_INFO("[superpod]Broadcast level2-broadcast: using nonuniform-hierarchical-ring algo inter-superPod.");
+        } else {
+            level2TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_RECURSIVE_HD, dispatcher_);
+            HCCL_INFO("[superpod]Broadcast level2-broadcast: using Recursive halving-doubling algo inter-superPod.");
+        }
+        CHK_SMART_PTR_NULL(level2TempAlg);
+        u64 bcastCount = dataSegsSlice[localRank].size / perDataSize;
+
+        CHK_RET(level2TempAlg->Prepare(execMem.inputMem, execMem.inputMem, execMem.outputMem, bcastCount,
+            param.DataDes.dataType, param.stream, HcclReduceOp::HCCL_REDUCE_RESERVED, planeRootSupperPod,
+            std::vector<Slice>(0), dataSegsSlice[localRank].offset + level1Offset));
+        HCCL_DEBUG("[superpod]Broadcast level2-broadcast : dataSegsSlice[localRank].offset[%llu]" \
+            "dataSegsSlice[localRank].size[%llu] level1Offset[%llu]",
+            dataSegsSlice[localRank].offset, dataSegsSlice[localRank].size, level1Offset);
+
+        CHK_RET(level2TempAlg->RegisterProfiler(
+            (level2RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level2CommInfo.localRank,
+            PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
+        CHK_RET(RunTemplate(level2TempAlg, level2CommInfo));
+        HCCL_INFO("[CollBroadCastRingFor91093][superpod]Broadcast level2-broadcast run success");
+
+        /* step4: 节点间 allgather */
+        if (level1RankSize > 1) {
+            std::unique_ptr<AlgTemplateBase> level1AGTempAlg;
+            if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
+                level1AGTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_ALL_GATHER_NB, dispatcher_);
+                HCCL_INFO("allgather ring: using nonuniform-bruck algo inter-server.");
+            } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
+                level1AGTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_ALL_GATHER_NHR, dispatcher_);
+                HCCL_INFO("allgather ring: using nonuniform-hierarchical-ring algo inter-server.");
+            } else {
+                HCCL_ERROR("allgather ring: algType_[%u] is not supported.", algType_.algoLevel1);
+                return HCCL_E_NOT_SUPPORT;
+            }
+
+            CHK_SMART_PTR_NULL(level1AGTempAlg);
+            CHK_RET(level1AGTempAlg->Prepare(level1InputMem, level1OutputMem, level1OutputMem, bcastCount,
+                param.DataDes.dataType, param.stream,
+                HcclReduceOp::HCCL_REDUCE_RESERVED, LEVEL0_BRIDGE_RANK_ID, dataSegsSlice, level1Offset));
+            CHK_RET(level1AGTempAlg->RegisterProfiler(
+                (level1RankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + level1CommInfo.localRank,
+                PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
+            CHK_RET(RunTemplate(level1AGTempAlg, level1CommInfo));
+            HCCL_INFO("[CollBroadCastRingFor91093]broadcast [superpod] level1 allgather run success");
+        }
+    }
+
+    // 将数据从cclIn拷贝到userIn上
+    if (level1CommInfo.localRankSize > 1 || topoAttr_.superPodNum > 1) {
+        DeviceMem dstMem = DeviceMem::create(execMem.inputPtr, localSlice.size);
+        DeviceMem srcMem = execMem.inputMem.range(zeroOffset, localSlice.size);
+        CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dstMem, srcMem, const_cast<Stream&>(param.stream)));
+    }
+
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollBroadCastRingFor91093::KernelRunAftIntraServer(const OpParam &param, ExecMem &execMem)
+{
+    HCCL_INFO("[BroadCastOperator][CollBroadCastRingFor91093] KernelRunAftIntraServer starts.");
+    u32 perDataSize = 0;
+    CHK_RET(SalGetDataTypeSize(param.DataDes.dataType, perDataSize));
+    CHK_PRT_RET(perDataSize == 0,
+        HCCL_ERROR("[CollBroadCastRingFor91093][KernelRun]errNo[0x%01611x] datatype[%d] is invalid",
+            HCCL_ERROR_CODE(HCCL_E_PARA), param.DataDes.dataType), HCCL_E_PARA);
+    std::vector<Slice> dataSegsSlice; // 数据分成ranksize份，每份的起始偏移和大小
+    std::vector<std::vector<Slice>> mulRingSlice;  // 数据基于该rank上环0的偏移
+
+    u32 ringNum = (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) ? \
+        (LEVEL0_PLANE_NUM_IN_NPRING_DOUBLE) : (LEVEL0_PLANE_NUM_IN_NPRING_SINGLE);
+
+    CHK_RET(CheckCommSize(COMM_LEVEL0, ringNum));
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+
+    // 按ranksize得到内存切分slice数
+    u32 sliceNum = level0CommInfo.localRankSize;
+    // 将根节点数据切分成sliceNum份
+    CHK_RET(AlgTemplateBase::PrepareSliceData(execMem.count, perDataSize, sliceNum, 0, dataSegsSlice));
+    HCCL_DEBUG("[CollBroadCastRingFor91093][KernelRun]ringNum[%u] sliceNum[%u]", ringNum, sliceNum);
+
+    if (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) {
+        // 将每slice再切分成2份，按各ring的dev顺序排列
+        mulRingSlice = PrepareMultiRingSlice(dataSegsSlice, param.tag, false, topoAttr_.nicList);
+        CHK_PRT_RET(mulRingSlice.size() != ringNum,
+            HCCL_ERROR("[CollBroadCastRingFor91093][KernelRun] ringNum[%u] !=mulRingSlice size[%zu]",
+            ringNum, mulRingSlice.size()), HCCL_E_INTERNAL);
+    } else {
+        mulRingSlice.push_back(dataSegsSlice); // 应该offset全为0，而大小和dataSegsSlice中一样,里面的offset不使用
+    }
+
+    u64 level1DataSize = 0;
+    u32 commIndex = 0;
+    u32 segmentIdx = 0;
+    CHK_RET(PrepareLevel1CommInfo(segmentIdx, commIndex, level1DataSize, level0CommInfo, mulRingSlice, param.tag));
+    u64 level1DataCount = level1DataSize / perDataSize;
+    HCCL_DEBUG("[CollBroadCastRingFor91093][KernelRun]usrRank[%u] level1 use level1DataCount[%llu]",
+        topoAttr_.userRank, level1DataCount);
+
+    /* step 3 or 5: 节点内 allgatherring */
+    HcomCollOpInfo allgatherOpInfo = {
+        "", nullptr, execMem.outputPtr, param.DataDes.count, param.DataDes.dataType, param.root
+    };
+    HcomCollOpInfo *allgatherOpInfoPtr = (DMAReduceFlag_) ? (&allgatherOpInfo) : (nullptr);
+
+    CHK_RET(MultiRingAllGather(param.tag, execMem.inputMem, execMem.outputMem, level1DataCount, param.DataDes.dataType,
+        mulRingSlice, param.stream, PROF_STAGE_2, 0, allgatherOpInfoPtr));
+    HCCL_INFO("Broadcast double ring stage2 run success");
+
+    return HCCL_SUCCESS;
+}
 
 REGISTER_EXEC("BroadCastRingFor91093Executor", BroadCastRingFor91093, CollBroadCastRingFor91093);
 

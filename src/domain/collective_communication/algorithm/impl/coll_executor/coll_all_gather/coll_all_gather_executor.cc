@@ -57,7 +57,24 @@ HcclResult CollAllGatherExecutor::Orchestrate(OpParam& param, AlgResourceRespons
         execMem.inputPtr = param.inputPtr;
         execMem.outputPtr = param.outputPtr;
         ret = KernelRun(param, execMem);
-    } else {
+    } else if (param.isZeroCopy) {
+        // RunLoop only for L1&L2 communication when zerocopy is enabled
+        ret = RunLoop(param, algRes);
+        CHK_PRT_RET(ret != HCCL_SUCCESS,
+            HCCL_ERROR("[CollAllGatherExecutor][Orchestrate]errNo[0x%016llx]all gather excutor run loop failed",
+                HCCL_ERROR_CODE(ret)), ret);
+        // KernelRun for L0 communication
+        u64 totalSize = param.DataDes.count * SIZE_TABLE[param.DataDes.dataType];
+        ExecMem execMem;
+        execMem.count = param.DataDes.count;
+        execMem.inputMem = DeviceMem::create(algRes.paramInputMem.ptr(), totalSize);
+        execMem.outputMem = DeviceMem::create(algRes.paramOutputMem.ptr(), totalSize * topoAttr_.userRankSize);
+        execMem.scratchMem = algRes.scratchMem;
+        execMem.inputPtr = param.inputPtr;
+        execMem.outputPtr = param.outputPtr;
+        ret = KernelRunIntraServer(param, execMem);
+    }
+    else {
         ret = RunLoop(param, algRes);
     }
     CHK_PRT_RET(ret != HCCL_SUCCESS,
@@ -83,6 +100,17 @@ u64 CollAllGatherExecutor::CalcLoopMaxCount(const u64 cclBuffSize, const u32 uni
         * HCCL_MIN_SLICE_ALIGN / unitSize;
     HCCL_WARNING("[CollAllGatherExecutor][CalcLoopMaxCount]" \
         "using default maxCountPerLoop[%llu] as CCLBuffSize / unitSize.", maxCountPerLoop);
+    return maxCountPerLoop;
+}
+
+u64 CollAllGatherExecutor::CalcLoopMaxCountZeroCopy(const u32 unitSize, const bool isZeroCopy)
+{
+    // 中转内存单次最多能够接受的output count
+    u32 sliceNum = isZeroCopy ? topoAttr_.serverNum : topoAttr_.userRankSize;
+    u64 maxCountPerLoop = inCCLbufferSize_ / sliceNum / HCCL_MIN_SLICE_ALIGN
+        * HCCL_MIN_SLICE_ALIGN / unitSize;
+    HCCL_INFO("[CollAllGatherExecutor][CalcLoopMaxCountZeroCopy]" \
+        "using default maxCountPerLoop[%llu] as CCLBuffSize / (level1RankSize * level2RankSize * unitSize).", maxCountPerLoop);
     return maxCountPerLoop;
 }
 
@@ -119,7 +147,7 @@ HcclResult CollAllGatherExecutor::RunLoop(OpParam &param, AlgResourceResponse &a
     CHK_PTR_NULL(commInputPtr);
     CHK_PTR_NULL(commOutputPtr);
 
-    u64 maxCountPerLoop = CalcLoopMaxCount(algRes.cclInputMem.size(), unitSize);   // override
+    u64 maxCountPerLoop = param.isZeroCopy ? CalcLoopMaxCountZeroCopy(unitSize, param.isZeroCopy) : CalcLoopMaxCount(algRes.cclInputMem.size(), unitSize);
     CHK_PRT_RET(maxCountPerLoop == 0,
         HCCL_ERROR("[CollAllGatherExecutor][RunLoop]tag[%s], userRankSize is [%u], maxCountPerLoop is [%llu].",
             param.tag.c_str(), topoAttr_.userRankSize, maxCountPerLoop),
@@ -161,19 +189,26 @@ HcclResult CollAllGatherExecutor::RunLoop(OpParam &param, AlgResourceResponse &a
         ExecMem execMem;
         execMem.count = curCount;
         execMem.inputMem = DeviceMem::create(commInputPtr, curSize);
-        execMem.outputMem = DeviceMem::create(commOutputPtr, curSize * topoAttr_.userRankSize);
+        u32 sliceNum = param.isZeroCopy ? topoAttr_.serverNum : topoAttr_.userRankSize;
+        execMem.outputMem = DeviceMem::create(commOutputPtr, curSize * sliceNum);
         execMem.scratchMem = algRes.scratchMem;
         execMem.inputPtr = curInputPtr;
         execMem.outputPtr = curOutputPtr;
-        HcclResult ret = KernelRun(param, execMem);
+        HcclResult ret = HCCL_SUCCESS;
+        if (!param.isZeroCopy) {
+            ret = KernelRun(param, execMem);
+        }
+        else {
+            ret = KernelRunInterServer(param, execMem);
+        }
         CHK_PRT_RET(ret != HCCL_SUCCESS,
             HCCL_ERROR("[CollAllGatherExecutor][RunLoop]errNo[0x%016llx]kernel run error, tag[%s], " \
             "inputMem ptr[%p], outputMem ptr[%p], count[%llu], dataType[%d]",
             HCCL_ERROR_CODE(ret), param.tag.c_str(), commInputPtr, commOutputPtr,
             curCount, param.DataDes.dataType),
             ret);
-
-        if (!DMAReduceFlag_) {
+        
+        if (!DMAReduceFlag_ && !param.isZeroCopy) {
             // 如果使用CCL buffer，需要将CCL buffer out中的结果拷贝到user buffer out
             for (u32 i = 0; i < topoAttr_.userRankSize; i++) {
                 // 拷贝中转output上每个slice的数据到output内存，目的端中每个slice的size固定为output的size

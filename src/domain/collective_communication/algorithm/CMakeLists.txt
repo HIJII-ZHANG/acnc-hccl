@@ -53,6 +53,7 @@ target_include_directories(hccl_alg PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/pub_inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../common/health
     ${CMAKE_CURRENT_SOURCE_DIR}/../common/debug/profiling/inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/stream/
     ${HCCL_BASE_DIR}/../../../../inc/external
     ${HCCL_BASE_DIR}/../../../../inc/external/hccl
     ${HCCL_BASE_DIR}/../../../../inc/hccl

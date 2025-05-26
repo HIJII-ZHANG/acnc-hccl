@@ -17,7 +17,8 @@
 #include "hccl_types.h"
 #include "runtime/kernel.h"
 #include "hccl_common.h"
- 
+#include "mem_device_pub.h"
+
 namespace hccl {
 constexpr u64 AIV_ALL_REDUCE_BIG_SIZE = 16 * 1024 * 1024;
 constexpr u64 AIV_ALL_REDUCE_A3_ENTRY_SIZE = 1 * 1024 * 1024; // AllReduce单张卡数据量A3
@@ -33,12 +34,15 @@ constexpr u64 AIV_ALL_TO_ALL_BIG_SIZE = 512 * 1024;
 constexpr u64 AIV_ALL_TO_ALL_A3_ENTRY_SIZE = 512 * 1024;
 constexpr u64 AIV_BIG_SIZE = 256 * 1024 * 1024;
 
+constexpr u64 AIV_A3_ALL_REDUCE_GRAPH_GUIYI_SIZE = 190 * 1024;
 constexpr u64 AIV_A3_REDUCE_SCATTER_GRAPH_GUIYI_SIZE = 760 * 1024;
 constexpr u64 AIV_A3_ALL_GATHER_GRAPH_GUIYI_SIZE = 760 * 1024;
+constexpr u64 AIV_A3_ALL_TO_ALL_GRAPH_GUIYI_SIZE = 760 * 1024;
 
 constexpr u32 MAX_RANK_SIZE = 16; // server内最大卡数
 constexpr u32 MAX_RANK_SIZE_A3 = 768; // 超节点内最大卡数
 
+constexpr u32 BLOCK_DIM_FACTOR_TWO = 2;
 constexpr u32 BLOCK_DIM_THREE_PER_RANK_A3 = 3;
 constexpr u32 BLOCK_DIM_FOUR_PER_RANK_A3 = 4;
 constexpr u32 MAX_BLOCK_DIM = 48;
@@ -100,6 +104,7 @@ struct AivResourceArgs {
     void** buffersIn; // 注册的CCLIN地址，所有卡可访问
     void** buffersOut; // 注册的CCLOUT地址，所有卡可访问
     u64 bufferSize;
+    u32 blockDim;
 };
 
 // 表示AIV算法流程控制的参数
@@ -118,11 +123,15 @@ struct AivProfilingInfo{
     u32 tag = 0;
     u32 blockDim = 0;
     uint64_t beginTime = 0;
+    OpCounterInfo counter;
 };
 
 HcclResult RegisterKernel(DevType deviceType);
 
 HcclResult ClearAivSyncBuf(void** cclBuffersOut, u32 rank, u32 rankSize, rtStream_t stream);
+
+HcclResult ClearAivSyncBufAndTag(DeviceMem &inAIVbuffer, DeviceMem &outAIVbuffer,
+    const std::string &identifier, u32 rank, u32 devId);
 
 HcclResult ExecuteKernelLaunch(const AivOpArgs &opArgs, const AivTopoArgs &topoArgs,
     const AivResourceArgs &resourceArgs, const AivAlgArgs &algArgs, 
@@ -135,9 +144,6 @@ HcclResult ExecuteKernelLaunch(const AivOpArgs &opArgs, const AivTopoArgs &topoA
 HcclResult ExecuteKernelLaunch(const AivOpArgs &opArgs, const AivTopoArgs &topoArgs,
     const AivResourceArgs &resourceArgs, const AivAlgArgs &algArgs, const ExtraArgsV2 &extraArgs, 
     AivProfilingInfo& aivProfilingInfo);
-
-u32 GetBlockDim(HcclCMDType cmdType, u32 rankSize, u64 dataSize, bool isOpBase, s32 aivRdmaStep, u32 serverNum,
-    DevType devType);
 
 HcclResult ReadBinFile(const std::string& fileName, std::string& buffer);
 

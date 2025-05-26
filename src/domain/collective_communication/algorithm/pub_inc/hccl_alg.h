@@ -87,9 +87,10 @@ public:
     HcclResult GetIsBridgeVector(std::vector<bool> &isBridgeVector);
     HcclResult GetRankVecInfo(std::vector<std::vector<std::vector<u32>>> &serverAndsuperPodToRank);
     HcclResult GetCommPlaneRanks(std::vector<std::vector<std::vector<u32>>> &CommPlaneRanks);
+    void GetCommPlaneVector(std::vector<std::vector<std::vector<RankInfo>>> &commPlaneVector);
     HcclResult GetIsUsedRdmaMap(std::unordered_map<u32, bool> &isUsedRdmaMap);
     HcclResult GetCommPlaneSubGroupVector(std::vector<std::vector<std::vector<std::vector<u32>>>> &GetCommPlaneSubGroupVector);
-    HcclResult GetAHCAlgOption(std::map<std::string, std::string> &ahcAlgOption);
+    HcclResult GetAHCAlgOption(std::map<AHCConcOpType, TemplateType> &ahcAlgOption);
     std::unique_ptr<CollAlgOperator> GetAlgOperator(const HcclCMDType &opType);
     HcclResult GetTopoType(TopoType &topoType);
 private:

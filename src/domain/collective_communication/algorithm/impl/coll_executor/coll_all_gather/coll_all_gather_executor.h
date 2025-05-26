@@ -22,6 +22,7 @@ public:
 protected:
     // AllGather Loop Executor公共接口
     virtual u64 CalcLoopMaxCount(const u64 cclBuffSize, const u32 unitSize);
+    u64 CalcLoopMaxCountZeroCopy(const u32 unitSize, const bool isZeroCopy);
     virtual bool IsHugeData(const u64 curSize);
     virtual bool IsDataSplitForRdmaSdmaConcurrent(const u64 curSize);
     HcclResult RunLoop(OpParam &param, AlgResourceResponse &algRes);

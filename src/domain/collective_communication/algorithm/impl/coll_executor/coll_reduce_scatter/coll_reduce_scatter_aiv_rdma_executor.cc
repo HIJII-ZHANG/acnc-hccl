@@ -88,6 +88,13 @@ HcclResult CollReduceScatterAivRdmaExecutor::CalcLevel0CommInfo(TransportMemType
     return HCCL_SUCCESS;
 }
 
+u32 CollReduceScatterAivRdmaExecutor::CalBlockDim(u32 rankSize, u64 dataSize, HcclCMDType cmdType)
+{
+    u32 blockDim = rankSize; // 多机场景，单算子ReduceScatter使用rankSize个aiv
+    HCCL_INFO("[CollReduceScatterAivRdmaExecutor][CalBlockDim] blockDim is set to [%u]", blockDim);
+    return blockDim;
+}
+
 HcclResult CollReduceScatterAivRdmaExecutor::Orchestrate(OpParam& param, AlgResourceResponse& algRes)
 {
     HCCL_INFO("[CollReduceScatterAivRdmaExecutor][Orchestrate]start");
@@ -163,10 +170,13 @@ HcclResult CollReduceScatterAivRdmaExecutor::KernelRun(const OpParam &param, Exe
         intraRankId, intraRankSize, topoAttr_.isDiffDeviceModule ? topoAttr_.devicePhyId : A_X_SIZE,
         0, serverNum, topoAttr_.deviceType
     };
-    AivResourceArgs resourceArgs {param.tag, param.stream.ptr(), dataBuffers, flagBuffers, execMem.inputMem.size()};
+    blockDim_ = CalBlockDim(intraRankSize);
+    AivResourceArgs resourceArgs {
+        param.tag, param.stream.ptr(), dataBuffers, flagBuffers, execMem.inputMem.size(), blockDim_
+    };
     AivAlgArgs algArgs {0};
     struct AivProfilingInfo aivProfilingInfo;
-    
+    aivProfilingInfo.counter = opCounter_;
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
         HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
         HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
@@ -182,7 +192,6 @@ HcclResult CollReduceScatterAivRdmaExecutor::KernelRun(const OpParam &param, Exe
         HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());
         HCCL_PROFILER_DEL_TAG(param.tag);
     }
-    blockDim_ = aivProfilingInfo.blockDim;
     /*  第二步  节点间RS */
     auto autoSelectedAlgTypeLevel1 = static_cast<u32>(algType_.algoLevel1);
     ReduceType reduceType = ((param.reduceType != HCCL_REDUCE_PROD) &&

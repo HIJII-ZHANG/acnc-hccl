@@ -30,6 +30,9 @@ private:
 
     /* *************** 算法编排 *************** */
     HcclResult KernelRun(const OpParam &param, ExecMem &execMem) override;
+    HcclResult KernelRunPreIntraServer(const OpParam &param, ExecMem &execMem) override;
+    HcclResult KernelRunInterServer(const OpParam &param, ExecMem &execMem) override;
+    HcclResult KernelRunAftIntraServer(const OpParam &param, ExecMem &execMem) override;
 
     HcclResult DoubleRingScatter(const std::string &tag, DeviceMem inputMem, DeviceMem outputMem,
         const u64 count, const HcclDataType dataType, const std::vector<std::vector<Slice> > multRingsSliceZero,

@@ -57,6 +57,7 @@ HcclResult ScatterDoubleRingDirect::RunAsync(const u32 rank, const u32 rankSize,
 
     // 运行scatter, ring算法
     CHK_RET(RunScatter(rank, rankSize));
+    CHK_RET(LaunchTaskExtend(dispatcher_, stream_, subStreams_));
 
     HCCL_INFO("ScatterDoubleRingDirect finished: rank[%u]", rank);
     return HCCL_SUCCESS;

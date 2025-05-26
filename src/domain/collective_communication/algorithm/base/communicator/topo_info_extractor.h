@@ -20,7 +20,8 @@
 #include "hccl_common.h"
 #include "common.h"
 #include "hccl_impl_pub.h"
-
+#include "comm_ahc_base_pub.h"
+#include "alg_template_base_pub.h"
 namespace hccl {
 
 class TopoInfoExtractor {
@@ -62,7 +63,8 @@ public:
     void InitAHCConfig();
     void AHCCommSubgroupInit();
     void GetCommPlaneSubGroupVector(std::vector<std::vector<std::vector<std::vector<u32>>>> &CommPlaneSubGroupVector);
-    void GetAHCAlgOption(std::map<std::string, std::string> &ahcAlgOption);
+    void SetAHCLevelAlgOption(AHCConcOpType ahcConcOpType,TemplateType templateType);
+    void GetAHCAlgOption(std::map<AHCConcOpType, TemplateType> &ahcAlgOption);
     HcclResult GetRankVecInfo(std::vector<std::vector<std::vector<u32>>> &serverAndsuperPodToRank);
     HcclResult SetRankMap();
     void GetRankData(RankInfo &rankData);
@@ -122,7 +124,7 @@ private:
     std::vector<std::vector<std::vector<std::vector<u32>>>> CommPlaneSubGroupVector_;
 
     // 保存 AHC 算法中不同 level 以及组内、组间需要使用的算子配置
-    std::map<std::string, std::string> ahcAlgOption_;
+    std::map<AHCConcOpType, TemplateType> ahcAlgOption_;
 
     // 保存所有级别的通信rank关系, CommPlaneVector_[CommPlane][ringIndex]: 第CommPlane级 第ringIndex个环
     std::vector<std::vector<std::vector<RankInfo> > > CommPlaneVector_;

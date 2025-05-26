@@ -71,14 +71,23 @@ void PluginRunner::operator () (rtStream_t stream, TaskType taskType, const T &p
     u32 threadLastTaskID = 0;
     u32 threadLastStreamID = 0;
     s32 streamID = 0;
-    HcclResult ret;
+    bool isOneSideTask = false;
     bool isCapture = false;
     CHK_PRT(isStreamCapture(stream, isCapture));
 
     if (profiler_ == nullptr) return;
 
+    CHK_PRT(hrtGetTaskIdAndStreamID(threadLastTaskID, threadLastStreamID));
+
+    std::string tag;
+    CHK_PRT(ProfilerBase::GetTagByStream(threadLastStreamID, tag));
+    if (tag.find("BatchPut_") != std::string::npos || tag.find("BatchGet_") != std::string::npos) {
+        isOneSideTask = true;
+    }
+
+    HcclResult ret;
     if (GetExternalInputHcclEnableFfts() &&
-        GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
+        GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && !isOneSideTask) {
         ret = hrtGetStreamId(stream, streamID);
         CHK_PRT_RET(ret != HCCL_SUCCESS,
             HCCL_ERROR("[PluginRunner][Operator]rtGet stream id fail. return[%d]", ret),);

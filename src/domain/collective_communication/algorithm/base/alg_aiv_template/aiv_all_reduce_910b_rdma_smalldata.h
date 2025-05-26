@@ -205,5 +205,7 @@ __aicore__ inline void aiv_all_reduce_910b_rdma_smalldata(KERNEL_ARGS_DEF)
 {
     AivAllReduceRdmaSmall910B op;
     op.Init(KERNEL_CLASS_INIT, false);
+    op.HeadCounter();
     op.Process<T>(input, output, len, tag, aivRdmaStep);
+    op.TailCounter();
 }

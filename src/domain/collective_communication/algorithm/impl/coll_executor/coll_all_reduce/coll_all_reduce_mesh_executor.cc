@@ -106,8 +106,7 @@ HcclResult CollAllReduceMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
     CHK_RET(ActiveSlaveStreams(param.stream));
 
     if (!topoMatcher_->GetExternalInputHcclDeterministic() && (param.DataDes.dataType != HCCL_DATA_TYPE_INT64) &&
-        ((topoAttr_.deviceType == DevType::DEV_TYPE_910B && param.reduceType != HCCL_REDUCE_PROD) ||
-        (IsSupportHighPerf() && param.reduceType == HCCL_REDUCE_SUM))) {
+        (topoAttr_.deviceType == DevType::DEV_TYPE_910B && param.reduceType != HCCL_REDUCE_PROD)) {
         CHK_RET(MultiStreamReduceScatterMeshAtomic(param.tag, execMem.inputMem, execMem.outputMem, execMem.count,
             param.DataDes.dataType, param.reduceType, dataSegsSlice, const_cast<Stream&>(param.stream), COMM_LEVEL0));
     } else {
@@ -126,10 +125,8 @@ HcclResult CollAllReduceMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
         HCCL_ERROR("[CollAllReduceMeshExecutor][Run]commIndex[%u] >= dataSegsSlice size[%zu]", commIndex,
         dataSegsSlice.size()), HCCL_E_INTERNAL);
 
-    bool isSelectAHC = (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC || algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE);
-    CommPlane commPlaneLevel1 = isSelectAHC ? COMM_LEVEL1_AHC : COMM_LEVEL1;
-    CHK_RET(CheckCommSize(commPlaneLevel1, commIndex + 1));
-    SubCommInfo level1CommInfo = GetSubCommInfo(commPlaneLevel1, commIndex);
+    CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
+    SubCommInfo level1CommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
 
     DeviceMem allreduceInput = execMem.inputMem.range(dataSegsSlice[commIndex].offset, dataSegsSlice[commIndex].size);
     CHK_SMART_PTR_NULL(allreduceInput);
@@ -160,22 +157,6 @@ HcclResult CollAllReduceMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
         HCCL_INFO("allreduce mesh: using nhr_v1 algo inter-server.");
         CHK_SMART_PTR_NULL(level1TempAlg);
         CHK_RET(level1TempAlg->Prepare(reduceAttr));
-    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC) {
-        // 获取通信域分组信息
-        std::vector<std::vector<std::vector<u32>>> gloableSubGroups;
-        CHK_RET(topoMatcher_->GetGlobalSubGroups(commPlaneLevel1, gloableSubGroups));
-        level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_AHC, dispatcher_);
-        HCCL_INFO("allreduce mesh: using ahc algo inter-server.");
-        CHK_SMART_PTR_NULL(level1TempAlg);
-        CHK_RET(level1TempAlg->Prepare(reduceAttr, execMem.count, gloableSubGroups[0]));
-    } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE) {
-        // 获取通信域分组信息
-        std::vector<std::vector<std::vector<u32>>> gloableSubGroups;
-        CHK_RET(topoMatcher_->GetGlobalSubGroups(commPlaneLevel1, gloableSubGroups));
-        level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_AHC_BROKE, dispatcher_);
-        HCCL_INFO("allreduce mesh: using ahc-broke algo inter-server.");
-        CHK_SMART_PTR_NULL(level1TempAlg);
-        CHK_RET(level1TempAlg->Prepare(reduceAttr, execMem.count, gloableSubGroups[0]));
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
         level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
             TemplateType::TEMPLATE_ALL_REDUCE_NB, dispatcher_);
@@ -236,12 +217,6 @@ HcclResult CollAllReduceMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
 
     HCCL_INFO("allreduce meshhd stage2 run success");
     return HCCL_SUCCESS;
-}
-
-bool CollAllReduceMeshExecutor::IsSupportHighPerf()
-{
-    return ((topoMatcher_->GetExternalInputHcclHighPerfEnable() != 0) &&
-            (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB));
 }
 
 REGISTER_EXEC("AllReduceMeshExecutor", AllReduceMesh, CollAllReduceMeshExecutor);

@@ -26,6 +26,7 @@ public:
 protected:
     // ReduceScatter Loop Executor公共接口
     virtual u64 CalcLoopMaxCount(const u32 unitSize);
+    u64 CalcLoopMaxCountZeroCopy(const u32 unitSize, const bool isZeroCopy);
     virtual bool IsHugeData(const u64 curSize, OpParam *param = nullptr);
     virtual bool IsSmallData(const u64 totalSize, const u64 curSize);
     virtual bool IsDataSplitForRdmaSdmaConcurrent(const u64 curSize);
@@ -34,6 +35,8 @@ protected:
     // 工具类
     std::vector<std::vector<Slice>> ReduceScatterRingSlicePrepare(u32 ringNum, u32 sliceNum,
         bool useInlineReduce, DeviceMem& outputMem, std::vector<Slice>& dataSegsSlice, const std::string &tag);
+    std::vector<std::vector<Slice>> ReduceScatterRingSlicePrepareContinuous(u32 ringNum, u32 sliceNum,
+        bool useInlineReduce, DeviceMem& outputMem, u32 level1RankSize, u32 level2RankSize, std::vector<Slice>& dataSegsSlice, const std::string &tag);
     std::vector<std::vector<Slice>> AnyPathReduceScatterRingSlicePrepare(u32 ringNum, u32 sliceNum,
         bool useInlineReduce, DeviceMem& outputMem, std::vector<Slice>& dataSegsSlice, const std::string &tag);
     HcclResult PrepareAivBuffers(u32 rankSize, u32 rankId, u32 rankOffset,

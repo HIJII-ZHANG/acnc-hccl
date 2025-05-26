@@ -60,6 +60,12 @@ HcclResult CollReduceScatterVAIVBigCountExecutor::CalcLevel0CommInfo(TransportMe
     return HCCL_SUCCESS;
 }
 
+u32 CollReduceScatterVAIVBigCountExecutor::CalBlockDim(u32 rankSize, u64 dataSize, HcclCMDType cmdType)
+{
+    u32 blockDim = BLOCK_DIM_FACTOR_TWO * rankSize; // 单机场景，单算子ReduceScatter大数据使用2倍 rankSize个aiv
+    HCCL_INFO("[CollReduceScatterVAIVBigCountExecutor][CalBlockDim] blockDim is set to [%u]", blockDim);
+    return blockDim;
+}
 
 HcclResult CollReduceScatterVAIVBigCountExecutor::Orchestrate(OpParam& param, AlgResourceResponse& algRes)
 {
@@ -129,10 +135,13 @@ HcclResult CollReduceScatterVAIVBigCountExecutor::KernelRun(const OpParam &param
             param.VDataDes.dataType, param.reduceType, param.root, isOpbase
     };
     AivTopoArgs topoArgs { localRank, localRankSize };
-    AivResourceArgs resourceArgs { param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size() };
+    blockDim_ = CalBlockDim(localRankSize);
+    AivResourceArgs resourceArgs {
+        param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size(), blockDim_
+    };
     AivAlgArgs algArgs {};
     struct AivProfilingInfo aivProfilingInfo;
-
+    aivProfilingInfo.counter = opCounter_;
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
         HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
         HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
@@ -148,7 +157,6 @@ HcclResult CollReduceScatterVAIVBigCountExecutor::KernelRun(const OpParam &param
         HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());
         HCCL_PROFILER_DEL_TAG(param.tag);
     }
-    blockDim_ = aivProfilingInfo.blockDim;
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[CollReduceScatterVAIVBigCountExecutor][KernelRun]"
         "reducescatterv aiv failed, return[%d]", ret), ret);
 

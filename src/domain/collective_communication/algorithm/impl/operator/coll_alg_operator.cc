@@ -34,6 +34,8 @@ constexpr u64 PIPELINE_MIN_SIZE = 32 * 1024; // 当数据量大于等于32KB时�
 constexpr u64 PIPELINE_ALLREDUCE_MIN_SIZE = 1024 * 1024; // 当数据量大于等于1MB时，allreduce使能pipeline模式
 constexpr u64 PIPELINE_MIN_SIZE_NO_LITE = 2 * 1024 * 1024; // 如不支持RDMALite，当数据量大于等于2MB时，使能pipeline模式
 constexpr u64 HCCL_FFTS_CAPACITY = 65535; // FFTS+子图最大容量
+constexpr u32 AHC_MIN_SUBGROUP_SPLIT_DIVISOR = 2;
+constexpr u32 AHC_LEVEL0_GROUP_SIZE_THRESHOLD = 3;
 
 CollAlgOperator::CollAlgOperator(AlgConfigurator* algConfigurator, CCLBufferManager &cclBufferManager,
                                  HcclDispatcher dispatcher, std::unique_ptr<TopoMatcher> &topoMatcher,
@@ -80,6 +82,7 @@ HcclResult CollAlgOperator::Orchestrate(const std::string& algName, OpParam& par
     }
     executor_->SetAivClearEnable(aivClearEnable_);
     executor_->SetAlgOpContext(algOpContext_);
+    executor_->SetOpCounter(opCounter_);
     return executor_->Orchestrate(param, algResource);
 }
 
@@ -612,4 +615,169 @@ HcclResult CollAlgOperator::GetBlockDim(u32& blockDim){
     CHK_SMART_PTR_NULL(executor_);
     return executor_->GetBlockDim(blockDim);
 }
+
+HcclResult CollAlgOperator::SetOpCounter(const OpCounterInfo& opCounter)
+{
+    opCounter_ = opCounter;
+    return HCCL_SUCCESS;
+}
+HcclResult CollAlgOperator::SelectAlgforAHC(u64 dataSize, AHCOpType ahcOpType)
+{
+    bool isAHCWholeConfig = (algType_.algoLevel0 == AlgTypeLevel0::ALG_LEVEL0_RESERVED &&
+        (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC ||
+        algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE));
+
+    CommPlane ahcSubGroupLevel = COMM_LEVEL1_AHC;
+    if (isAHCWholeConfig) {
+        if (deviceType_ != DevType::DEV_TYPE_910_93) {
+            ahcSubGroupLevel = COMM_COMBINE;
+        } else {
+            ahcSubGroupLevel = COMM_COMBINE_ORDER;
+        }
+    } else if (deviceType_ != DevType::DEV_TYPE_910_93) {
+        HCCL_DEBUG("[AHCAlgSelect] hccl algorithm: 910B not support level1 ahc, return ERROR.");
+        return HCCL_E_PARA;
+    }
+
+    HCCL_INFO("[SelectAlgforAHC] ahcOpType[%u] isAHCWholeConfig[%u] AHClevel[%u] algType_[%u] deviceType_[%u]",
+            ahcOpType, isAHCWholeConfig, ahcSubGroupLevel, algType_.algoLevel1 , deviceType_);
+
+    AlgTypeLevel1 algTypeLevel1;
+
+    std::vector<std::vector<std::vector<u32>>> globalSubGroups;
+    std::map<AHCConcOpType, TemplateType> ahcAlgOption;
+    CHK_RET(topoMatcher_->GetGlobalSubGroups(ahcSubGroupLevel, globalSubGroups));
+    topoMatcher_->GetAHCAlgOption(ahcAlgOption);
+ 
+    AHCAlgSelectParam ahcAlgSelectParam;
+    ahcAlgSelectParam.opType = ahcOpType;
+    ahcAlgSelectParam.dataSize = dataSize;
+
+    //AHC 封装算法选择逻辑
+    CHK_RET(AHCAlgSelect(algTypeLevel1, globalSubGroups, ahcAlgOption, ahcAlgSelectParam));
+ 
+    topoMatcher_->SetGlobalSubGroups(ahcSubGroupLevel, globalSubGroups);
+    topoMatcher_->SetAHCAlgOption(ahcAlgOption);
+
+    auto iter = HCCL_ALGO_LEVEL1_NAME_MAP.find(algTypeLevel1);
+    CHK_PRT_RET(iter == HCCL_ALGO_LEVEL1_NAME_MAP.end(),
+                HCCL_ERROR("[AHCAlgSelect] level1: algType_[%u] is invalid.", algTypeLevel1),
+                HCCL_E_INTERNAL);
+
+    // 支持 AHC 自适应调节为 BROKE 类型
+    if (algType_.algoLevel1 != algTypeLevel1 && algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC) {
+        algType_.algoLevel1 = algTypeLevel1;
+    }
+
+    HCCL_INFO("[AHCAlgSelect] hccl algorithm: there are %u server(%u module) in level1, using %s algo",
+                serverNum_, moduleNum_, iter->second.c_str());
+
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollAlgOperator::AHCAlgSelect(AlgTypeLevel1 &algType, std::vector<std::vector<std::vector<u32>>> &globalSubGroups,
+    std::map<AHCConcOpType, TemplateType> &ahcAlgOption, AHCAlgSelectParam &ahcAlgSelectParam)
+{
+    // globalSubGroups 参数检查
+    CHK_RET(CommAHCBaseInfo::CheckGlobalGroups(globalSubGroups));
+
+    bool isAHCType = true;
+    bool enableSplit = ahcAlgSelectParam.enableSubGroupsSplit && (!ahcAlgSelectParam.enableOXC);
+    u32 minSubGroupSize = globalSubGroups[0][0].size();
+    u32 maxSubGroupSize = globalSubGroups[0][0].size();
+    u32 subGroupSizeGCD = globalSubGroups[0][0].size();
+    for (u32 i = 1; i < globalSubGroups[0].size(); ++i) {
+        subGroupSizeGCD = std::__gcd(subGroupSizeGCD, static_cast<u32>(globalSubGroups[0][i].size()));
+        if (globalSubGroups[0][i].size() < minSubGroupSize) {
+            minSubGroupSize = globalSubGroups[0][i].size();
+        }
+        if (globalSubGroups[0][i].size() > maxSubGroupSize) {
+            maxSubGroupSize = globalSubGroups[0][i].size();
+        }
+    }
+ 
+    u32 splitDivisor = subGroupSizeGCD > 1 ? subGroupSizeGCD : minSubGroupSize;
+    isAHCType = (subGroupSizeGCD > 1 ? false : true) || ahcAlgSelectParam.enableOXC;
+ 
+     HCCL_DEBUG("[AHCAlgSelect] begin enableSplit = %u minSubGroupSize = %u maxSubGroupSize = %u SubGroupSizeGCD = %u \
+        splitDivisor = %u isAHCType = %u", enableSplit, minSubGroupSize, maxSubGroupSize, subGroupSizeGCD, splitDivisor, isAHCType);
+
+    // 切分分组逻辑,allredcue 满足整数倍切分，rs/ag 满足公约数切分
+    if ( ((ahcAlgSelectParam.opType == AHCOpType::AHC_OP_TYPE_ALLREDUCE && subGroupSizeGCD == minSubGroupSize) || 
+         (ahcAlgSelectParam.opType != AHCOpType::AHC_OP_TYPE_ALLREDUCE && (maxSubGroupSize / splitDivisor > 1) && 
+         splitDivisor >= AHC_MIN_SUBGROUP_SPLIT_DIVISOR )) && enableSplit) {
+        // 设置为 BROKE 类型
+        maxSubGroupSize = splitDivisor;
+        // 将所有的分组切分成 splitDivisor 粒度的 subGroup
+        for (u32 i = 0; i < globalSubGroups[0].size(); ++i) {
+            if (globalSubGroups[0][i].size() / splitDivisor <= 1) {
+                continue;
+            }
+            std::vector<u32> originGroup = globalSubGroups[0][i];
+            globalSubGroups[0].erase(globalSubGroups[0].begin() + i);
+            u32 splitGroupsNum = (originGroup.size() / splitDivisor);
+            for (u32 j = 0; j < splitGroupsNum - 1; ++j) {
+                globalSubGroups[0].insert(globalSubGroups[0].begin() + i + j, std::vector<u32>(originGroup.begin() + j * splitDivisor,
+                                                        originGroup.begin() + (j + 1) * splitDivisor));
+            }
+            globalSubGroups[0].insert(globalSubGroups[0].begin() + i + splitGroupsNum - 1, std::vector<u32>(originGroup.begin() + (splitGroupsNum - 1) * splitDivisor,
+                                                        originGroup.begin() + originGroup.size()));
+            maxSubGroupSize = std::max(maxSubGroupSize, static_cast<u32>(originGroup.size()) - ((splitGroupsNum - 1) * splitDivisor));
+            i--;
+        }
+    }
+
+    float ahcAsymThreshold = ahcAlgSelectParam.symThreshold;
+    float ahcAsymDegree = ((1.0) * maxSubGroupSize - (1.0) * minSubGroupSize)  / ((1.0) * minSubGroupSize);
+    if (ahcAsymDegree < ahcAsymThreshold && ahcAlgSelectParam.opType == AHCOpType::AHC_OP_TYPE_ALLREDUCE) {
+        isAHCType = false; // 设置为 BROKE 类型
+    }
+    
+    if (ahcAlgSelectParam.enableAlgAutoSelect == false) { // 关闭算法自适应功能时，保持原有算法
+        algType = AlgTypeLevel1::ALG_LEVEL1_AHC; // 设置为 AHC 类型
+        return HCCL_SUCCESS;
+    }
+ 
+    if (isAHCType) {
+        algType = AlgTypeLevel1::ALG_LEVEL1_AHC; // 设置为 AHC 类型
+    } else {
+        algType = AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE; // 设置为 BROKE 类型
+    }
+
+    //add AHC Conc Type logic here,  modify init Type  depend on the input para
+    CHK_RET(AHCAlgOptionSelect(algType, globalSubGroups, ahcAlgOption, ahcAlgSelectParam));
+
+    HCCL_DEBUG("[AHCAlgSelect] end minSubGroupSize = %u maxSubGroupSize = %u isAHCType = %u", 
+        minSubGroupSize, maxSubGroupSize, isAHCType);
+
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollAlgOperator::AHCAlgOptionSelect(AlgTypeLevel1 &algType, std::vector<std::vector<std::vector<u32>>> &globalSubGroups,
+    std::map<AHCConcOpType, TemplateType> &ahcAlgOption, AHCAlgSelectParam &ahcAlgSelectParam)
+{
+    AHCConcOpType ahcConcOpType;
+    //一层组间拼接时，分组数大于设定阈值则修改默认算法为NB
+    if(globalSubGroups[0].size() <= AHC_LEVEL0_GROUP_SIZE_THRESHOLD ) {
+        ahcConcOpType = {AHCLevel::AHC_LEVEL_0, ConcType::CONC_INTER, AHCOpType::AHC_OP_TYPE_REDUCE_SCATTER};
+        ahcAlgOption[ahcConcOpType] = TemplateType::TEMPLATE_REDUCESCATTER_RING;
+
+        ahcConcOpType = {AHCLevel::AHC_LEVEL_0, ConcType::CONC_INTER, AHCOpType::AHC_OP_TYPE_ALLREDUCE};
+        ahcAlgOption[ahcConcOpType] = TemplateType::TEMPLATE_ALL_REDUCE_RING;
+
+        ahcConcOpType = {AHCLevel::AHC_LEVEL_0, ConcType::CONC_INTER, AHCOpType::AHC_OP_TYPE_ALLGATHER};
+        ahcAlgOption[ahcConcOpType] = TemplateType::TEMPLATE_ALL_GATHER_RING;              
+    } else {
+        ahcConcOpType = {AHCLevel::AHC_LEVEL_0, ConcType::CONC_INTER, AHCOpType::AHC_OP_TYPE_REDUCE_SCATTER};
+        ahcAlgOption[ahcConcOpType] = TemplateType::TEMPLATE_REDUCESCATTER_NB;
+
+        ahcConcOpType = {AHCLevel::AHC_LEVEL_0, ConcType::CONC_INTER, AHCOpType::AHC_OP_TYPE_ALLREDUCE};
+        ahcAlgOption[ahcConcOpType] = TemplateType::TEMPLATE_ALL_REDUCE_NB;
+
+        ahcConcOpType = {AHCLevel::AHC_LEVEL_0, ConcType::CONC_INTER, AHCOpType::AHC_OP_TYPE_ALLGATHER};
+        ahcAlgOption[ahcConcOpType] = TemplateType::TEMPLATE_ALL_GATHER_NB;
+    }
+    return HCCL_SUCCESS;
+}
+
 }   // namesapce hccl

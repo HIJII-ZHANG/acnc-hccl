@@ -144,9 +144,6 @@ HcclResult ProfilerBase::DelTag(const std::string &tag)
 HcclResult ProfilerBase::AddOpData(const std::string &tag, u64 count, const void *src, const void *dst,
     HcclDataType dataType, u32 rootId, const std::string &group, HcclReduceOp reduceType)
 {
-    if (GetExternalInputHcclDftLevel() == false) {
-        return HCCL_SUCCESS;
-    }
     s32 deviceLogicId = -1;
     HcclResult ret = hrtGetDevice(&deviceLogicId);
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("rts get device error"), ret);
@@ -173,9 +170,6 @@ HcclResult ProfilerBase::AddOpData(const std::string &tag, u64 count, const void
  
 HcclResult ProfilerBase::DelOpData(const std::string &tag)
 {
-    if (GetExternalInputHcclDftLevel() == false) {
-        return HCCL_SUCCESS;
-    }
     s32 deviceLogicId = -1;
     HcclResult ret = hrtGetDevice(&deviceLogicId);
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("rts get device error"), ret);
@@ -192,9 +186,6 @@ HcclResult ProfilerBase::DelOpData(const std::string &tag)
 HcclResult ProfilerBase::AddGroupRankInfo(const std::string &group, u32 rankSize, u32 rankId, bool isSendRecv,
     u32 remoteRankId)
 {
-    if (GetExternalInputHcclDftLevel() == false) {
-        return HCCL_SUCCESS;
-    }
     s32 deviceLogicId = -1;
     HcclResult ret = hrtGetDevice(&deviceLogicId);
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("rts get device error"), ret);
@@ -215,9 +206,6 @@ HcclResult ProfilerBase::AddGroupRankInfo(const std::string &group, u32 rankSize
 
 HcclResult ProfilerBase::DelGroupRankInfo(const std::string &group)
 {
-    if (GetExternalInputHcclDftLevel() == false) {
-        return HCCL_SUCCESS;
-    }
     s32 deviceLogicId = -1;
     HcclResult ret = hrtGetDevice(&deviceLogicId);
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("rts get device error"), ret);

@@ -19,7 +19,14 @@
 using namespace std;
 using namespace hccl;
 
-const std::unordered_set<u32> HCCL_SUPPORT_DATA_TYPE = {
+struct EnumHash {
+    template <typename T>
+    std::size_t operator()(T t) const {
+        return static_cast<std::size_t>(t);
+    }
+};
+
+const std::unordered_set<HcclDataType, EnumHash> HCCL_SUPPORT_DATA_TYPE = {
     HCCL_DATA_TYPE_INT8,
     HCCL_DATA_TYPE_INT16,
     HCCL_DATA_TYPE_INT32,
@@ -35,7 +42,7 @@ const std::unordered_set<u32> HCCL_SUPPORT_DATA_TYPE = {
     HCCL_DATA_TYPE_INT128
 };
 
-const std::unordered_set<u32> HCCL_SUPPORT_REDUCE_OP = {
+const std::unordered_set<HcclReduceOp, EnumHash> HCCL_SUPPORT_REDUCE_OP = {
     HCCL_REDUCE_SUM,
     HCCL_REDUCE_PROD,
     HCCL_REDUCE_MAX,

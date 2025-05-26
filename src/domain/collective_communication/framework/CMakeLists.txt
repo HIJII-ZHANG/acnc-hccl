@@ -36,6 +36,7 @@ set(hccl_include_list
     ${HCCL_BASE_DIR}/framework/common/src/task
     ${HCCL_BASE_DIR}/framework/common/src/exception
     ${HCCL_BASE_DIR}/framework/common/src/thread
+    ${HCCL_BASE_DIR}/framework/common/src/h2d_dto
     ${HCCL_BASE_DIR}/framework/communicator/impl/
     ${HCCL_BASE_DIR}/framework/communicator/impl/resource_manager
     ${HCCL_BASE_DIR}/framework/communicator/impl/one_sided_service

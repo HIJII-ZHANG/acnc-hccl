@@ -110,6 +110,9 @@ __aicore__ inline void aiv_all_to_all_91093(KERNEL_ARGS_DEF)
 {
     AivAll2All91093 op;
     uint32_t baseFlagOffset = 4 * rankSize * FLAG_SIZE;
-    op.Init(buffOut0, rank, rankSize, tag, baseFlagOffset);
+    op.Init(buffOut0, rank, rankSize, tag, baseFlagOffset, true);
+    op.InitOpCounter(headCountMem, tailCountMem, addOneMem, counterMemSize, isEnableCounter);
+    op.HeadCounter();
     op.Process<T>(buffIn0, buffOut0, input, output, tag, bufferSize, len);
+    op.TailCounter();
 }

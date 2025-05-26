@@ -61,6 +61,8 @@ FORCE_INLINE_AICORE void aiv_all_gather_910b_rdma(KERNEL_ARGS_DEF)
 {
     AivAllGather910BRdma<T> op;
     op.Init(KERNEL_CLASS_INIT, false);
+    op.HeadCounter();
     op.Process(input, output, len, tag, bufferSize, serverNum);
+    op.TailCounter();
 }
 #endif // AIV_ALL_GATHER_910B_RDMA_H

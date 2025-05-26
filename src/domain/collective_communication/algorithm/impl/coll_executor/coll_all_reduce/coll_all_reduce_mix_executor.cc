@@ -159,11 +159,8 @@ HcclResult CollAllReduceMixExecutor::KernelRun(const OpParam &param, ExecMem &ex
             param.DataDes.dataType, param.reduceType, multRingsSliceZero, param.stream,
             PROF_STAGE_0, 0, reduceScatterOpInfoPtr, multRingsUserMemSliceDefault));
     } else if (topoAttr_.deviceType == DevType::DEV_TYPE_910B) {
-        bool isSupportHighPerf = (topoMatcher_->GetExternalInputHcclHighPerfEnable() != 0) &&
-            (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB);
         if (!topoMatcher_->GetExternalInputHcclDeterministic() && (param.DataDes.dataType != HCCL_DATA_TYPE_INT64) &&
-            ((topoAttr_.deviceType == DevType::DEV_TYPE_910B && param.reduceType != HCCL_REDUCE_PROD) ||
-            (isSupportHighPerf && param.reduceType == HCCL_REDUCE_SUM))) {
+            (topoAttr_.deviceType == DevType::DEV_TYPE_910B && param.reduceType != HCCL_REDUCE_PROD)) {
             CHK_RET(MultiStreamReduceScatterMeshAtomic(param.tag, execMem.inputMem, execMem.outputMem, execMem.count,
                 param.DataDes.dataType, param.reduceType, dataSegsSlice, const_cast<Stream&>(param.stream), COMM_LEVEL0));
         } else {

@@ -67,6 +67,11 @@ protected:
     // 虚函数，执行具体的数据搬运、reduce操作。  各Executor重载。
     // 按Level0、Level1、Level2可继续进行拆分。
     virtual HcclResult KernelRun(const OpParam &param, ExecMem &execMem);
+    virtual HcclResult KernelRunInterServer(const OpParam &param, ExecMem &execMem) {return HCCL_SUCCESS;}
+    virtual HcclResult KernelRunIntraServer(const OpParam &param, ExecMem &execMem) {return HCCL_SUCCESS;}
+    virtual HcclResult KernelRunIntraServerReduceScatter(const OpParam &param, ExecMem &execMem, std::vector<std::vector<Slice> > &multRingsSliceZero, std::vector<Slice> &dataSegsSlice) {return HCCL_SUCCESS;}
+    virtual HcclResult KernelRunInterServerAllReduce(const OpParam &param, ExecMem &execMem) {return HCCL_SUCCESS;}
+    virtual HcclResult KernelRunIntraServerAllGather(const OpParam &param, ExecMem &execMem, std::vector<std::vector<Slice> > &multRingsSliceZero, u64 &hdCount) {return HCCL_SUCCESS;}
 
     // 图模式下激活从流
     HcclResult ActiveSlaveStreams(const Stream &stream);

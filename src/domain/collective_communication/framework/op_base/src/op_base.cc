@@ -52,7 +52,7 @@ const std::string HCCL_ALLTOALLVC = "ALLTOALLVC";
 thread_local map<std::string, shared_ptr<TopoInfoDetect>> g_topoDetectServerPtrMap;
 
 HcclResult GetCaptureInfo(aclrtStream stream, std::string& captureInfo, bool& isCapture)
-{   
+{
     isCapture = false;
     DevType devType;   
     CHK_RET(hrtGetDeviceType(devType));
@@ -1058,6 +1058,9 @@ HcclResult HcclCommInitRootInfoInner(uint32_t nRanks, const HcclRootInfo *rootIn
     HcclResult ret = HCCL_SUCCESS;
     HcclUs startut = TIME_NOW();
 
+    s32 deviceLogicId = 0;
+    CHK_RET(hrtGetDeviceRefresh(&deviceLogicId));
+
     CHK_SMART_PTR_NULL(rootInfo);
     HcclRootHandle rootHandle;
     s32 sRet = memcpy_s(&rootHandle, sizeof(HcclRootHandle), rootInfo->internal, sizeof(HcclRootHandle));
@@ -1066,9 +1069,6 @@ HcclResult HcclCommInitRootInfoInner(uint32_t nRanks, const HcclRootInfo *rootIn
         sizeof(HcclRootHandle)), HCCL_E_MEMORY);
     rootHandle.identifier[ROOTINFO_INDENTIFIER_MAX_LENGTH - 1] = '\0';
     identifier = rootHandle.identifier;
-
-    s32 deviceLogicId = 0;
-    CHK_RET(hrtGetDeviceRefresh(&deviceLogicId));
 
     CHK_PRT_RET((nRanks == 0), HCCL_ERROR("[Init][CommRootInfoInner]errNo[0x%016llx] nRanks[%u] should "\
         "be greater than 0.", HCCL_ERROR_CODE(HCCL_E_PARA), nRanks), HCCL_E_PARA);
@@ -1294,13 +1294,13 @@ HcclResult HcclAllReduce(void *sendBuf, void *recvBuf, uint64_t count, HcclDataT
         std::vector<std::string>({"HcclAllReduce", "recvBuf", "nullptr", "please check recvBuf"}));
     CHK_PTR_NULL(recvBuf);
 
+    DevType devType;
+    CHK_RET(hrtGetDeviceType(devType));
     hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
     const std::lock_guard<std::mutex> lock(hcclComm->operatorlock_);
     StateGuard<hccl::hcclComm, HcclCommState> guard(hcclComm, HcclCommState::INUSE);
     // 同通信域同算子复用tag
     const string tag = "AllReduce_" + hcclComm->GetIdentifier();
-    DevType devType;
-    CHK_RET(hrtGetDeviceType(devType));
 
     CHK_RET_AND_PRINT_IDE(HcomCheckOpParam(tag.c_str(), count, dataType, stream), tag.c_str());
 
@@ -1528,13 +1528,14 @@ HcclResult HcclReduceScatter(void *sendBuf, void *recvBuf, uint64_t recvCount, H
     RPT_INPUT_ERR(recvBuf == nullptr, "EI0003", std::vector<std::string>({"ccl_op", "parameter", "value", "tips"}),\
         std::vector<std::string>({"HcclReduceScatter", "recvBuf", "nullptr", "please check recvBuf"}));
     CHK_PTR_NULL(recvBuf);
+    DevType devType;
+    CHK_RET(hrtGetDeviceType(devType));
+
     hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
     const std::lock_guard<std::mutex> lock(hcclComm->operatorlock_);
     StateGuard<hccl::hcclComm, HcclCommState> guard(hcclComm, HcclCommState::INUSE);
     // 同通信域同算子复用tag
     const string tag = "ReduceScatter_" + hcclComm->GetIdentifier();
-    DevType devType;
-    CHK_RET(hrtGetDeviceType(devType));
 
     CHK_RET_AND_PRINT_IDE(HcomCheckOpParam(tag.c_str(), recvCount, dataType, stream), tag.c_str());
 
@@ -2759,12 +2760,13 @@ HcclResult HcclReduce(void *sendBuf, void *recvBuf, uint64_t count, HcclDataType
     RPT_INPUT_ERR(recvBuf == nullptr, "EI0003", std::vector<std::string>({"ccl_op", "parameter", "value", "tips"}),\
         std::vector<std::string>({"HcclReduce", "recvBuf", "nullptr", "please check recvBuf"}));
     CHK_PTR_NULL(recvBuf);
+    DevType devType;
+    CHK_RET(hrtGetDeviceType(devType));
+
     hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
     StateGuard<hccl::hcclComm, HcclCommState> guard(hcclComm, HcclCommState::INUSE);
     // 同通信域同算子复用tag
     const string tag = "Reduce_" + hcclComm->GetIdentifier();
-    DevType devType;
-    CHK_RET(hrtGetDeviceType(devType));
     CHK_RET_AND_PRINT_IDE(HcomCheckOpParam(tag.c_str(), count, dataType, stream), tag.c_str());
 
     CHK_RET_AND_PRINT_IDE(HcomCheckReductionOp(op), tag.c_str());

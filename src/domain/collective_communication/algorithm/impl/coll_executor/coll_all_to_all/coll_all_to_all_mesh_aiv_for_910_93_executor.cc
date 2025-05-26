@@ -71,6 +71,14 @@ HcclResult CollAlltoAllMeshAivFor91093Executor::CalcLevel0CommInfo(TransportMemT
     return HCCL_SUCCESS;
 }
 
+u32 CollAlltoAllMeshAivFor91093Executor::CalBlockDim(u32 rankSize, u64 dataSize, HcclCMDType cmdType)
+{
+    // A3超节点内多机场景，block_num需要为偶数
+    u32 blockDim = (rankSize < MAX_BLOCK_DIM ? rankSize + rankSize % BLOCK_DIM_FACTOR_TWO : MAX_BLOCK_DIM);
+    HCCL_INFO("[CollAlltoAllMeshAivFor91093Executor][CalBlockDim] blockDim is set to [%u]", blockDim);
+    return blockDim;
+}
+
 HcclResult CollAlltoAllMeshAivFor91093Executor::Orchestrate(OpParam& param, AlgResourceResponse& algRes)
 {
     HcclUs startut = TIME_NOW();
@@ -115,15 +123,14 @@ HcclResult CollAlltoAllMeshAivFor91093Executor::KernelRun(const OpParam &param, 
     buffersIn[0] = execMem.inputMem.ptr();
     buffersOut[0] = execMem.outputMem.ptr();
 
-    if (aivClearEnable_) {
-        ClearAivSyncBuf(buffersOut, localRank, localRankSize, param.stream.ptr());
-    }
-
     AivTopoArgs topoArgs { localRank, localRankSize, MAX_RANK_SIZE, 0, topoAttr_.serverNum, topoAttr_.deviceType };
-    AivResourceArgs resourceArgs { param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size() };
+    blockDim_ = CalBlockDim(localRankSize);
+    AivResourceArgs resourceArgs {
+        param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size(), blockDim_
+    };
     AivAlgArgs algArgs {};
     AivProfilingInfo aivProfilingInfo;
-    
+    aivProfilingInfo.counter = opCounter_;
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
         HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
         HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
@@ -171,7 +178,6 @@ HcclResult CollAlltoAllMeshAivFor91093Executor::KernelRun(const OpParam &param, 
         HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());
         HCCL_PROFILER_DEL_TAG(param.tag);
     }
-    blockDim_ = aivProfilingInfo.blockDim;
 
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAlltoAllMeshAivFor91093Executor][KernelRun]alltoall aiv failed, return[%d]", ret), ret);

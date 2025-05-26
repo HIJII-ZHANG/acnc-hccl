@@ -57,6 +57,8 @@ FORCE_INLINE_AICORE void aiv_all_gather_910b_rdma_graph(KERNEL_ARGS_DEF)
 {
     AivAllGather910BRdmaGraph<T> op;
     op.Init(KERNEL_CLASS_INIT, false);
+    op.HeadCounter();
     op.Process(input, output, len, tag, bufferSize, serverNum);
+    op.TailCounter();
 }
 #endif // AIV_ALL_GATHER_910B_RDMA_GRAPH_H

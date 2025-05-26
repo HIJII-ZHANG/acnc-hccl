@@ -64,7 +64,21 @@ HcclResult CollReduceScatterMeshAivSmallCountExecutor::CalcLevel0CommInfo(Transp
     CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel0, opTransport[COMM_LEVEL0], inputType, outputType));
     return HCCL_SUCCESS;
 }
- 
+
+u32 CollReduceScatterMeshAivSmallCountExecutor::CalBlockDim(u32 rankSize, u64 dataSize, HcclCMDType cmdType)
+{
+    u32 blockDim = rankSize; // 默认情况使用rankSize个AIV
+
+    bool isOpBase = (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
+    if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93 && !isOpBase) {
+        blockDim = rankSize * BLOCK_DIM_FOUR_PER_RANK_A3 > MAX_BLOCK_DIM ?
+            rankSize * BLOCK_DIM_THREE_PER_RANK_A3 : rankSize * BLOCK_DIM_FOUR_PER_RANK_A3;
+    }
+
+    HCCL_INFO("[CollReduceScatterMeshAivSmallCountExecutor][CalBlockDim] blockDim is set to [%u]", blockDim);
+    return blockDim;
+}
+
 HcclResult CollReduceScatterMeshAivSmallCountExecutor::Orchestrate(OpParam& param, AlgResourceResponse& algRes)
 {
     HcclUs startut = TIME_NOW();
@@ -128,10 +142,13 @@ HcclResult CollReduceScatterMeshAivSmallCountExecutor::KernelRun(const OpParam &
             param.DataDes.dataType, param.reduceType, 0, isOpbase
     };
     AivTopoArgs topoArgs { localRank, localRankSize, MAX_RANK_SIZE, 0, 1, topoAttr_.deviceType};
-    AivResourceArgs resourceArgs { param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size() };
+    blockDim_ = CalBlockDim(localRankSize);
+    AivResourceArgs resourceArgs {
+        param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size(), blockDim_
+    };
     AivAlgArgs algArgs {};
     struct AivProfilingInfo aivProfilingInfo;
-
+    aivProfilingInfo.counter = opCounter_;
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
         HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
         HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
@@ -147,7 +164,6 @@ HcclResult CollReduceScatterMeshAivSmallCountExecutor::KernelRun(const OpParam &
         HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());
         HCCL_PROFILER_DEL_TAG(param.tag);
     }
-    blockDim_ = aivProfilingInfo.blockDim;
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollReduceScatterMeshAivSmallCountExecutor][KernelRun]allreduce aiv failed, return[%d]", ret),
         ret);

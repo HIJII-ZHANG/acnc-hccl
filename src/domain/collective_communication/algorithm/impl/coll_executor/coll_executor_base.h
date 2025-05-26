@@ -43,8 +43,9 @@ public:
     //batchsendrecv retry使用
     virtual HcclResult CreatePairWiseList(HcclSendRecvItem *sendRecvInfo, u32 itemNum);
     virtual HcclResult GetPairWiseList(std::vector<std::vector<HcclSendRecvItem*>> &sendRecvPairList);
+    virtual u32 CalBlockDim(u32 rankSize, u64 dataSize = 0, HcclCMDType cmdType = HcclCMDType::HCCL_CMD_INVALID);
     HcclResult GetBlockDim(u32& blockDim);
-
+    HcclResult SetOpCounter(const OpCounterInfo& opCounter);
 protected:
     const HcclDispatcher dispatcher_;
     u64 inCCLbufferSize_{0}; // CCLIN大小，用于计算scratch
@@ -54,6 +55,7 @@ protected:
     AlgOpContext algOpContext_;
     bool aivClearEnable_ = false;
     u32 blockDim_ = 0;
+    OpCounterInfo opCounter_;
 };
 }
 #endif

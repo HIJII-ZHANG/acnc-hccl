@@ -55,6 +55,8 @@ __aicore__ inline void aiv_reduce_scatter_v_910b_middata(EXTERN_KERNEL_ARGS_DEF)
 {
     AivReduceScatterVMid910B op;
     op.Init(KERNEL_CLASS_INIT, true);
+    op.HeadCounter();
     op.Process<T>(input, output, tag, extraArgs);
+    op.TailCounter();
 }
 

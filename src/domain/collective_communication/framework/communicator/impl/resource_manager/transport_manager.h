@@ -102,6 +102,15 @@ struct SubCommLinkPara {
     remoteRankMap(remoteRankMap),
     remoteRankIdStartIndex(remoteRankIdStartIndex),
     remoteRankIdNum(remoteRankIdNum) {}
+
+    ~SubCommLinkPara()
+    {
+        for (auto &linkThread : linkThreads) {
+            if (linkThread != nullptr && linkThread->joinable()) {
+                linkThread->join();
+            }
+        }
+    }
 };
 }
 
@@ -173,7 +182,7 @@ public:
 
     HcclResult CreateVirturalTransport(SingleSubCommTransport& singleSubCommTransport);
     HcclResult Alloc(const std::string &tag, const TransportIOMem &transMem, OpCommTransport &opTransportResponse,
-        bool isAicpuModeEn, bool isBackup = false);
+        bool isAicpuModeEn, bool isBackup = false, bool isZeroCopy = false, const HcclCMDType &opType=HcclCMDType::HCCL_CMD_INVALID);
     HcclResult IncreAlloc(const std::string &tag, const TransportIOMem &transMem, OpCommTransport &opTransportReq,
         OpCommTransport &opTransportResponse, bool isAicpuModeEn, bool isBackup = false);
     HcclResult GetRemoteRankList(OpCommTransport &opTransportResponse, std::vector<u32> &rankList,
@@ -204,13 +213,14 @@ private:
         u32 socketsPerLink, HcclRankLinkInfo &remoteLinkInfo);
     HcclResult CreateDestSockets(const std::string &newTag, RankId remoteRank, u64 taskNum,
         std::vector<std::shared_ptr<HcclSocket> > &connectSockets, bool &isInterRdma, bool forceRdma = false, bool isBackup = false,
-        u32 subCommIndex = 0);
+        u32 subCommIndex = 0, TransportLinkType linkType = TransportLinkType::RESERVED);
     u32 GetSocketsPerLink(u64 taskNum);
     HcclResult SetMachinePara(const std::string &tag, MachineType machineType, const std::string &serverId, u32 dstRank,
         const bool supportDataReceivedAck, const LinkMode linkMode,
         const std::vector<std::shared_ptr<HcclSocket> > &socketList, const DeviceMem &inputMem,
         const DeviceMem &outputMem, const DeviceMem &expMem, bool isAicpuModeEn, bool isBackup,
-        u32 notifyNum, u32 trafficClass, u32 serviceLevel, MachinePara &machinePara);
+        u32 notifyNum, u32 trafficClass, u32 serviceLevel, MachinePara &machinePara,
+        TransportLinkType linkType = TransportLinkType::RESERVED);
     TransportType GetTransportType(const u32 dstRank, bool isUsedRdma);
     void SetTransportParam(TransportPara &para, MachinePara &machinePara);
     HcclResult TransportInit(const u32 dstRank, MachinePara &machinePara,
@@ -220,8 +230,11 @@ private:
         const bool enableUseOneDoorbell, const std::string threadStr,
         const std::vector<std::shared_ptr<HcclSocket> > sockets, const DeviceMem inputMem, const DeviceMem outputMem,
         bool isUsedRdma, std::shared_ptr<Transport> &link, bool isAicpuModeEn,
-        u32 notifyNum = 0, bool isBackup = false, const DeviceMem expMem = DeviceMem());
-    HcclResult ConstructTransTag(const std::string& tag, std::string& transTag, bool isInterRdma, u32 subCommIndex = 0);
+        u32 notifyNum = 0, bool isBackup = false, const DeviceMem expMem = DeviceMem(),
+        TransportLinkType linkType = TransportLinkType::RESERVED);
+    bool IsHccsTransport(u32 remoteRank, TransportLinkType linkType);
+    HcclResult ConstructTransTag(const std::string& tag, std::string& transTag, bool isInterRdma, u32 subCommIndex = 0,
+        bool isHccs = false);
     HcclResult ExceptionHandle(const std::string &tag, OpCommTransport &opTransportResponse);
 
     HcclResult LoadMultiQpSrcPortFromFile();

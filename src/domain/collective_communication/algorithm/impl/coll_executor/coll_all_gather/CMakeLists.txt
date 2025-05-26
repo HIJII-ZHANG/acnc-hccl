@@ -16,6 +16,7 @@ set(src_list
   ${CMAKE_CURRENT_SOURCE_DIR}/coll_all_gather_semi_ring_executor.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/coll_all_gather_aiv_rdma_executor.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/coll_all_gather_mesh_graph_executor.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/coll_all_gather_sio_hccs_executor.cc
 )
 
 target_sources(hccl_alg PRIVATE

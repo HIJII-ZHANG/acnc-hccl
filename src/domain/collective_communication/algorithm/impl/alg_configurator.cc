@@ -71,7 +71,8 @@ HcclResult AlgConfigurator::SelectCurrOpAlgType(
         algType[opType].algoLevel0 = AlgTypeLevel0::ALG_LEVEL0_WHOLE_RING;
         algType[opType].algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_WHOLE_RING;
     } else if (!topoAttr_.multiModuleDiffDeviceNumMode && topoAttr_.multiSuperPodDiffServerNumMode &&
-               (opType == HcclCMDType::HCCL_CMD_ALLREDUCE || opType == HcclCMDType::HCCL_CMD_ALL)) {
+               (opType == HcclCMDType::HCCL_CMD_ALLGATHER || opType == HcclCMDType::HCCL_CMD_ALLREDUCE ||
+                opType == HcclCMDType::HCCL_CMD_REDUCE_SCATTER || opType == HcclCMDType::HCCL_CMD_ALL)) {
         CHK_RET(SetAlgoLevel0(GetExternalInputHcclAlgoConfig(opType)[HCCL_ALGO_LEVEL_0], algType0));
         CHK_RET(SetAlgoLevel1(HcclAlgoType::HCCL_ALGO_TYPE_AHC, moduleNum, algType1, opType));
         CHK_RET(SetAlgoLevel2(GetExternalInputHcclAlgoConfig(opType)[HCCL_ALGO_LEVEL_2], algType2));
@@ -84,9 +85,11 @@ HcclResult AlgConfigurator::SelectCurrOpAlgType(
                 return HCCL_E_PARA;
             }
         }
+        HCCL_INFO("[AlgConfigurator][SelectCurrOpAlgType] multiModuleDiffDeviceNumMode is true, set ahc.");
     } else if ((topoAttr_.multiModuleDiffDeviceNumMode ||
                (topoAttr_.multiSuperPodDiffServerNumMode &&
-               !((opType == HcclCMDType::HCCL_CMD_ALLREDUCE || opType == HcclCMDType::HCCL_CMD_ALL)
+               !((opType == HcclCMDType::HCCL_CMD_ALLGATHER || opType == HcclCMDType::HCCL_CMD_ALLREDUCE ||
+                  opType == HcclCMDType::HCCL_CMD_REDUCE_SCATTER || opType == HcclCMDType::HCCL_CMD_ALL)
                && isConfigAHC))) &&
                !isConfigNULL) { // 多server不同卡模式，设置为单层拓扑类型
         algType[opType].algoLevel0 = AlgTypeLevel0::ALG_LEVEL0_WHOLE_RING;
@@ -97,7 +100,7 @@ HcclResult AlgConfigurator::SelectCurrOpAlgType(
             HCCL_WARNING("multiModuleDiffDeviceNumMode[%d], multiSuperPodDiffServerNumMode_[%d], algorithm type [%d] is selected by force.", \
                          topoAttr_.multiModuleDiffDeviceNumMode, topoAttr_.multiSuperPodDiffServerNumMode, algType[opType].algoLevel0);
         }
-        HCCL_INFO("[AlgConfigurator][SelectCurrOpAlgType] multiModuleDiffDeviceNumMode is true, set ahc.");
+        HCCL_INFO("[AlgConfigurator][SelectCurrOpAlgType] multiModuleDiffDeviceNumMode is true, set default ring.");
     } else if (algoAttr_.isHaveCpuRank) {
         algType[opType].algoLevel0 = AlgTypeLevel0::ALG_LEVEL0_NP_STAR;
         algType[opType].algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_STAR;
@@ -165,7 +168,8 @@ HcclResult AlgConfigurator::SetAlgoLevel1(HcclAlgoType algoConfig, u32 moduleNum
             HCCL_INFO("server num[%u]: level1:nhr_v1 algo is set.", moduleNum);
             break;
         case HcclAlgoType::HCCL_ALGO_TYPE_AHC:
-            if (opType == HcclCMDType::HCCL_CMD_ALLREDUCE) {
+            if (opType == HcclCMDType::HCCL_CMD_ALLGATHER || opType == HcclCMDType::HCCL_CMD_ALLREDUCE ||
+                opType == HcclCMDType::HCCL_CMD_REDUCE_SCATTER) {
                 algType = AlgTypeLevel1::ALG_LEVEL1_AHC;
                 HCCL_INFO("server num[%u]: level1:ahc algo is set.", moduleNum);
                 break;
@@ -178,7 +182,8 @@ HcclResult AlgConfigurator::SetAlgoLevel1(HcclAlgoType algoConfig, u32 moduleNum
                 return HCCL_SUCCESS;
             }
         case HcclAlgoType::HCCL_ALGO_TYPE_AHC_BROKE:
-            if (opType == HcclCMDType::HCCL_CMD_ALLREDUCE) {
+            if (opType == HcclCMDType::HCCL_CMD_ALLGATHER || opType == HcclCMDType::HCCL_CMD_ALLREDUCE ||
+                opType == HcclCMDType::HCCL_CMD_REDUCE_SCATTER) {
                 algType = AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE;
                 HCCL_INFO("server num[%u]: level1:ahc broke algo is set.", moduleNum);
                 break;

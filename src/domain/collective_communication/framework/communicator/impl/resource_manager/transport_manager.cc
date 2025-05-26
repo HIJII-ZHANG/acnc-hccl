@@ -80,8 +80,12 @@ HcclResult TransportManager::ExceptionHandle(const std::string &tag, OpCommTrans
                         ipAddr = localVnicIp_;
                     }
 
+                    bool isHccs = false;
+                    if (!isInterRdma) {
+                        isHccs = IsHccsTransport(transportRequest.remoteUserRank, transportRequest.linkType);
+                    }
                     std::string newTag;
-                    CHK_RET(ConstructTransTag(tag, newTag, isInterRdma));
+                    CHK_RET(ConstructTransTag(tag, newTag, isInterRdma, 0, isHccs));
                     CHK_RET(socketManager_->AddWhiteList(newTag, netDevCtxMap_[ipAddr],
                         remoteLinkInfo));
                 }
@@ -180,7 +184,8 @@ HcclResult TransportManager::createSubCommLinkThreads(const std::string &tag, co
         bool isInterRdma;
         bool chooseBackup = transportRequest.isUsedRdma ? isBackup : false;
         HcclResult ret = CreateDestSockets(tag, transportRequest.remoteUserRank, singleSubCommTransport.taskNum,
-            connectSockets, isInterRdma, transportRequest.isUsedRdma, chooseBackup, subCommIndex);
+            connectSockets, isInterRdma, transportRequest.isUsedRdma, chooseBackup, subCommIndex,
+            transportRequest.linkType);
         HCCL_DEBUG("[%s]CreateDestSockets finished, chooseBackup[%d]", __func__, chooseBackup);
         HCCL_DEBUG("[%s]: remoteUserRank[%u], userRank[%u], isUsedRdma[%u]", __func__, transportRequest.remoteUserRank,
             userRank_, transportRequest.isUsedRdma);
@@ -197,7 +202,7 @@ HcclResult TransportManager::createSubCommLinkThreads(const std::string &tag, co
                 singleSubCommTransport.enableUseOneDoorbell, threadStr,
                 connectSockets, inputMem, outputMem, transportRequest.isUsedRdma, 
                 std::ref(link), isAicpuModeEn,
-                transportRequest.notifyNum, chooseBackup, expMem));
+                transportRequest.notifyNum, chooseBackup, expMem, transportRequest.linkType));
         CHK_SMART_PTR_NULL(subCommLinkPara.linkThreads[i]); // 异常时其他线程待处理
         singleSubCommTransport.status[index] = TransportStatus::READY; // 建链后 transport设置为ready状态
     }
@@ -259,9 +264,6 @@ HcclResult TransportManager::AllocSubCommLinks(const std::string &tag, const Tra
 {
     const u32 offset = 8;
     std::vector<std::pair<u32, u32>> remoteRankMap;
-    std::vector<std::unique_ptr<std::thread>> linkThreads;
-    linkThreads.resize(singleSubCommTransport.transportRequests.size());
-    ThreadsGuard threadsGuard(linkThreads);
 
     for (u32 i = 0; i< singleSubCommTransport.transportRequests.size(); i++) {
         if (singleSubCommTransport.transportRequests[i].isValid) {
@@ -328,18 +330,30 @@ HcclResult TransportManager::AllocSubCommLinks(const std::string &tag, const Tra
 }
 
 HcclResult TransportManager::Alloc(const std::string &tag, const TransportIOMem &transMem,
-    OpCommTransport &opTransportResponse, bool isAicpuModeEn, bool isBackup)
+    OpCommTransport &opTransportResponse, bool isAicpuModeEn, bool isBackup, bool isZeroCopy, const HcclCMDType &opType)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     CHK_RET(notifyPool_->RegisterOp(tag));
     workflowMode_ = GetWorkflowMode();  // 后续有起新的线程，因此更新一下workflowMode
-    for (auto &levelNSubCommTransport : opTransportResponse) {
-         u32 subCommIndex = 0;
+    for (u32 levelIdx = 0; levelIdx < opTransportResponse.size(); levelIdx++) {
+        auto &levelNSubCommTransport = opTransportResponse[levelIdx];
+        u32 subCommIndex = 0;
         for (auto &singleSubCommTransport : levelNSubCommTransport) {
             subCommIndex++;
             DevType devType;
             CHK_RET(hrtGetDeviceType(devType));
             if (devType == DevType::DEV_TYPE_910_93) {
+                // 如果是零拷贝场景下level0通信域交换零拷贝的共享内存
+                if (levelIdx == COMM_LEVEL0 && isZeroCopy) {
+                    for (auto &transportRequest : singleSubCommTransport.transportRequests) {
+                        if (transportRequest.inputMemType != TransportMemType::RESERVED) {
+                            transportRequest.inputMemType = TransportMemType::PARAM_INPUT;
+                        }
+                        if (transportRequest.outputMemType != TransportMemType::RESERVED) {
+                            transportRequest.outputMemType = (opType == HcclCMDType::HCCL_CMD_BROADCAST) ? TransportMemType::PARAM_INPUT : TransportMemType::PARAM_OUTPUT;
+                        }
+                    }
+                }
                 CHK_RET(AllocSubCommLinks(tag, transMem, singleSubCommTransport, isAicpuModeEn, isBackup, subCommIndex));
                 continue;
             }
@@ -379,7 +393,8 @@ HcclResult TransportManager::Alloc(const std::string &tag, const TransportIOMem 
                         transportRequest.remoteUserRank, userRank_, transportRequest.isUsedRdma);
                     bool chooseBackup = transportRequest.isUsedRdma ? isBackup : false;
                     HcclResult ret = CreateDestSockets(tag, transportRequest.remoteUserRank, singleSubCommTransport.taskNum,
-                        connectSockets, isInterRdma, transportRequest.isUsedRdma, chooseBackup, subCommIndex);
+                        connectSockets, isInterRdma, transportRequest.isUsedRdma, chooseBackup, subCommIndex,
+                        transportRequest.linkType);
                     HCCL_DEBUG("[%s]CreateDestSockets finished, chooseBackup[%d]", __func__, chooseBackup);
                     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[Alloc]Create dest sockets failed"), ret);
 
@@ -402,7 +417,7 @@ HcclResult TransportManager::Alloc(const std::string &tag, const TransportIOMem 
                             singleSubCommTransport.enableUseOneDoorbell, threadStr, connectSockets,
                             inputMem, outputMem, transportRequest.isUsedRdma,
                             std::ref(singleSubCommTransport.links[linkIdx]), isAicpuModeEn,
-                            transportRequest.notifyNum, chooseBackup, expMem));
+                            transportRequest.notifyNum, chooseBackup, expMem, transportRequest.linkType));
                         CHK_SMART_PTR_NULL(linkThreads[threadsRapplyNum]); // 异常时其他线程待处理
                     singleSubCommTransport.status[linkIdx] = TransportStatus::READY; // 建链后 transport设置为ready状态
                     threadsRapplyNum++;
@@ -514,7 +529,8 @@ HcclResult TransportManager::IncreAlloc(const std::string &tag, const TransportI
                     bool isInterRdma;
                     bool chooseBackup = transportRequest.isUsedRdma ? isBackup : false;
                     HcclResult ret = CreateDestSockets(tag, transportRequest.remoteUserRank, reqSingleSubComm.taskNum,
-                        connectSockets, isInterRdma, transportRequest.isUsedRdma, chooseBackup, subCommIndex);
+                        connectSockets, isInterRdma, transportRequest.isUsedRdma, chooseBackup, subCommIndex,
+                        transportRequest.linkType);
                     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[IncreAlloc]Create dest sockets failed"), ret);
 
                     MachineType machineType = transportRequest.localUserRank < transportRequest.remoteUserRank?
@@ -527,7 +543,7 @@ HcclResult TransportManager::IncreAlloc(const std::string &tag, const TransportI
                             reqSingleSubComm.supportDataReceivedAck, reqSingleSubComm.linkMode,
                             reqSingleSubComm.enableUseOneDoorbell, threadStr, connectSockets, inputMem, outputMem,
                             transportRequest.isUsedRdma, std::ref(respSingleSubComm.links[rankIndex]), isAicpuModeEn,
-                            transportRequest.notifyNum, chooseBackup, expMem));
+                            transportRequest.notifyNum, chooseBackup, expMem, transportRequest.linkType));
                         CHK_SMART_PTR_NULL(linkThreads[threadsRapplyNum]); // 异常时其他线程待处理
                     respSingleSubComm.status[rankIndex] = TransportStatus::READY; // 建链后 transport设置为ready状态
                     threadsRapplyNum++;
@@ -551,11 +567,40 @@ HcclResult TransportManager::IncreAlloc(const std::string &tag, const TransportI
     return HCCL_SUCCESS;
 }
 
-HcclResult TransportManager::ConstructTransTag(const std::string& tag, std::string& transTag, bool isInterRdma, u32 subCommIndex)
+bool TransportManager::IsHccsTransport(u32 remoteRank, TransportLinkType linkType)
+{
+    // 判断p2p连接中，与remoteRank间的链路是否为hccs链路
+    bool isHccs = true;
+    if (linkType == TransportLinkType::RESERVED) {
+        // 非hccs sio并发场景，直接通过获取底层优选链路类型来判断，获取失败时，默认为HCCS
+        LinkTypeInServer linkTypeTmp = LinkTypeInServer::RESERVED_LINK_TYPE;
+        HcclResult ret = hrtGetPairDeviceLinkType(
+            rankInfoList_[userRank_].devicePhyId, rankInfoList_[remoteRank].devicePhyId, linkTypeTmp);
+        if (ret != HCCL_SUCCESS) {
+            HCCL_WARNING("fail to get device link type for userRank[%u] remoteRank[%u] ret[%d], defalut to Hccs",
+                userRank_, remoteRank, ret);
+            return true;
+        }
+        if (linkTypeTmp == LinkTypeInServer::SIO_TYPE) {
+            isHccs = false;
+        }
+    } else {  // 910_93 2 die concurrent
+        // hccs sio并发场景，直接通过linkType判断
+        isHccs = linkType == TransportLinkType::HCCS;
+    }
+
+    return isHccs;
+}
+
+HcclResult TransportManager::ConstructTransTag(const std::string& tag, std::string& transTag, bool isInterRdma,
+    u32 subCommIndex, bool isHccs)
 {
     transTag = (Is310PDevice() || isHaveCpuRank_) ? tag : identifier_ + "_res_optimize_" + std::to_string(subCommIndex);
-    std::string tmpStr = isInterRdma ? "_Inter_" : "_Intra_";
-    transTag += tmpStr;
+    if (isInterRdma) {
+        transTag += "_Inter_";
+    } else {
+        transTag += isHccs ? "_Hccs_" : "_SIO_";
+    }
     return HCCL_SUCCESS;
 }
 
@@ -625,7 +670,8 @@ u32 TransportManager::GetRemoteNicPort(s32 devicePhyId, u32 dstUserRank, bool is
 }
 
 HcclResult TransportManager::CreateDestSockets(const std::string &tag, RankId remoteRank, u64 taskNum,
-    std::vector<std::shared_ptr<HcclSocket> > &connectSockets, bool &isInterRdma, bool forceRdma, bool isBackup, u32 subCommIndex)
+    std::vector<std::shared_ptr<HcclSocket> > &connectSockets, bool &isInterRdma, bool forceRdma, bool isBackup,
+    u32 subCommIndex, TransportLinkType linkType)
 {
     // 改对端的ip和port
     UpdateIsInterRdma(remoteRank, isInterRdma, forceRdma);
@@ -649,7 +695,8 @@ HcclResult TransportManager::CreateDestSockets(const std::string &tag, RankId re
         __func__, userRank_, remoteRank, isBackup, remoteLinkInfo.port, remoteLinkInfo.ip.GetReadableIP());
 
     std::string newTag;
-    CHK_RET(ConstructTransTag(tag, newTag, isInterRdma, subCommIndex));
+    bool isHccs = isInterRdma ? false : IsHccsTransport(remoteRank, linkType);
+    CHK_RET(ConstructTransTag(tag, newTag, isInterRdma, subCommIndex, isHccs));
 
     HcclResult ret = HCCL_SUCCESS;
     if (isInterRdma || Is310PDevice()) {
@@ -723,7 +770,7 @@ HcclResult TransportManager::CreateLink(const std::string &tag, const ErrContext
     const std::vector<std::shared_ptr<HcclSocket> > sockets,
     const DeviceMem inputMem, const DeviceMem outputMem, bool isUsedRdma,
     std::shared_ptr<Transport> &link, bool isAicpuModeEn,
-    u32 notifyNum, bool isBackup, const DeviceMem expMem)
+    u32 notifyNum, bool isBackup, const DeviceMem expMem, TransportLinkType linkType)
 {
     hrtErrMSetErrorContextPub(error_context);
     // 给当前线程添加名字
@@ -735,7 +782,8 @@ HcclResult TransportManager::CreateLink(const std::string &tag, const ErrContext
 
     MachinePara machinePara;
     CHK_RET(SetMachinePara(tag, machineType, serverId, remoteRank, supportDataReceivedAck, linkMode, sockets,
-        inputMem, outputMem, expMem, isAicpuModeEn, isBackup, notifyNum, trafficClass_, serviceLevel_, machinePara));
+        inputMem, outputMem, expMem, isAicpuModeEn, isBackup, notifyNum, trafficClass_, serviceLevel_, machinePara,
+        linkType));
     HCCL_DEBUG("inputMem[%p],outputMem[%p], inputMem size[%llu], outputMem size[%llu]", inputMem.ptr(), outputMem.ptr(),
         inputMem.size(), outputMem.size());
     HCCL_INFO("[createLink para]tag[%s], rank[%u]-localUserrank[%u]-localIpAddr[%s], linkMode[%d] "
@@ -786,7 +834,8 @@ HcclResult TransportManager::SetMachinePara(const std::string &tag, MachineType 
     const bool supportDataReceivedAck, const LinkMode linkMode,
     const std::vector<std::shared_ptr<HcclSocket> > &socketList,
     const DeviceMem &inputMem, const DeviceMem &outputMem, const DeviceMem &expMem, bool isAicpuModeEn, 
-    bool isBackup, u32 notifyNum, u32 trafficClass, u32 serviceLevel, MachinePara &machinePara)
+    bool isBackup, u32 notifyNum, u32 trafficClass, u32 serviceLevel, MachinePara &machinePara,
+    TransportLinkType linkType)
 {
     machinePara.notifyNum = notifyNum;
     machinePara.linkMode = linkMode;
@@ -863,7 +912,16 @@ HcclResult TransportManager::SetMachinePara(const std::string &tag, MachineType 
     
     machinePara.srcPorts = std::vector<u32>(1, 0); /* 默认填充一个元素，0代表默认不配置 */
     machinePara.isAicpuModeEn = isAicpuModeEn;
-
+    if (linkType == TransportLinkType::RESERVED) {
+        // 非910_93 2die sio与hccs并发场景，specifyLink设置为RESERVED_LINK_TYPE，平台层将按实际链路类型建链
+        machinePara.specifyLink = LinkTypeInServer::RESERVED_LINK_TYPE;
+    } else {
+        // 910_93 2die sio与hccs并发场景，
+        // 并发链路中的的hccs链路specifyLink设置为HCCS_SW_TYPE，平台层将使用hccs链路来建链；
+        // 并发链路中的的sio链路specifyLink设置为SIO_TYPE，平台层将使用sio链路来建链
+        machinePara.specifyLink =
+            (linkType == TransportLinkType::SIO) ? LinkTypeInServer::SIO_TYPE : LinkTypeInServer::HCCS_SW_TYPE;
+    }
     return HCCL_SUCCESS;
 }
 

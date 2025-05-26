@@ -116,7 +116,12 @@ HcclResult TopoInfoDetect::SetupServerByMasterInfo(const HcclIpAddress& masterIP
     }
     rootInfo_ = rootInfo;
     CHK_RET(HcclNetInit(NICDeployment::NIC_DEPLOYMENT_HOST, devicePhysicID_, deviceLogicID_, true));
-    CHK_RET(StartRootNetwork(whitelist, masterIP, masterPort));
+    CHK_RET(StartRootNetwork(masterIP, masterPort));
+
+    if (GetExternalInputHcclEnableWhitelist() == HCCL_WHITELIST_ON) {
+        CHK_RET(AddSocketWhiteList(masterPort, whitelist));
+    }
+
     u32 hostPort = GetExternalInputMasterInfo().port;
     g_topoExchangeServerStatus_.EmplaceAndUpdate(hostPort, [] (volatile u32 &status) {
         status = TOPO_EXCHANGE_SERVER_STATUS_RUNING;
@@ -157,13 +162,18 @@ HcclResult TopoInfoDetect::SetupServer(HcclRootHandle &rootInfo)
     if (!GetExternalInputHostPortSwitch()) {
         // 不开启host侧端口范围配置, 则使用默认端口
         if (GetExternalInputHcclIfBasePort() == HCCL_INVALID_PORT) {
-            hostPort = devicePhysicID_ + HOST_PARA_BASE_PORT;
+            hostPort = devicePhysicID_ + HOST_CONTROL_BASE_PORT;
         } else {
             hostPort = devicePhysicID_ + GetExternalInputHcclIfBasePort();
         }
     }
-    CHK_RET(StartRootNetwork(whitelist, hostIP, hostPort));
+    CHK_RET(StartRootNetwork(hostIP, hostPort));
     CHK_RET(GenerateRootInfo(hostIP, hostPort, devicePhysicID_, rootInfo_));
+
+    if (GetExternalInputHcclEnableWhitelist() == HCCL_WHITELIST_ON) {
+        CHK_RET(AddSocketWhiteList(hostPort, whitelist));
+    }
+
     g_topoExchangeServerStatus_.EmplaceAndUpdate(hostPort, [] (volatile u32 &status) {
         status = TOPO_EXCHANGE_SERVER_STATUS_RUNING;
     });
@@ -198,8 +208,7 @@ HcclResult TopoInfoDetect::GenerateRootInfo(const HcclIpAddress &hostIP, u32 hos
     s32 sRet = strncpy_s(rootInfo.ip, sizeof(rootInfo.ip), hostIP.GetReadableIP(), strlen(hostIP.GetReadableIP()));
     CHK_PRT_RET(sRet != EOK, HCCL_ERROR("[Setup][Server]str copy fail. return[%d]", sRet), HCCL_E_INTERNAL);
     rootInfo.port = hostPort;
-    rootInfo.nicDeploy = (GetExternalInputHcclDeviceNicDisable()) ?
-        NICDeployment::NIC_DEPLOYMENT_HOST : NICDeployment::NIC_DEPLOYMENT_DEVICE;
+    rootInfo.nicDeploy = NICDeployment::NIC_DEPLOYMENT_DEVICE;
 
     HCCL_INFO("rootInfo: ip[%s] port[%u] identifier[%s]", rootInfo.ip, rootInfo.port, rootInfo.identifier);
     return HCCL_SUCCESS;
@@ -258,13 +267,9 @@ HcclResult TopoInfoDetect::WaitTopoExchangeServerCompelte(u32 idx) const
 
 HcclResult TopoInfoDetect::SetupAgent(u32 rankSize, u32 myrank, const HcclRootHandle &rootInfo)
 {
-    CHK_PRT_RET((rootInfo.nicDeploy == NICDeployment::NIC_DEPLOYMENT_DEVICE &&
-        GetExternalInputHcclDeviceNicDisable()) ||
-        (rootInfo.nicDeploy == NICDeployment::NIC_DEPLOYMENT_HOST &&
-        !GetExternalInputHcclDeviceNicDisable()),
-        HCCL_ERROR("[Setup][Agent]hcclDeviceNicDisable is [%u] when "\
-            "nicDeploy form root is [%u]", rootInfo.nicDeploy,
-            GetExternalInputHcclDeviceNicDisable()), HCCL_E_PARA);
+    CHK_PRT_RET((rootInfo.nicDeploy == NICDeployment::NIC_DEPLOYMENT_HOST),
+        HCCL_ERROR("[Setup][Agent]hcclDeviceNicDisable is [%u] when nicDeploy form root is NIC_DEPLOYMENT_HOST",
+        rootInfo.nicDeploy), HCCL_E_PARA);
     CHK_RET(hrtGetDevice(&deviceLogicID_));
 
     HcclIpAddress rootIP(rootInfo.ip);
@@ -461,8 +466,7 @@ HcclResult TopoInfoDetect::GetRootHostIP(const vector<HcclIpAddress> &whitelist,
     return HCCL_SUCCESS;
 }
 
-HcclResult TopoInfoDetect::StartRootNetwork(const vector<HcclIpAddress> &whitelist, const HcclIpAddress& hostIP,
-    u32 &usePort)
+HcclResult TopoInfoDetect::StartRootNetwork(const HcclIpAddress& hostIP, u32 &usePort)
 {
     CHK_RET(HcclNetOpenDev(&serverPortCtx_, NicType::HOST_NIC_TYPE, devicePhysicID_, deviceLogicID_, hostIP));
     CHK_PTR_NULL(serverPortCtx_);
@@ -489,9 +493,6 @@ HcclResult TopoInfoDetect::StartRootNetwork(const vector<HcclIpAddress> &whiteli
 
     HCCL_INFO("topo info exchange server start with host ip[%s] and port[%u]", hostIP.GetReadableAddress(), usePort);
 
-    if (GetExternalInputHcclEnableWhitelist() == HCCL_WHITELIST_ON) {
-        CHK_RET(AddSocketWhiteList(usePort, whitelist));
-    }
     return HCCL_SUCCESS;
 }
 
@@ -524,7 +525,7 @@ HcclResult TopoInfoDetect::StartNetwork(HcclIpAddress &hostIP, bool bInitDevNic)
     CHK_RET(HcclNetOpenDev(&agentPortCtx_, NicType::HOST_NIC_TYPE, devicePhysicID_, deviceLogicID_, hostIP));
     CHK_PTR_NULL(agentPortCtx_);
 
-    if (!GetExternalInputHcclDeviceNicDisable() && bInitDevNic) {
+    if (bInitDevNic) {
         CHK_RET(HcclNetInit(NICDeployment::NIC_DEPLOYMENT_DEVICE, devicePhysicID_, deviceLogicID_, false));
         CHK_RET(
             HcclNetOpenDev(&devNicCtx_, NicType::DEVICE_NIC_TYPE, devicePhysicID_, deviceLogicID_, HcclIpAddress(0)));
@@ -544,7 +545,7 @@ HcclResult TopoInfoDetect::StopNetwork(HcclIpAddress &hostIP, bool bInitDevNic)
         CHK_RET(HcclNetDeInit(NICDeployment::NIC_DEPLOYMENT_HOST, devicePhysicID_, deviceLogicID_));
     }
 
-    if (!GetExternalInputHcclDeviceNicDisable() && bInitDevNic) {
+    if (bInitDevNic) {
         if (devNicCtx_) {
             HcclNetCloseDev(devNicCtx_);
             devNicCtx_ = nullptr;
@@ -707,8 +708,7 @@ HcclResult TopoInfoDetect::GenerateLocalRankInfo(u32 rankSize, u32 rankID, HcclB
     localRankInfo.hostIP = GetBootstrapHostIP();
     localRankInfo.rank = rankID;
     localRankInfo.rankSize = rankSize;
-    localRankInfo.nicDeploy = (GetExternalInputHcclDeviceNicDisable()) ?
-        NICDeployment::NIC_DEPLOYMENT_HOST : NICDeployment::NIC_DEPLOYMENT_DEVICE;
+    localRankInfo.nicDeploy = NICDeployment::NIC_DEPLOYMENT_DEVICE;
 
     CHK_RET(hrtGetDeviceType(localRankInfo.deviceType));
     CHK_RET(hrtGetDevice(reinterpret_cast<s32 *>(&localRankInfo.deviceLogicID)));

@@ -99,6 +99,13 @@ HcclResult CollRunAlltoAllStagedAivRdmaExecutor::CalcCommInfo(std::vector<LevelN
     return HCCL_SUCCESS;
 }
 
+u32 CollRunAlltoAllStagedAivRdmaExecutor::CalBlockDim(u32 rankSize, u64 dataSize, HcclCMDType cmdType)
+{
+    u32 blockDim = rankSize; // 默认情况使用rankSize个AIV
+    HCCL_INFO("[CollRunAlltoAllStagedAivRdmaExecutor][CalBlockDim] blockDim is set to [%u]", blockDim);
+    return blockDim;
+}
+
 // run aiv kernel
 HcclResult CollRunAlltoAllStagedAivRdmaExecutor::RunAlltoAllStaged1InAIV(const OpParam &param, ExecMem &execMem) {
     void* dataBuffers[MAX_RANK_SIZE];
@@ -121,10 +128,13 @@ HcclResult CollRunAlltoAllStagedAivRdmaExecutor::RunAlltoAllStaged1InAIV(const O
         outerCommInfo_.localRank, outerCommInfo_.localRankSize,
         topoAttr_.isDiffDeviceModule ? topoAttr_.devicePhyId : A_X_SIZE, 0, serverNum
     };
-    AivResourceArgs resourceArgs { param.tag, param.stream.ptr(), dataBuffers, flagBuffers, execMem.inputMem.size() };
+    blockDim_ = CalBlockDim(outerCommInfo_.localRankSize);
+    AivResourceArgs resourceArgs {
+        param.tag, param.stream.ptr(), dataBuffers, flagBuffers, execMem.inputMem.size(), blockDim_
+    };
     AivAlgArgs algArgs {0};
     struct AivProfilingInfo aivProfilingInfo;
-
+    aivProfilingInfo.counter = opCounter_;
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
         HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
         HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
@@ -140,7 +150,6 @@ HcclResult CollRunAlltoAllStagedAivRdmaExecutor::RunAlltoAllStaged1InAIV(const O
         HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());
         HCCL_PROFILER_DEL_TAG(param.tag);
     }
-    blockDim_ = aivProfilingInfo.blockDim;
 
     return HCCL_SUCCESS;
 }

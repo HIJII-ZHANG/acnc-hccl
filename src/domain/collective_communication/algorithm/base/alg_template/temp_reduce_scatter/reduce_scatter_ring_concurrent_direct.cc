@@ -69,6 +69,8 @@ HcclResult ReduceScatterRingConcurrentDirect::RunAsync(const u32 rank, const u32
         CHK_RET(ExecuteBarrier(leftLink_, rightLink_));
     }
 
+    CHK_RET(LaunchTaskExtend(dispatcher_, stream_, subStreams_));
+
     HCCL_INFO("ReduceScatterRingConcurrentDirect finished: rank[%u]", rank);
     return HCCL_SUCCESS;
 }

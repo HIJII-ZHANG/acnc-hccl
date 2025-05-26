@@ -10,7 +10,12 @@
 
 #include "reduce_scatter_operator.h"
 #include "device_capacity.h"
+#include "rank_consistentcy_checker.h"
+#include "executor_impl.h"
+#include "coll_alg_utils.h"
+#include "stream_active_manager.h"
 #include "hccl_aiv.h"
+#include "coll_alg_op_registry.h"
 
 namespace hccl {
 ReduceScatterOperator::ReduceScatterOperator(AlgConfigurator* algConfigurator, CCLBufferManager &cclBufferManager,
@@ -170,6 +175,12 @@ HcclResult ReduceScatterOperator::SelectAlgfor910B(const OpParam& param, std::st
         }
     }
 
+    // AHC 算法选择逻辑
+    if (((algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC) ||
+         (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE))) {
+        CHK_RET(SelectAlgforAHC(dataSize, AHCOpType::AHC_OP_TYPE_REDUCE_SCATTER));
+    }
+
     // pipeline算法task数量多，如果超出FFTS子图限制，则重定向到HD算法
     if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_PIPELINE) {
         u32 contextNum = CalcContextNumForPipeline(HcclCMDType::HCCL_CMD_REDUCE_SCATTER);
@@ -237,7 +248,7 @@ HcclResult ReduceScatterOperator::SelectAlgfor91093(const OpParam& param, std::s
 
     bool isOpbase = workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE;
     bool isAivMode = topoMatcher_->GetAivModeConfig() && IsSupportAIVReduce(param.DataDes.dataType, param.reduceType) &&
-        serverNum_ == 1 && ((isOpbase && dataSize <= AIV_REDUCE_SCATTER_A3_ENTRY_SIZE) ||
+        serverNum_ == 1 && !param.isZeroCopy && ((isOpbase && dataSize <= AIV_REDUCE_SCATTER_A3_ENTRY_SIZE) ||
         (!isOpbase && dataSize <= AIV_REDUCE_SCATTER_A3_GRAPH_ENTRY_SIZE));
     if (isAivMode) {
         if ((isOpbase && dataSize <= AIV_REDUCE_SCATTER_MID_SIZE) 
@@ -249,6 +260,12 @@ HcclResult ReduceScatterOperator::SelectAlgfor91093(const OpParam& param, std::s
         }
         HCCL_INFO("[SelectAlgfor91093] reduce_scatter SelectAlgfor91093 is algName [%s]", algName.c_str());
         return HCCL_SUCCESS;
+    }
+
+    // AHC 算法选择逻辑
+    if (((algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC) ||
+         (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE))) {
+        CHK_RET(SelectAlgforAHC(dataSize, AHCOpType::AHC_OP_TYPE_REDUCE_SCATTER));
     }
 
     bool smallCountOptimSingleServer =
@@ -271,14 +288,19 @@ HcclResult ReduceScatterOperator::SelectAlgfor91093(const OpParam& param, std::s
         IsSupportSDMAReduce(param.inputPtr, param.outputPtr, param.DataDes.dataType, param.reduceType) &&
         (deviceNumPerAggregation_ > HCCL_DEVICE_NUM_TWO) && (serverNum_ != 1) && (superPodNum_ == 1) &&
         !dmaReduceLimit && !GetExternalInputInterHccsDisable();
-    if (multiModuleDiffDeviceNumMode_ || multiSuperPodDiffServerNumMode_) {
+    bool isHccsPlusSio = userRankSize_ == 2 && pairLinkCounter_[static_cast<u32>(LinkTypeInServer::SIO_TYPE)] == 1;
+    isHccsPlusSio = false;  // rts未适配，不启用
+
+    if (isHccsPlusSio && param.isZeroCopy) {
+        algName = "AllGatherSioHccsExecutor";
+    } else if (multiModuleDiffDeviceNumMode_) {
         algName = "ReduceScatterComm";
     } else if (smallCountOptimMultiServer && !isPowOfTwo &&
         (param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] <= HCCL_SMALL_COUNT_256_KB)) {
         algName = "ReduceScatterComm";
         algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_HD;
-    } else if (smallCountOptimSingleServer || 
-        (smallCountOptimMultiServer && isPowOfTwo&&
+    } else if (smallCountOptimSingleServer ||
+        (smallCountOptimMultiServer && isPowOfTwo &&
         (param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] <= HCCL_SMALL_COUNT_512_KB))) {
         algName = "ReduceScatterDeterExecutor";
     } else if (topoType_ == TopoType::TOPO_TYPE_NP_SINGLE_RING) {
@@ -311,11 +333,12 @@ HcclResult ReduceScatterOperator::SelectAlgfor91093(const OpParam& param, std::s
                 algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_RING;
         }
     } else if (!(algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING || algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB || 
-            (algType_.algoLevel0 == AlgTypeLevel0::ALG_LEVEL0_WHOLE_RING && algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_WHOLE_RING))
+            (algType_.algoLevel0 == AlgTypeLevel0::ALG_LEVEL0_WHOLE_RING && algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_WHOLE_RING) ||
+             algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC ||  algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE)
         && (algName != "ReduceScatterComm" && algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_HD)) {
         // 910_93超节点只支持server间ring,NB和NHR，默认需继续使用NHR
         algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_NHR;
-        HCCL_WARNING("[ReduceScatterOperator][SelectAlgfor91093] only support ring, NB and NHR in AlgoLevel1 yet, "\
+        HCCL_WARNING("[ReduceScatterOperator][SelectAlgfor91093] only support ring, NB AHC and NHR in AlgoLevel1 yet, "\
             "default is algType=NHR.");
     }
 

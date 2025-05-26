@@ -17,7 +17,7 @@
 #include "hccl_aiv.h"
 #include "../../framework/common/src/hashtable/universal_concurrent_map.h"
 #include "workflow_pub.h"
-#include "mem_device_pub.h"
+#include "ccl_buffer_manager.h"
 
 using namespace std;
 using BinHandle = void *;
@@ -29,7 +29,6 @@ extern HcclResult hrtFunctionRegister(BinHandle binHandle, const void *stubFunc,
 
 namespace hccl {
 constexpr u32 SIG_MOVE_LEFT_BITS = 20;
-constexpr u32 BLOCK_DIM_FACTOR_TWO = 2;
 constexpr u32 RANK_ZERO = 0;
 constexpr u32 RANK_ONE = 1;
 constexpr u32 RANK_TWO = 2;
@@ -39,6 +38,7 @@ constexpr u32 RANK_FIVE = 5;
 constexpr u32 RANK_SIX = 6;
 constexpr u32 RANK_SEVEN = 7;
 
+constexpr s32 TAG_RESET_VALUE = 0;
 constexpr s32 TAG_INIT_VALUE = 1;
 constexpr s32 TAG_RESET_COUNT = 1000;
 
@@ -48,6 +48,8 @@ constexpr u32 MAX_BIN_FILE_SIZE = 100 * 1024 * 1024; // 最大读取100m的bin f
 
 constexpr s32 RESET_TAIL_SYNC_TAG = 2;
 constexpr u32 AIV_FLAG_AREA_SIZE = 1024 * 1024;
+
+static UniversalConcurrentMap<std::string, AivTagArray> g_tagMap;
 
 enum class KernelArgsType {
     ARGS_TYPE_SERVER = 0, // kernel参数为单机内
@@ -181,14 +183,21 @@ using AivKernelArgs = struct AivKernelArgsDef {
     bool useAivRdmaSmall;  // 使用aivRdma小数据量kernel，否则使用中数据量kernel
     u32 serverNum;
     u32 devType;
+    const void* headCounterAddr;
+    const void* tailCounterAddr;
+    const void* addOneAddr;
+    u32 counterMemSize;
+    bool isEnableCounter;
 
     AivKernelArgsDef(void** buffIn, void** buffOut, const void* input, const void* output, u32 rank,
         u32 rankSize, u64 len, u32 dataType, u32 reduceOp, u32 root, s32 tag, bool isOpBase = true,
         u64 bufferSize = 200 * 1024 * 1024, s32 aivRdmaStep = -1, bool useAivRdmaSmall = false, u32 serverNum = 1,
-        u32 devType = 2)
+        u32 devType = 2, void* headCounterAddr = nullptr, void* tailCounterAddr = nullptr, void* addOneAddr = nullptr,
+        u32 counterMemSize = 0, bool isEnableCounter = false)
         : input(input), output(output), rank(rank), rankSize(rankSize), len(len), dataType(dataType),
         reduceOp(reduceOp), root(root), tag(tag), isOpBase(isOpBase), bufferSize(bufferSize), aivRdmaStep(aivRdmaStep),
-        useAivRdmaSmall(useAivRdmaSmall), serverNum(serverNum), devType(devType)
+        useAivRdmaSmall(useAivRdmaSmall), serverNum(serverNum), devType(devType), headCounterAddr(headCounterAddr),
+        tailCounterAddr(tailCounterAddr), addOneAddr(addOneAddr), counterMemSize(counterMemSize), isEnableCounter(isEnableCounter)
     {
         for (u32 i = 0; i < MAX_RANK_SIZE; i++) {
             buffersIn[i] = (u8 *) buffIn[i];
@@ -215,15 +224,22 @@ using AivExtraKernelArgs = struct AivExtraKernelArgsDef {
     bool useAivRdmaSmall;  // 使用aivRdma小数据量kernel，否则使用中数据量kernel
     u32 serverNum;
     u32 devType;
+    const void* headCounterAddr;
+    const void* tailCounterAddr;
+    const void* addOneAddr;
+    u32 counterMemSize;
+    bool isEnableCounter;
     ExtraArgs extraArgs; // A2/A3单机
 
     AivExtraKernelArgsDef(void** buffIn, void** buffOut, const void* input, const void* output, u32 rank,
         u32 rankSize, u64 len, u32 dataType, u32 reduceOp, u32 root, s32 tag, bool isOpBase = true,
         u64 bufferSize = 200 * 1024 * 1024, s32 aivRdmaStep = -1, bool useAivRdmaSmall = false, u32 serverNum = 1,
-        u32 devType = 2, const ExtraArgs* extraArgsPtr = nullptr)
+        u32 devType = 2, void* headCounterAddr = nullptr, void* tailCounterAddr = nullptr, void* addOneAddr = nullptr,
+        u32 counterMemSize = 0, bool isEnableCounter = false, const ExtraArgs* extraArgsPtr = nullptr)
         : input(input), output(output), rank(rank), rankSize(rankSize), len(len), dataType(dataType),
         reduceOp(reduceOp), root(root), tag(tag), isOpBase(isOpBase), bufferSize(bufferSize), aivRdmaStep(aivRdmaStep),
-        useAivRdmaSmall(useAivRdmaSmall), serverNum(serverNum), devType(devType)
+        useAivRdmaSmall(useAivRdmaSmall), serverNum(serverNum), devType(devType), headCounterAddr(headCounterAddr),
+        tailCounterAddr(tailCounterAddr), addOneAddr(addOneAddr), counterMemSize(counterMemSize), isEnableCounter(isEnableCounter)
     {
         for (u32 i = 0; i < MAX_RANK_SIZE; i++) {
             buffersIn[i] = (u8 *) buffIn[i];
@@ -253,15 +269,22 @@ using AivExtraKernelArgsV2 = struct AivExtraKernelArgsV2Def {
     bool useAivRdmaSmall;  // 使用aivRdma小数据量kernel，否则使用中数据量kernel
     u32 serverNum;
     u32 devType;
+    const void* headCounterAddr;
+    const void* tailCounterAddr;
+    const void* addOneAddr;
+    u32 counterMemSize;
+    bool isEnableCounter;
     ExtraArgsV2 extraArgs; // A3超节点内多机
 
     AivExtraKernelArgsV2Def(void** buffIn, void** buffOut, const void* input, const void* output, u32 rank,
         u32 rankSize, u64 len, u32 dataType, u32 reduceOp, u32 root, s32 tag, bool isOpBase = true,
         u64 bufferSize = 200 * 1024 * 1024, s32 aivRdmaStep = -1, bool useAivRdmaSmall = false, u32 serverNum = 1,
-        u32 devType = 2, const ExtraArgsV2* extraArgsPtr = nullptr)
+        u32 devType = 2, void* headCounterAddr = nullptr, void* tailCounterAddr = nullptr, void* addOneAddr = nullptr,
+        u32 counterMemSize = 0, bool isEnableCounter = false, const ExtraArgsV2* extraArgsPtr = nullptr)
         : input(input), output(output), rank(rank), rankSize(rankSize), len(len), dataType(dataType),
         reduceOp(reduceOp), root(root), tag(tag), isOpBase(isOpBase), bufferSize(bufferSize), aivRdmaStep(aivRdmaStep),
-        useAivRdmaSmall(useAivRdmaSmall), serverNum(serverNum), devType(devType)
+        useAivRdmaSmall(useAivRdmaSmall), serverNum(serverNum), devType(devType), headCounterAddr(headCounterAddr),
+        tailCounterAddr(tailCounterAddr), addOneAddr(addOneAddr), counterMemSize(counterMemSize), isEnableCounter(isEnableCounter)
     {
         for (u32 i = 0; i < MAX_RANK_SIZE; i++) {
             buffersIn[i] = (u8 *) buffIn[i];
@@ -421,61 +444,6 @@ HcclResult RegisterKernel(DevType deviceType)
     return HCCL_SUCCESS;
 }
 
-u32 GetBlockDim(HcclCMDType cmdType, u32 rankSize, u64 dataSize, bool isOpBase, s32 aivRdmaStep, u32 serverNum,
-    DevType devType)
-{
-    u32 blockDim = rankSize; // 默认情况使用rankSize个AIV
-
-    if (cmdType == HcclCMDType::HCCL_CMD_ALLTOALL) {
-        if (devType == DevType::DEV_TYPE_910_93 && serverNum > 1) { // block_num需要为偶数
-            blockDim = (rankSize < MAX_BLOCK_DIM ? rankSize + rankSize % BLOCK_DIM_FACTOR_TWO : MAX_BLOCK_DIM);
-        } else if (isOpBase && dataSize >= AIV_ALL_TO_ALL_BIG_SIZE) {
-            blockDim = BLOCK_DIM_FACTOR_TWO * rankSize; // 单机场景，单算子AlltoAll使用2倍 rankSize个aiv
-        }
-    } else if (cmdType == HcclCMDType::HCCL_CMD_ALLTOALLVC || cmdType == HcclCMDType::HCCL_CMD_ALLTOALLV) {
-        if (devType == DevType::DEV_TYPE_910_93 && serverNum > 1) { // A3超节点内多机场景，block_num需要为偶数
-            blockDim = (rankSize < MAX_BLOCK_DIM ? rankSize + rankSize % BLOCK_DIM_FACTOR_TWO : MAX_BLOCK_DIM);
-        } else if (devType == DevType::DEV_TYPE_910_93 && isOpBase && cmdType == HcclCMDType::HCCL_CMD_ALLTOALLV) {
-            // A3单机单算子场景，block_num为3倍或者4倍的ranksize
-            blockDim = rankSize * BLOCK_DIM_FOUR_PER_RANK_A3 > MAX_BLOCK_DIM ?
-                rankSize * BLOCK_DIM_THREE_PER_RANK_A3 : rankSize * BLOCK_DIM_FOUR_PER_RANK_A3;
-        } else if (isOpBase && aivRdmaStep == -1) { // 多机场景，AlltoAll使用rankSize个aiv
-            blockDim = BLOCK_DIM_FACTOR_TWO * rankSize; // 单机场景，单算子AlltoAll使用2倍 rankSize个aiv
-        }
-    } else if (cmdType == HcclCMDType::HCCL_CMD_ALLREDUCE) {
-        if (isOpBase && dataSize >= AIV_ALL_REDUCE_BIG_SIZE && aivRdmaStep < 0) {
-            blockDim = BLOCK_DIM_FACTOR_TWO * rankSize; // 单机场景，单算子AllReduce大数据使用2倍 rankSize个aiv
-        }
-    } else if (cmdType == HcclCMDType::HCCL_CMD_REDUCE_SCATTER) {
-        if (aivRdmaStep >= 0) {
-            blockDim = rankSize; // 多机场景，单算子ReduceScatter使用rankSize个aiv
-        } else if (devType == DevType::DEV_TYPE_910_93 && !isOpBase) {
-            blockDim = rankSize * BLOCK_DIM_FOUR_PER_RANK_A3 > MAX_BLOCK_DIM ?
-                rankSize * BLOCK_DIM_THREE_PER_RANK_A3 : rankSize * BLOCK_DIM_FOUR_PER_RANK_A3;
-        } else if (isOpBase && dataSize > AIV_REDUCE_SCATTER_MID_SIZE) {
-            blockDim = BLOCK_DIM_FACTOR_TWO * rankSize; // 单机场景，单算子ReduceScatter大数据使用2倍 rankSize个aiv
-        }
-    } else if (cmdType == HcclCMDType::HCCL_CMD_REDUCE_SCATTER_V) {
-        if (isOpBase && dataSize > AIV_REDUCE_SCATTER_MID_SIZE) {
-            blockDim = BLOCK_DIM_FACTOR_TWO * rankSize; // 单机场景，单算子ReduceScatter大数据使用2倍 rankSize个aiv
-        }
-    } else if (cmdType == HcclCMDType::HCCL_CMD_ALLGATHER) {
-        if (devType == DevType::DEV_TYPE_910_93 && !isOpBase) {
-            blockDim = rankSize * BLOCK_DIM_FOUR_PER_RANK_A3 > MAX_BLOCK_DIM ?
-                rankSize * BLOCK_DIM_THREE_PER_RANK_A3 : rankSize * BLOCK_DIM_FOUR_PER_RANK_A3;
-        } else if (isOpBase && dataSize > AIV_ALL_GATHER_SMALL_SIZE) {
-            blockDim += 1; // 单机场景，单算子AllGather大数据使用(rankSize + 1)个aiv
-        } 
-    } else if (cmdType == HcclCMDType::HCCL_CMD_ALLGATHER_V) {
-        if (isOpBase && dataSize > AIV_ALL_GATHER_SMALL_SIZE) {
-            blockDim += 1; // 单机场景，单算子AllGather大数据使用(rankSize + 1)个aiv
-        }
-    }
-
-    HCCL_INFO("[AIV][GetBlockDim] blockDim is set to [%u]", blockDim);
-    return blockDim;
-}
-
 HcclResult ExtractIdentifier(const std::string &tagKey, bool isOpBase, std::string &res)
 {
     HCCL_DEBUG("[AIV][ExtractIdentifier] tagKey is [%s]", tagKey.c_str());
@@ -530,9 +498,42 @@ HcclResult ClearAivSyncBuf(void** cclBuffersOut, u32 rank, u32 rankSize, rtStrea
     return HCCL_SUCCESS;
 }
 
+HcclResult ClearAivSyncBufAndTag(DeviceMem &inAIVbuffer, DeviceMem &outAIVbuffer,
+    const std::string &identifier, u32 rank, u32 devId)
+{
+    if (rank >= MAX_RANK_SIZE || inAIVbuffer.ptr() == nullptr || outAIVbuffer.ptr() == nullptr) {
+        HCCL_ERROR("[AIV][ClearAivSyncBufAndTag] rank[%u] or aiv buffer ptr is invaid", rank);
+        return HCCL_E_PARA;
+    }
+
+    s64 inAIVFlagOffset = AIV_DATA_SIZE - AIV_FLAG_SIZE;
+    CHK_RET(hrtMemSet(static_cast<u8 *>(inAIVbuffer.ptr()) + inAIVFlagOffset,
+        inAIVbuffer.size() - inAIVFlagOffset, AIV_FLAG_SIZE));
+    HCCL_INFO("[AIV][ClearAivSyncBufAndTag] clear in aiv buffer done");
+
+    CHK_RET(hrtMemSet(outAIVbuffer.ptr(), outAIVbuffer.size(), AIV_FLAG_SIZE));
+    HCCL_INFO("[AIV][ClearAivSyncBufAndTag] clear out aiv buffer done");
+
+    auto tagIt = g_tagMap.Find(identifier);
+    if (!tagIt.second) {
+        HCCL_ERROR("[AIV][ClearAivSyncBufAndTag] invalid identifier[%s]", identifier.c_str());
+        return HCCL_E_NOT_FOUND;
+    }
+
+    AivTagArray &tags = tagIt.first->second;
+    u32 tagRank = rank;
+    if (devId != MAX_RANK_SIZE) {
+        tagRank = devId;
+    }
+    HCCL_DEBUG("[AIV][ClearAivSyncBufAndTag]devId[%u] tagRank[%u], value[%d]", devId, tagRank, tags[tagRank]);
+    tags[tagRank] = TAG_RESET_VALUE;
+
+    HCCL_INFO("[AIV][ClearAivSyncBufAndTag] clear aiv tag done");
+    return HCCL_SUCCESS;
+}
+
 HcclResult GetTag(const std::string &tagKey, u32 rank, u32 devId, bool isOpBase, s32 &tag)
 {
-    static UniversalConcurrentMap<std::string, AivTagArray> tagMap;
     auto builder = []() -> AivTagArray {
         AivTagArray array;
         array.fill(0);
@@ -542,12 +543,12 @@ HcclResult GetTag(const std::string &tagKey, u32 rank, u32 devId, bool isOpBase,
     std::string tagId;
     CHK_RET(ExtractIdentifier(tagKey, isOpBase, tagId));
     std::pair<UniversalConcurrentMap<std::string, AivTagArray>::Iterator, bool> tagIt;
-    EXECEPTION_CATCH(tagIt = tagMap.EmplaceIfNotExist(tagId, builder), return HCCL_E_INTERNAL);
+    EXECEPTION_CATCH(tagIt = g_tagMap.EmplaceIfNotExist(tagId, builder), return HCCL_E_INTERNAL);
     if (tagIt.second) {
-        HCCL_DEBUG("[AIV][GetTag]tagMap new insert, tagId[%s]", tagId.c_str());
+        HCCL_DEBUG("[AIV][GetTag]g_tagMap new insert, tagId[%s]", tagId.c_str());
     }
 
-    AivTagArray &tags = tagMap[tagId];
+    AivTagArray &tags = g_tagMap[tagId];
     u32 tagRank = rank;
     if (devId != MAX_RANK_SIZE) {
         tagRank = devId;
@@ -588,15 +589,10 @@ HcclResult ExecuteKernelLaunchInner(const AivOpArgs &opArgs, const AivTopoArgs &
         argsType = KernelArgsType::ARGS_TYPE_SUPERPOD;
     }
 
-    u32 perDataSize = SIZE_TABLE[opArgs.dataType];
-    u64 dataSize = opArgs.count * perDataSize;
-    u32 blockDim = GetBlockDim(opArgs.cmdType, topoArgs.rankSize, dataSize, opArgs.isOpBase, algArgs.step,
-        topoArgs.serverNum, topoArgs.devType);
-
     rtTaskCfgInfo_t taskCfgInfo = { 0, 0, 1 };
     rtArgsEx_t argsEx { args, nullptr, argsSize, 0, 0, 0, 0, 0 };
     HcclResult ret = hrtKernelLaunchWithFlagV2(GetStubFunc(opArgs.cmdType, opArgs.dataType, argsType),
-        blockDim, &argsEx, nullptr, resourceArgs.stream, 0, &taskCfgInfo);
+        resourceArgs.blockDim, &argsEx, nullptr, resourceArgs.stream, 0, &taskCfgInfo);
 
     if (opArgs.isOpBase && (topoArgs.devType == DevType::DEV_TYPE_910B || topoArgs.serverNum == 1)) {
         if (tag == TAG_RESET_COUNT) { // 当前仅A2场景或者A3单机可以使用统一清零机制
@@ -605,7 +601,7 @@ HcclResult ExecuteKernelLaunchInner(const AivOpArgs &opArgs, const AivTopoArgs &
             SetWorkflowMode(HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
         }
     }
-    aivProfilingInfo.blockDim = blockDim;
+    aivProfilingInfo.blockDim = resourceArgs.blockDim;
     aivProfilingInfo.tag = tag;
 
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[AIV][ExecuteKernelLaunch] errNo[0x%016llx] rtKernelLaunch aiv fail, "
@@ -629,7 +625,9 @@ HcclResult ExecuteKernelLaunch(const AivOpArgs &opArgs, const AivTopoArgs &topoA
         resourceArgs.buffersIn,resourceArgs.buffersOut, opArgs.input, opArgs.output,
         topoArgs.rank, topoArgs.rankSize, opArgs.count, opArgs.dataType, opArgs.op, opArgs.root, tag,
         opArgs.isOpBase, resourceArgs.bufferSize, algArgs.step, algArgs.isSmallCount, topoArgs.serverNum,
-        static_cast<u32>(topoArgs.devType)
+        static_cast<u32>(topoArgs.devType), reinterpret_cast<void*>(aivProfilingInfo.counter.headCountMem),
+        reinterpret_cast<void*>(aivProfilingInfo.counter.tailCountMem), reinterpret_cast<void*>(aivProfilingInfo.counter.addOneMem),
+        aivProfilingInfo.counter.memSize, aivProfilingInfo.counter.isEnableCounter
     };
     CHK_RET(ExecuteKernelLaunchInner(opArgs, topoArgs, resourceArgs, algArgs, tag, &aivKernelArgs,
         sizeof(aivKernelArgs), aivProfilingInfo));
@@ -653,7 +651,9 @@ HcclResult ExecuteKernelLaunch(const AivOpArgs &opArgs, const AivTopoArgs &topoA
         resourceArgs.buffersIn, resourceArgs.buffersOut, opArgs.input, opArgs.output,
         topoArgs.rank, topoArgs.rankSize, opArgs.count, opArgs.dataType, opArgs.op, opArgs.root, tag,
         opArgs.isOpBase, resourceArgs.bufferSize, algArgs.step, algArgs.isSmallCount, topoArgs.serverNum,
-        static_cast<u32>(topoArgs.devType), &extraArgs
+        static_cast<u32>(topoArgs.devType), reinterpret_cast<void*>(aivProfilingInfo.counter.headCountMem),
+        reinterpret_cast<void*>(aivProfilingInfo.counter.tailCountMem), reinterpret_cast<void*>(aivProfilingInfo.counter.addOneMem),
+        aivProfilingInfo.counter.memSize, aivProfilingInfo.counter.isEnableCounter, &extraArgs
     };
     CHK_RET(ExecuteKernelLaunchInner(opArgs, topoArgs, resourceArgs, algArgs, tag, &aivExtraKernelArgs,
         sizeof(aivExtraKernelArgs), aivProfilingInfo));
@@ -677,7 +677,9 @@ HcclResult ExecuteKernelLaunch(const AivOpArgs &opArgs, const AivTopoArgs &topoA
         resourceArgs.buffersIn, resourceArgs.buffersOut, opArgs.input, opArgs.output,
         topoArgs.rank, topoArgs.rankSize, opArgs.count, opArgs.dataType, opArgs.op, opArgs.root, tag,
         opArgs.isOpBase, resourceArgs.bufferSize, algArgs.step, algArgs.isSmallCount, topoArgs.serverNum,
-        static_cast<u32>(topoArgs.devType), &extraArgs
+        static_cast<u32>(topoArgs.devType), reinterpret_cast<void*>(aivProfilingInfo.counter.headCountMem),
+        reinterpret_cast<void*>(aivProfilingInfo.counter.tailCountMem), reinterpret_cast<void*>(aivProfilingInfo.counter.addOneMem),
+        aivProfilingInfo.counter.memSize, aivProfilingInfo.counter.isEnableCounter, &extraArgs
     };
     CHK_RET(ExecuteKernelLaunchInner(opArgs, topoArgs, resourceArgs, algArgs, tag, &aivExtraKernelArgs,
         sizeof(aivExtraKernelArgs), aivProfilingInfo));

@@ -8,18 +8,17 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-#ifndef COLL_ALLREDUCE_MESH_OPBASE_BIG_COUNT_AIV_EXECUTOR_H
-#define COLL_ALLREDUCE_MESH_OPBASE_BIG_COUNT_AIV_EXECUTOR_H
+#ifndef COLL_ALLTOALL_MESH_AIV_EXECUTOR_H
+#define COLL_ALLTOALL_MESH_AIV_EXECUTOR_H
 
-#include "coll_all_reduce_executor.h"
+#include "coll_all_to_all_executor.h"
 #include "hccl_aiv.h"
 
 namespace hccl {
-class CollAllReduceMeshOpbaseBigCountAivExecutor : public CollAllReduceExecutor {
+class CollAlltoAllMeshAivSmallCountExecutor : public CollAlltoAllExecutor {
 public:
-    CollAllReduceMeshOpbaseBigCountAivExecutor(const HcclDispatcher dispatcher,
-                                               std::unique_ptr<TopoMatcher> &topoMatcher);
-    ~CollAllReduceMeshOpbaseBigCountAivExecutor() = default;
+    explicit CollAlltoAllMeshAivSmallCountExecutor(const HcclDispatcher dispatcher, std::unique_ptr<TopoMatcher> &topoMatcher);
+    ~CollAlltoAllMeshAivSmallCountExecutor() override = default;
 
     HcclResult Orchestrate(OpParam& param, AlgResourceResponse& algRes) override;
 private:
@@ -31,6 +30,7 @@ private:
         TransportMemType outputType,
         std::vector<LevelNSubCommTransport>& opTransport) override;
     HcclResult CalcTransportMemType(TransportMemType &inputType, TransportMemType &outputType);
+    u32 CalBlockDim(u32 rankSize, u64 dataSize = 0, HcclCMDType cmdType = HcclCMDType::HCCL_CMD_INVALID) override;
 
     /* *************** 算法编排 *************** */
     HcclResult KernelRun(const OpParam &param, ExecMem &execMem) override;

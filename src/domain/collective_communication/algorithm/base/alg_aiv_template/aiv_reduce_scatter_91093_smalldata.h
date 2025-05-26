@@ -24,7 +24,8 @@ public:
                                 GM_ADDR buffOut6, GM_ADDR buffOut7, GM_ADDR buffOut8, GM_ADDR buffOut9,
                                 GM_ADDR buffOut10, GM_ADDR buffOut11, GM_ADDR buffOut12, GM_ADDR buffOut13,
                                 GM_ADDR buffOut14, GM_ADDR buffOut15, uint32_t rank, uint32_t rankSize,
-                                uint32_t dataType, uint32_t reduceOp, uint32_t root)
+                                uint32_t dataType, uint32_t reduceOp, uint32_t root, GM_ADDR headCountMem, GM_ADDR tailCountMem,
+                                GM_ADDR addOneMem, uint32_t counterMemSize, bool isEnableCounter)
     {
         InitBuffArray(buffIn0, buffIn1, buffIn2, buffIn3, buffIn4,
                 buffIn5, buffIn6, buffIn7, buffIn8, buffIn9,
@@ -45,6 +46,7 @@ public:
         localFlagTensor = localFlagBuf.Get<int32_t>();
 
         pipe.InitBuffer(inOutQue, DOUBLE, UB_DB_DATA_BATCH_SIZE); // double buffer
+        InitOpCounter(headCountMem, tailCountMem, addOneMem, counterMemSize, isEnableCounter);
     }
 
     template<typename T>
@@ -147,5 +149,7 @@ __aicore__ inline void aiv_reduce_scatter_91093_smalldata(KERNEL_ARGS_DEF)
 {
     AivReduceScatterSmall91093 op;
     op.Init(KERNEL_CLASS_INIT);
+    op.HeadCounter();
     op.Process<T>(input, output, len, tag);
+    op.TailCounter();
 }

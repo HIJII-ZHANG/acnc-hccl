@@ -1179,8 +1179,7 @@ bool HcclCommunicatorAttrs::IsEnableRoce()
     bool roceSwitch = IsSupportEnableRoce();
     bool isInterServerVnic = false;
     // 910_93超节点内节点间走HCCS通信 && Vnic建链, 不需要使能NIC
-    if (useSuperPodMode_ && superPodNum_ == 1 &&
-        GetExternalInputInterHccsDisable() == false && GetExternalInputInterVnicDisable() == false) {
+    if (useSuperPodMode_ && superPodNum_ == 1 && GetExternalInputInterHccsDisable() == false) {
         isInterServerVnic = true;
     }
     bool ret = (interServer_ && !isInterServerVnic) || roceSwitch;

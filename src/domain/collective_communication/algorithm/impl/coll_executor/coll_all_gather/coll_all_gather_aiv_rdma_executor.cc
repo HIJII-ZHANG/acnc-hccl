@@ -53,6 +53,13 @@ HcclResult CollAllGatherAivRdmaExecutor::CalcLevel0CommInfo(TransportMemType inp
     return HCCL_SUCCESS;
 }
 
+u32 CollAllGatherAivRdmaExecutor::CalBlockDim(u32 rankSize, u64 dataSize, HcclCMDType cmdType)
+{
+    u32 blockDim = rankSize; // 默认情况使用rankSize个AIV
+    HCCL_INFO("[CollAllGatherAivRdmaExecutor][CalBlockDim] blockDim is set to [%u]", blockDim);
+    return blockDim;
+}
+
 HcclResult CollAllGatherAivRdmaExecutor::Orchestrate(OpParam& param, AlgResourceResponse& algRes)
 {
     HcclUs startut = TIME_NOW();
@@ -210,10 +217,13 @@ HcclResult CollAllGatherAivRdmaExecutor::KernelRun(const OpParam &param, ExecMem
         localRank, localRankSize, topoAttr_.isDiffDeviceModule ? topoAttr_.devicePhyId : A_X_SIZE,
         0, serverNum, topoAttr_.deviceType
     };
-    AivResourceArgs resourceArgs { param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size() };
+    blockDim_ = CalBlockDim(localRankSize);
+    AivResourceArgs resourceArgs {
+        param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size(), blockDim_
+    };
     AivAlgArgs algArgs {0};
     struct AivProfilingInfo aivProfilingInfo;
-
+    aivProfilingInfo.counter = opCounter_;
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
         HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
         HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
@@ -229,8 +239,6 @@ HcclResult CollAllGatherAivRdmaExecutor::KernelRun(const OpParam &param, ExecMem
         HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());
         HCCL_PROFILER_DEL_TAG(param.tag);
     }
-
-    blockDim_ = aivProfilingInfo.blockDim;
 
     HCCL_INFO("[CollAllGatherAivRdmaExecutor][KernelRun]allGather aiv run success");
     return HCCL_SUCCESS;

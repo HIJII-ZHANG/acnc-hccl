@@ -8,35 +8,34 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-#include "coll_all_reduce_mesh_opbase_big_count_aiv_executor.h"
-#include "alg_profiling.h"
+#include "coll_all_reduce_mesh_aiv_smallcount_executor.h"
 
 namespace hccl {
 
-CollAllReduceMeshOpbaseBigCountAivExecutor::CollAllReduceMeshOpbaseBigCountAivExecutor(const HcclDispatcher dispatcher,
+CollAllReduceMeshAivSmallCountExecutor::CollAllReduceMeshAivSmallCountExecutor(const HcclDispatcher dispatcher,
     std::unique_ptr<TopoMatcher> &topoMatcher): CollAllReduceExecutor(dispatcher, topoMatcher)
 {
     DMAReduceFlag_ = false;
 }
 
-HcclResult CollAllReduceMeshOpbaseBigCountAivExecutor::CalcStreamNum(u32& streamNum)
+HcclResult CollAllReduceMeshAivSmallCountExecutor::CalcStreamNum(u32& streamNum)
 {
     streamNum = 0; // AIV通信不需要申请从流
-    HCCL_INFO("[CollAllReduceMeshOpbaseBigCountAivExecutor][CalcStreamNum] tag[%s] streamNum[%u].",
+    HCCL_INFO("[CollAllReduceMeshAivSmallCountExecutor][CalcStreamNum] tag[%s] streamNum[%u]",
         tag_.c_str(), streamNum);
     return HCCL_SUCCESS;
 }
 
-HcclResult CollAllReduceMeshOpbaseBigCountAivExecutor::GetIfNeedAivBuffer(bool &needAivBuffer)
+HcclResult CollAllReduceMeshAivSmallCountExecutor::GetIfNeedAivBuffer(bool &needAivBuffer)
 {
     // AIV通信需要AIV buffer
     needAivBuffer = true;
-    HCCL_INFO("[CollAllReduceMeshOpbaseBigCountAivExecutor][GetIfNeedAivBuffer]tag[%s] needAivBuffer is [%u].",
+    HCCL_INFO("[CollAllReduceMeshAivSmallCountExecutor][GetIfNeedAivBuffer]tag[%s] needAivBuffer is [%u].",
         tag_.c_str(), needAivBuffer);
     return HCCL_SUCCESS;
 }
 
-HcclResult CollAllReduceMeshOpbaseBigCountAivExecutor::CalcCommInfo(std::vector<LevelNSubCommTransport>& opTransport)
+HcclResult CollAllReduceMeshAivSmallCountExecutor::CalcCommInfo(std::vector<LevelNSubCommTransport>& opTransport)
 {
     TransportMemType inputType = TransportMemType::RESERVED;
     TransportMemType outputType = TransportMemType::RESERVED;
@@ -45,17 +44,17 @@ HcclResult CollAllReduceMeshOpbaseBigCountAivExecutor::CalcCommInfo(std::vector<
     return HCCL_SUCCESS;
 }
 
-HcclResult CollAllReduceMeshOpbaseBigCountAivExecutor::CalcTransportMemType(TransportMemType &inputType,
+HcclResult CollAllReduceMeshAivSmallCountExecutor::CalcTransportMemType(TransportMemType &inputType,
     TransportMemType &outputType)
 {
-    inputType = TransportMemType::CCL_INPUT;
+    inputType = TransportMemType::AIV_INPUT;
     outputType = TransportMemType::AIV_OUTPUT;
-    HCCL_INFO("[CollAllReduceMeshOpbaseBigCountAivExecutor][CalcTransportMemType] tag[%s] inputType[%d],"
+    HCCL_INFO("[CollAllReduceMeshAivSmallCountExecutor][CalcTransportMemType] tag[%s] inputType[%d],"
         " outputType[%d].", tag_.c_str(), inputType, outputType);
     return HCCL_SUCCESS;
 }
 
-HcclResult CollAllReduceMeshOpbaseBigCountAivExecutor::CalcLevel0CommInfo(TransportMemType inputType,
+HcclResult CollAllReduceMeshAivSmallCountExecutor::CalcLevel0CommInfo(TransportMemType inputType,
     TransportMemType outputType,
     std::vector<LevelNSubCommTransport>& opTransport)
 {
@@ -65,7 +64,14 @@ HcclResult CollAllReduceMeshOpbaseBigCountAivExecutor::CalcLevel0CommInfo(Transp
     return HCCL_SUCCESS;
 }
 
-HcclResult CollAllReduceMeshOpbaseBigCountAivExecutor::Orchestrate(OpParam& param, AlgResourceResponse& algRes)
+u32 CollAllReduceMeshAivSmallCountExecutor::CalBlockDim(u32 rankSize, u64 dataSize, HcclCMDType cmdType)
+{
+    u32 blockDim = rankSize; // 默认情况使用rankSize个AIV
+    HCCL_INFO("[CollAllReduceMeshAivSmallCountExecutor][CalBlockDim] blockDim is set to [%u]", blockDim);
+    return blockDim;
+}
+
+HcclResult CollAllReduceMeshAivSmallCountExecutor::Orchestrate(OpParam& param, AlgResourceResponse& algRes)
 {
     HcclUs startut = TIME_NOW();
     tag_ = param.tag;
@@ -77,14 +83,14 @@ HcclResult CollAllReduceMeshOpbaseBigCountAivExecutor::Orchestrate(OpParam& para
     execMem.inputPtr = param.inputPtr;
     execMem.outputPtr = param.outputPtr;
 
-    // 单算子大数据量
-    execMem.inputMem = algRes.cclInputMem; // 仍然使用CCLIN
+    // 小数据量都用aiv
+    execMem.inputMem = algRes.aivInputMem;
     execMem.outputMem = algRes.aivOutputMem;
     execMem.scratchMem = algRes.scratchMem; // 不需要
     ret = KernelRun(param, execMem);
 
     CHK_PRT_RET(ret != HCCL_SUCCESS,
-        HCCL_ERROR("[CollAllReduceMeshOpbaseBigCountAivExecutor][Orchestrate]errNo[0x%016llx] tag[%s] excutor kernel "
+        HCCL_ERROR("[CollAllReduceMeshAivSmallCountExecutor][Orchestrate]errNo[0x%016llx] tag[%s] excutor kernel "
             "run failed", HCCL_ERROR_CODE(ret), param.tag.c_str()), ret);
 
     HCCL_INFO("tag[%s], AllReduce executor orchestrate success, take time [%lld]us.",
@@ -92,9 +98,9 @@ HcclResult CollAllReduceMeshOpbaseBigCountAivExecutor::Orchestrate(OpParam& para
     return HCCL_SUCCESS;
 }
 
-HcclResult CollAllReduceMeshOpbaseBigCountAivExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
+HcclResult CollAllReduceMeshAivSmallCountExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollAllReduceMeshOpbaseBigCountAivExecutor][KernelRun]allreduce aiv enter.");
+    HCCL_INFO("[CollAllReduceMeshAivSmallCountExecutor][KernelRun]allreduce aiv enter.");
 
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
     SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
@@ -104,8 +110,7 @@ HcclResult CollAllReduceMeshOpbaseBigCountAivExecutor::KernelRun(const OpParam &
 
     u32 localRank = level0CommInfo.localRank;
     u32 localRankSize = level0CommInfo.localRankSize;
-    HCCL_DEBUG("[CollAllReduceMeshOpbaseBigCountAivExecutor][KernelRun] userRank [%u] localRank [%u].",
-        topoAttr_.userRank, localRank);
+    HCCL_DEBUG("[CollAllReduceMeshAivSmallCountExecutor][KernelRun] userRank [%u] localRank [%u]", topoAttr_.userRank, localRank);
 
     for (u32 i = 0; i < localRankSize; i++) {
         if (i != localRank) {
@@ -126,18 +131,21 @@ HcclResult CollAllReduceMeshOpbaseBigCountAivExecutor::KernelRun(const OpParam &
         HcclCMDType::HCCL_CMD_ALLREDUCE, execMem.inputPtr, execMem.outputPtr, execMem.count,
         param.DataDes.dataType, param.reduceType, 0, isOpbase
     };
-    AivTopoArgs topoArgs { localRank, localRankSize };
-    AivResourceArgs resourceArgs { param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size() };
+    AivTopoArgs topoArgs { localRank, localRankSize, MAX_RANK_SIZE, 0, 1, topoAttr_.deviceType };
+    blockDim_ = CalBlockDim(localRankSize);
+    AivResourceArgs resourceArgs {
+        param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size(), blockDim_
+    };
     AivAlgArgs algArgs {};
     struct AivProfilingInfo aivProfilingInfo;
-    
+    aivProfilingInfo.counter = opCounter_;
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
         HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
         HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
     }
 
     HcclResult ret = ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, aivProfilingInfo);
-
+    
     TaskAivProfiler(opArgs.cmdType, aivProfilingInfo.tag, opArgs.count * sizeof(opArgs.dataType),
         aivProfilingInfo.blockDim, topoArgs.rankSize, resourceArgs.buffersOut[topoArgs.rank], resourceArgs.stream,
         algArgs.step, aivProfilingInfo.beginTime);
@@ -146,16 +154,15 @@ HcclResult CollAllReduceMeshOpbaseBigCountAivExecutor::KernelRun(const OpParam &
         HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());
         HCCL_PROFILER_DEL_TAG(param.tag);
     }
-    blockDim_ = aivProfilingInfo.blockDim;
-    CHK_PRT_RET(ret != HCCL_SUCCESS,
-        HCCL_ERROR("[CollAllReduceMeshOpbaseBigCountAivExecutor][KernelRun]allreduce aiv failed, return[%d]", ret),
-        ret);
 
-    HCCL_INFO("[CollAllReduceMeshOpbaseBigCountAivExecutor][KernelRun]allreduce aiv run success.");
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[CollAllReduceMeshAivSmallCountExecutor][KernelRun]allreduce aiv failed, return[%d]", ret), ret);
+
+    HCCL_INFO("[CollAllReduceMeshAivSmallCountExecutor][KernelRun]allreduce aiv run success.");
     return HCCL_SUCCESS;
 }
 
-REGISTER_EXEC("AllReduceMeshOpbaseBigCountAivExecutor", AllReduceMeshOpbaseBigCountAiv,
-    CollAllReduceMeshOpbaseBigCountAivExecutor);
+REGISTER_EXEC("AllReduceMeshAivSmallCountExecutor", AllReduceMeshAivSmallCount,
+    CollAllReduceMeshAivSmallCountExecutor);
 
 } // namespace hccl

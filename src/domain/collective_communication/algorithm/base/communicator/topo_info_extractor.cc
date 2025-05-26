@@ -68,7 +68,7 @@ HcclResult TopoInfoExtractor::Init()
     // 参数有效性校验
     CHK_RET(CheckInitInfo());
 
-    // 初始化 AHC 相关标记
+    // 初始化 AHC 相关信息
     InitAHCConfig();
 
     // 填充必要数据结构
@@ -585,7 +585,7 @@ HcclResult TopoInfoExtractor::SetTopoInfoForLevel1(bool prepareAHC)
     HCCL_INFO("[Set][TopoInfoForLevel1] topoType_[%u] ringSize[%u]",topoType_, ringSize);
 
     // 计算每个 level 环的超节点分组，每个环都一致，只计算一次
-    std::vector<std::string> IdsForIndexingVector;
+    std::vector<std::string> idsForIndexingVector;
     std::map<std::string, std::vector<u32>> aggregatedSubGroup;
     bool calcGroupDone = false;
 
@@ -637,7 +637,7 @@ HcclResult TopoInfoExtractor::SetTopoInfoForLevel1(bool prepareAHC)
                     if (itIndex != aggregatedSubGroup.end()) {
                         itIndex->second.push_back(subGroupIndex);
                     } else {
-                        IdsForIndexingVector.push_back(IdForIndexing);
+                        idsForIndexingVector.push_back(IdForIndexing);
                         std::vector<u32> subGroup;
                         subGroup.push_back(subGroupIndex);
                         aggregatedSubGroup.insert(std::make_pair(IdForIndexing, subGroup));
@@ -670,9 +670,9 @@ HcclResult TopoInfoExtractor::SetTopoInfoForLevel1(bool prepareAHC)
         // 4、填充当前 level 的通信域内分组信息（用于层次化算法）
         if (!calcGroupDone) {
             std::vector<std::vector<u32>> SubGroups;
-            for (u32 i = 0; i < IdsForIndexingVector.size(); i++) {
-                std::string IdForIndexing = IdsForIndexingVector[i];
-                SubGroups.push_back(aggregatedSubGroup[IdForIndexing]);
+            for (u32 i = 0; i < idsForIndexingVector.size(); i++) {
+                std::string idForIndexing = idsForIndexingVector[i];
+                SubGroups.push_back(aggregatedSubGroup[idForIndexing]);
             }
             CommPlaneSubGroupVector_[commPlaneLevel1].push_back(SubGroups);
             calcGroupDone = true;
@@ -1155,6 +1155,7 @@ void TopoInfoExtractor::InitAHCConfig()
             break;
         }
     }
+    CommAHCBaseInfo::InitConcAlgOption(ahcAlgOption_);
     return;
 }
 
@@ -1182,23 +1183,25 @@ void TopoInfoExtractor::AHCCommSubgroupInit()
         CommPlaneSubGroupVector_[COMM_COMBINE].push_back(serverSubGroups);
     } else {
         // 用于910_93 AHC COMM_COMBINE_ORDER 通信域分组场景测试
+        std::vector<std::string> idsForIndexingVector;
         std::map<std::string, std::vector<u32>> superPodIdGroup;
         for (u32 i = 0; i < rankVector_.size(); i++) {
             auto itSuperPodID = superPodIdGroup.find(rankVector_[i].superPodId);
             if (itSuperPodID != superPodIdGroup.end()) {
                 itSuperPodID->second.push_back(i);
             } else {
+                idsForIndexingVector.push_back(rankVector_[i].superPodId);
                 std::vector<u32> subGroup;
                 subGroup.push_back(i);
                 superPodIdGroup.insert(std::make_pair(rankVector_[i].superPodId, subGroup));
             }
         }
         std::vector<std::vector<u32>> superPodSubGroups;
-        for (auto iterMap = superPodIdGroup.begin(); iterMap != superPodIdGroup.end(); iterMap++) {
-            superPodSubGroups.push_back(iterMap->second);
-            HCCL_DEBUG("[SetTopoInfoForLevel0][AHC_DEBUG 910_93] superPodId[%s]", iterMap->first.c_str());
-            for (auto index = iterMap->second.begin(); index != iterMap->second.end(); index++) {
-                HCCL_DEBUG("[SetTopoInfoForLevel0][AHC_DEBUG 910_93] groupIdx[%u]", (*index));
+        for (u32 i = 0; i < idsForIndexingVector.size(); i++) {
+            superPodSubGroups.push_back(superPodIdGroup[idsForIndexingVector[i]]);
+            HCCL_DEBUG("[SetTopoInfoForLevel0][AHC_DEBUG 910_93] superPodId[%s]", idsForIndexingVector[i].c_str());
+            for (u32 index = 0; index < superPodIdGroup[idsForIndexingVector[i]].size(); index++) {
+                HCCL_DEBUG("[SetTopoInfoForLevel0][AHC_DEBUG 910_93] groupIdx[%u]", superPodIdGroup[idsForIndexingVector[i]][index]);
             }
         }
         CommPlaneSubGroupVector_[COMM_COMBINE_ORDER].push_back(superPodSubGroups);
@@ -1212,7 +1215,15 @@ void TopoInfoExtractor::GetCommPlaneSubGroupVector(std::vector<std::vector<std::
     return;
 }
 
-void TopoInfoExtractor::GetAHCAlgOption(std::map<std::string, std::string> &ahcAlgOption)
+void TopoInfoExtractor::SetAHCLevelAlgOption(AHCConcOpType ahcConcOpType,TemplateType templateType)
+{
+    if (ahcAlgOption_.find(ahcConcOpType) == ahcAlgOption_.end()) {
+        ahcAlgOption_[ahcConcOpType] = templateType;
+    }
+    return;
+}
+
+void TopoInfoExtractor::GetAHCAlgOption(std::map<AHCConcOpType, TemplateType> &ahcAlgOption)
 {
     ahcAlgOption = ahcAlgOption_;
     return;

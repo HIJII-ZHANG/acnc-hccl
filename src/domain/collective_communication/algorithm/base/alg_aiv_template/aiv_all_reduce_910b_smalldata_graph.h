@@ -89,5 +89,7 @@ __aicore__ inline void aiv_all_reduce_910b_smalldata_graph(KERNEL_ARGS_DEF)
 {
     AivAllReduceSmallGraph910B op;
     op.Init(KERNEL_CLASS_INIT, false);
+    op.HeadCounter();
     op.Process<T>(input, output, len, tag);
+    op.TailCounter();
 }

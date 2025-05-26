@@ -77,5 +77,7 @@ __aicore__ inline void aiv_reduce_scatter_v_910b_smalldata(EXTERN_KERNEL_ARGS_DE
 {
     AivReduceScatterVSmall910B op;
     op.Init(KERNEL_CLASS_INIT, false);
+    op.HeadCounter();
     op.Process<T>(input, output, tag, extraArgs);
+    op.TailCounter();
 }

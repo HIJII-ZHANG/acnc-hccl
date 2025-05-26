@@ -100,9 +100,6 @@ HcclResult CollAllReduceReducePlusBcastExecutor::KernelRun(const OpParam &param,
         execMem.inputMem, execMem.outputMem, const_cast<Stream&>(param.stream));
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("MemcpyAsync failed"), ret);
 
-    bool isSelectAHC = (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC || algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE);
-    CommPlane commPlaneLevel1 = isSelectAHC ? COMM_LEVEL1_AHC : COMM_LEVEL1;
-
     // 执行server间allreduce
     if (topoAttr_.devicePhyId == 0) {
         std::unique_ptr<AlgTemplateBase> allreduceTempAlg = nullptr;
@@ -129,22 +126,6 @@ HcclResult CollAllReduceReducePlusBcastExecutor::KernelRun(const OpParam &param,
             HCCL_INFO("allreduce recursive hd: using nhr_v1 algo inter-server.");
             CHK_SMART_PTR_NULL(allreduceTempAlg);
             CHK_RET(allreduceTempAlg->Prepare(reduceAttr));
-        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC) {
-            // 获取通信域分组信息
-            std::vector<std::vector<std::vector<u32>>> gloableSubGroups;
-            CHK_RET(topoMatcher_->GetGlobalSubGroups(commPlaneLevel1, gloableSubGroups));
-            allreduceTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_AHC, dispatcher_);
-            HCCL_INFO("allreduce recursive hd: using ahc algo inter-server.");
-            CHK_SMART_PTR_NULL(allreduceTempAlg);
-            CHK_RET(allreduceTempAlg->Prepare(reduceAttr, execMem.count, gloableSubGroups[0]));
-        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE) {
-            // 获取通信域分组信息
-            std::vector<std::vector<std::vector<u32>>> gloableSubGroups;
-            CHK_RET(topoMatcher_->GetGlobalSubGroups(commPlaneLevel1, gloableSubGroups));
-            allreduceTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_AHC_BROKE, dispatcher_);
-            HCCL_INFO("allreduce recursive hd: using ahc-broke algo inter-server.");
-            CHK_SMART_PTR_NULL(allreduceTempAlg);
-            CHK_RET(allreduceTempAlg->Prepare(reduceAttr, execMem.count, gloableSubGroups[0]));
         } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
             allreduceTempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
                 TemplateType::TEMPLATE_ALL_REDUCE_NB, dispatcher_);
@@ -163,8 +144,8 @@ HcclResult CollAllReduceReducePlusBcastExecutor::KernelRun(const OpParam &param,
             param.DataDes.dataType, param.stream, param.reduceType, 0,
             std::vector<Slice>(0), 0, nicRankList));
 
-        CHK_RET(CheckCommSize(commPlaneLevel1, COMM_INDEX_0 + 1));
-        SubCommInfo level1CommInfo = GetSubCommInfo(commPlaneLevel1, COMM_INDEX_0);
+        CHK_RET(CheckCommSize(COMM_LEVEL1, COMM_INDEX_0 + 1));
+        SubCommInfo level1CommInfo = GetSubCommInfo(COMM_LEVEL1, COMM_INDEX_0);
         CHK_RET(RunTemplate(allreduceTempAlg, level1CommInfo));
     }
 

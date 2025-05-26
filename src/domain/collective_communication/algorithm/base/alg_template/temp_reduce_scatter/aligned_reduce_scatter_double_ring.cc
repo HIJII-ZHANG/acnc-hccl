@@ -65,6 +65,8 @@ HcclResult AlignedReduceScatterDoubleRing::RunAsync(const u32 rank, const u32 ra
     // 运行reduce-scatter, ring算法
     CHK_RET(RunReduceScatter(rank, rankSize));
 
+    CHK_RET(LaunchTaskExtend(dispatcher_, stream_, subStreams_));
+
     HCCL_INFO("AlignedReduceScatterDoubleRing finished: rank[%u] end", rank);
     return HCCL_SUCCESS;
 }

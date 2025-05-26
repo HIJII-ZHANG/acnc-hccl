@@ -94,5 +94,7 @@ __aicore__ inline void aiv_all_reduce_910b_middata(KERNEL_ARGS_DEF)
 {
     AivAllReduceMid910B op;
     op.Init(KERNEL_CLASS_INIT, true);
+    op.HeadCounter();
     op.Process<T>(input, output, len, tag);
+    op.TailCounter();
 }

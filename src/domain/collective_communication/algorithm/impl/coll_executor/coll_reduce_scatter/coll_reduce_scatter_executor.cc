@@ -55,6 +55,23 @@ HcclResult CollReduceScatterExecutor::Orchestrate(OpParam& param, AlgResourceRes
         execMem.outputMem = algRes.cclOutputMem;
         execMem.scratchMem = algRes.scratchMem;
         ret = KernelRun(param, execMem);
+    } else if (param.isZeroCopy) {
+        ExecMem execMem;
+        execMem.count = param.DataDes.count;
+        execMem.inputPtr = param.inputPtr;
+        execMem.outputPtr = param.outputPtr;
+        execMem.inputMem = algRes.paramInputMem;
+        execMem.outputMem = algRes.paramOutputMem;
+        execMem.scratchMem = algRes.paramInputMem;
+        ret = KernelRunIntraServer(param, execMem);
+        CHK_PRT_RET(ret != HCCL_SUCCESS,
+            HCCL_ERROR("[CollReduceScatterExecutor][Orchestrate]errNo[0x%016llx]reduce scatter excutor KernelRunIntraServer failed",
+                HCCL_ERROR_CODE(ret)), ret);
+        if (algOpContext_.opRetryHandler.isPostSync == true) {
+            // post Sync
+            CHK_RET(InplaceOpSync(param, execMem));
+        }
+        ret = RunLoop(param, algRes);
     } else {
         if (algOpContext_.opRetryHandler.isInplacePreSync == true) {
             /*当重执行场景，UserInMem > CCLBuffer时，需要在reduce scatter算子前增加一个PreSync函数，提升重执行成功概率*/
@@ -83,6 +100,17 @@ HcclResult CollReduceScatterExecutor::Orchestrate(OpParam& param, AlgResourceRes
     HCCL_INFO("tag[%s], ReduceScatter executor orchestrate success, take time [%lld]us.",
         param.tag.c_str(), DURATION_US(TIME_NOW() - startut));
     return HCCL_SUCCESS;
+}
+
+u64 CollReduceScatterExecutor::CalcLoopMaxCountZeroCopy(const u32 unitSize, const bool isZeroCopy)
+{
+    // 中转内存单次最多能够接受的output count
+    u32 sliceNum = isZeroCopy ? topoAttr_.serverNum : topoAttr_.userRankSize;
+    u64 maxCountPerLoop = inCCLbufferSize_ / sliceNum / HCCL_MIN_SLICE_ALIGN
+        * HCCL_MIN_SLICE_ALIGN / unitSize;
+    HCCL_INFO("[CollReduceScatterExecutor][CalcLoopMaxCountZeroCopy]" \
+        "using default maxCountPerLoop[%llu] as CCLBuffSize / (level1RankSize * level2RankSize * unitSize).", maxCountPerLoop);
+    return maxCountPerLoop;
 }
 
 u64 CollReduceScatterExecutor::CalcLoopMaxCount(const u32 unitSize)
@@ -126,7 +154,7 @@ HcclResult CollReduceScatterExecutor::RunLoop(OpParam &param, AlgResourceRespons
     CHK_PTR_NULL(curInputPtr);
     CHK_PTR_NULL(curOutputPtr);
 
-    u64 maxCountPerLoop = CalcLoopMaxCount(unitSize);
+    u64 maxCountPerLoop = param.isZeroCopy ? CalcLoopMaxCountZeroCopy(unitSize, param.isZeroCopy) : CalcLoopMaxCount(unitSize);
     CHK_PRT_RET(maxCountPerLoop == 0,
         HCCL_ERROR("[CollReduceScatterExecutor][RunLoop]maxCountPerLoop is zero."),
         HCCL_E_INTERNAL);
@@ -204,7 +232,8 @@ HcclResult CollReduceScatterExecutor::RunLoopInner(OpParam &param, const ReduceT
     }
 
     if (CCLMemSlice_) {
-        execMem.inputMem = execMem.inputMem.range(0, curSize * topoAttr_.userRankSize);
+        u32 sliceNum = param.isZeroCopy ? topoAttr_.serverNum : topoAttr_.userRankSize;
+        execMem.inputMem = execMem.inputMem.range(0, curSize * sliceNum);
         execMem.outputMem = execMem.outputMem.range(0, curSize);
         if (scratchMemFlag_) {
             execMem.scratchMem = execMem.scratchMem.range(0, curSize * topoAttr_.userRankSize);
@@ -226,7 +255,13 @@ HcclResult CollReduceScatterExecutor::RunLoopInner(OpParam &param, const ReduceT
         HCCL_DEBUG("[CollReduceScatterExecutor][RunLoopInner]copy from user in to ccl in.");
     }
 
-    HcclResult ret = KernelRun(param, execMem);
+    HcclResult ret = HCCL_SUCCESS;
+    if (!param.isZeroCopy) {
+        ret = KernelRun(param, execMem);
+    }
+    else {
+        ret = KernelRunInterServer(param, execMem);
+    }
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollReduceScatterExecutor][RunLoopInner]errNo[0x%016llx]kernel run error, tag[%s], " \
         "inputMem ptr[%p], outputMem ptr[%p], count[%llu], dataType[%d], reduce op type[%d]",
@@ -257,6 +292,44 @@ std::vector<std::vector<Slice>> CollReduceScatterExecutor::ReduceScatterRingSlic
     for (u32 i = 0; i < sliceNum; i++) {    // 根据数据量算每个环上数据的偏移和大小
         sliceTemp.size = outputMenSize;
         sliceTemp.offset = outputMenSize * i;
+        dataSegsSlice.push_back(sliceTemp);
+    }
+
+    // 再将每个 slice 划分为 ringNum 份
+    if (ringNum == LEVEL0_PLANE_NUM_IN_8PRING) {
+        if (useInlineReduce) {
+            multiStreamSlice = PrepareMultiRingSlice(dataSegsSlice, tag);
+        } else if (outputMem.size() % CCE_REDUCE_ALIGN_SIZE == 0) {
+            multiStreamSlice = PrepareMultiRingSlice(dataSegsSlice, tag);
+        } else {
+            multiStreamSlice = PrepareMultiRingSlice(dataSegsSlice, tag, true);
+        }
+    } else if (ringNum == LEVEL0_PLANE_NUM_IN_NPRING_DOUBLE) {
+        // 双环场景，需要传入正确的 niclist (不涉及网口裁剪)
+        if (useInlineReduce) {
+            multiStreamSlice = PrepareMultiRingSlice(dataSegsSlice, tag, false, topoAttr_.nicList);
+        } else if (outputMem.size() % CCE_REDUCE_ALIGN_SIZE == 0) {
+            multiStreamSlice = PrepareMultiRingSlice(dataSegsSlice, tag, false, topoAttr_.nicList);
+        } else {
+            multiStreamSlice = PrepareMultiRingSlice(dataSegsSlice, tag, true, topoAttr_.nicList);
+        }
+    } else {
+        multiStreamSlice.push_back(dataSegsSlice);
+    }
+
+    return multiStreamSlice;
+}
+
+std::vector<std::vector<Slice>> CollReduceScatterExecutor::ReduceScatterRingSlicePrepareContinuous(u32 ringNum, u32 sliceNum,
+    bool useInlineReduce, DeviceMem& outputMem, u32 level1RankSize, u32 level2RankSize, std::vector<Slice>& dataSegsSlice, const std::string &tag)
+{
+    std::vector<std::vector<Slice>> multiStreamSlice;
+    u64 outputMenSize = outputMem.size();
+    dataSegsSlice.clear();
+    Slice sliceTemp;
+    for (u32 i = 0; i < sliceNum; i++) {    // 根据数据量算每个环上数据的偏移和大小
+        sliceTemp.size = outputMenSize * level1RankSize * level2RankSize;
+        sliceTemp.offset = outputMenSize * level1RankSize * level2RankSize * i;
         dataSegsSlice.push_back(sliceTemp);
     }
 

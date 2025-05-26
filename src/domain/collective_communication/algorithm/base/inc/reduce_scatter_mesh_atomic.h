@@ -31,7 +31,6 @@ public:
 
 private:
     HcclResult RunReduceScatter(const std::vector<LINK> &links);
-    HcclResult RunReduceScatterHighPerf(const std::vector<LINK> &links);
     HcclResult MemSlice();
     inline u32 GetRemoteRank(u32 streamIndex) const
     {

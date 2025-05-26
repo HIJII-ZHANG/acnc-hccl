@@ -38,7 +38,7 @@ __aicore__ inline void AivAllGatherBig910B::ClearFlag(uint32_t flagOffsetBase)
     uint32_t flagOffsetCount = flagOffsetBase;
     __gm__ int32_t *ctrlFlagsGM = (__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetCount);
     if (block_idx < rankSize_ && block_idx == rank_) {
-        SetFlagNew(ctrlFlagsGM, 0);
+        SetSignalValue(ctrlFlagsGM, localSetTensor, 0);
     }
 }
 
@@ -51,21 +51,21 @@ __aicore__ inline void AivAllGatherBig910B::EndSync(int32_t tag, uint32_t flagOf
     if (block_idx < rankSize_ && block_idx == rank_) {
         pipe_barrier(PIPE_ALL);
         for (int i = 1; i < rankSize_; i++) {
-            uint32_t targetRank = (rank_ + i) % rankSize_; 
+            uint32_t targetRank = (rank_ + i) % rankSize_;
             ctrlFlagsGM = (__gm__ int32_t *)(GM_OUT[targetRank ] + flagOffset + rank_ * FLAG_SIZE);
-            SetFlagNew(ctrlFlagsGM, tag);
+            SetSignalValue(ctrlFlagsGM, localSetTensor, tag);
         }
         pipe_barrier(PIPE_ALL);
         for (int i = 1; i < rankSize_; i++) {
-            uint32_t targetRank = (rank_ + i) % rankSize_; 
+            uint32_t targetRank = (rank_ + i) % rankSize_;
             ctrlFlagsGM = (__gm__ int32_t *)(GM_OUT[rank_] + flagOffset + targetRank * FLAG_SIZE);
-            CheckFlagNew(ctrlFlagsGM, tag);
+            WaitSignalValue(ctrlFlagsGM, localCheckTensor, tag);
         }
         pipe_barrier(PIPE_ALL);
         for (int i = 1; i < rankSize_; i++) {
-            uint32_t targetRank = (rank_ + i) % rankSize_; 
+            uint32_t targetRank = (rank_ + i) % rankSize_;
             ctrlFlagsGM = (__gm__ int32_t *)(GM_OUT[rank_] + flagOffset + targetRank * FLAG_SIZE);
-            SetFlagNew(ctrlFlagsGM, 0);
+            SetSignalValue(ctrlFlagsGM, localSetTensor, 0);
         }
     }
 }
@@ -76,23 +76,15 @@ __aicore__ inline void AivAllGatherBig910B::MemcpyWithFlagWrap(__gm__ T *cclGmSe
 {
     uint64_t processedBatchCount = 0;
     uint64_t avgSizePerSlice = count * sizeof(T);
-    
+
     while (true) {
         if (processedBatchCount >= CeilDiv(avgSizePerSlice, UB_DB_DATA_BATCH_SIZE)) {
             break;
         }
 
-        GlobalTensor<int32_t> globalFlagX;
-        globalFlagX.SetGlobalBuffer(ctrlFlagsGMX, UB_FLAG_PAD_COUNT);
         LocalTensor<int32_t> localFlagX = flagInQue.AllocTensor<int32_t>();
 
-        DataCopy(localFlagX, globalFlagX, UB_FLAG_PAD_COUNT);
-
-        set_flag(PIPE_MTE2, PIPE_S, EVENT_ID0);
-        wait_flag(PIPE_MTE2, PIPE_S, EVENT_ID0);
-
-        uint64_t localFlagValueX = localFlagX.GetValue(0);
-
+        uint64_t localFlagValueX = GetSignalValue(ctrlFlagsGMX, localFlagX);
         flagInQue.FreeTensor(localFlagX);
 
         if (localFlagValueX <= tag) {
@@ -127,7 +119,7 @@ __aicore__ inline void AivAllGatherBig910B::Process(GM_ADDR input, GM_ADDR outpu
     uint32_t avgSizePerSlice = avgLengthPerSlice * sizeof(T);
 
     uint32_t blockNumPerGroup = rankSize_;
-    uint32_t targetRank = block_idx >= rankSize_ ? block_idx - rankSize_ : block_idx; 
+    uint32_t targetRank = block_idx >= rankSize_ ? block_idx - rankSize_ : block_idx;
 
     // 用10个flag
     uint32_t flagOffsetCount = flagOffsetBase;
@@ -146,25 +138,25 @@ __aicore__ inline void AivAllGatherBig910B::Process(GM_ADDR input, GM_ADDR outpu
             CpGM2GMWithFlagWrap(cclGmSelf, inputGm, avgLengthPerSlice, ctrlFlagsGM, 8, tag);
             // 所有对端都取走数据
             pipe_barrier(PIPE_ALL);
-            CheckFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetLocal), (rankSize_ - 1) * tag);
+            WaitSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetLocal), localCheckTensor, (rankSize_ - 1) * tag);
             pipe_barrier(PIPE_ALL);
-            SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetLocal), 0);
+            SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetLocal), localSetTensor, 0);
         } else {
             __gm__ int32_t *ctrlFlagsGMX = (__gm__ int32_t *)(GM_OUT[targetRank] + flagOffsetCount);
             MemcpyWithFlagWrap(outputGm + outputOffset, cclGmOther, len, ctrlFlagsGMX, tag);
             pipe_barrier(PIPE_ALL);
-            SetFlagNew((__gm__ int32_t *)(GM_OUT[targetRank] + flagOffsetEnd + rank_ * FLAG_SIZE), tag);
+            SetSignalValue((__gm__ int32_t *)(GM_OUT[targetRank] + flagOffsetEnd + rank_ * FLAG_SIZE), localSetTensor, tag);
             pipe_barrier(PIPE_ALL);
-            CheckFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetEnd + targetRank * FLAG_SIZE), tag);
+            WaitSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetEnd + targetRank * FLAG_SIZE), localCheckTensor, tag);
             pipe_barrier(PIPE_ALL);
-            SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetLocal), tag, true);
+            AddSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetLocal), localSetTensor, tag);
             pipe_barrier(PIPE_ALL);
-            SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetEnd + targetRank * FLAG_SIZE), 0);
+            SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetEnd + targetRank * FLAG_SIZE), localSetTensor, 0);
             pipe_barrier(PIPE_ALL);
         }
     } else {
         CpGM2GM(outputGm + rank_ * totalLen, inputGm, avgLengthPerSlice);
-    }    
+    }
     return;
 }
 
@@ -173,7 +165,7 @@ __aicore__ inline void aiv_all_gather_910b_bigdata(KERNEL_ARGS_DEF)
 {
     AivAllGatherBig910B op;
     op.Init(KERNEL_CLASS_INIT, true);
-
+    op.HeadCounter();
     uint64_t maxCountPerLoop = bufferSize / UB_ALIGN_SIZE * UB_ALIGN_SIZE / sizeof(T);
     uint64_t countLeft = len;
 
@@ -184,7 +176,7 @@ __aicore__ inline void aiv_all_gather_910b_bigdata(KERNEL_ARGS_DEF)
     while (countLeft > 0) {
         uint64_t curCount = (countLeft > maxCountPerLoop) ? maxCountPerLoop : countLeft;
         uint64_t curSize = curCount * sizeof(T);
-        
+
         // 执行kernel
         op.Process<T>(curInput, curOutput, curCount, curTag, len, flagOffsetBase);
 
@@ -197,4 +189,5 @@ __aicore__ inline void aiv_all_gather_910b_bigdata(KERNEL_ARGS_DEF)
     if (tag == 1000) {
         op.EndSync<T>(tag, flagOffsetBase);
     }
+    op.TailCounter();
 }

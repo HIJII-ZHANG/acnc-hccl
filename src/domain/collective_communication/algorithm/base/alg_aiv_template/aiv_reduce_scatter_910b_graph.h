@@ -141,5 +141,7 @@ __aicore__ inline void aiv_reduce_scatter_910b_bigdata_graph(KERNEL_ARGS_DEF)
 {
     AivReduceScatterBigGraph910B op;
     op.Init(KERNEL_CLASS_INIT, true);
+    op.HeadCounter();
     op.Process<T>(input, output, len, tag);
+    op.TailCounter();
 }

@@ -59,6 +59,7 @@ HcclResult ScatterRingConcurrentDirect::RunAsync(const u32 rank, const u32 rankS
         // 执行barrier，保证数据收发完成
         CHK_RET(ExecuteBarrier(leftLink_, rightLink_));
     }
+    CHK_RET(LaunchTaskExtend(dispatcher_, stream_, subStreams_));
 
     HCCL_INFO("ScatterRingConcurrentDirect finished: rank[%u]", rank);
     return HCCL_SUCCESS;

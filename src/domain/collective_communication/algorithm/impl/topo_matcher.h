@@ -61,8 +61,7 @@ struct HcclTopoInfo {
     std::unordered_map<u32, u32> pairLinkCounter; // server内所有device间的链路类型计数
 
     std::vector<std::vector<std::vector<std::vector<u32>>>> CommPlaneSubGroupVector; // 保存所有 level 的通信分组信息
-    std::map<std::string, std::string> ahcAlgOption;
-    std::vector<bool> isAsymPlanVector; // 对应 level 是否为非对称
+    std::map<AHCConcOpType, TemplateType> ahcAlgOption;
 
     HcclTopoInfo()
         : userRank(0),
@@ -92,7 +91,6 @@ using HcclExternalEnable = struct HcclExternalEnableDef {
     u32 enableRdmaSdmaConcurrent;
     u32 enableFfts;
     u32 deterministic;
-    u32 highPerfEnable;
     u32 intraRoceSwitch;
     u32 dumpDebug;
     u32 interHccsDisable;
@@ -103,7 +101,6 @@ using HcclExternalEnable = struct HcclExternalEnableDef {
         : enableRdmaSdmaConcurrent(0),
         enableFfts(1),
         deterministic(0),
-        highPerfEnable(0),
         intraRoceSwitch(0),
         dumpDebug(0),
         interHccsDisable(0),
@@ -131,7 +128,6 @@ public:
     u32 GetExternalInputEnableRdmaSdmaConcurrent();
     u32 GetExternalInputHcclEnableFfts();
     u32 GetExternalInputHcclDeterministic();
-    u32 GetExternalInputHcclHighPerfEnable();
     u32 GetExternalInputIntraRoceSwitch();
     u32 GetExternalInputHcclDumpDebug();
     u32 GetExternalInputInterHccsDisable();
@@ -152,8 +148,8 @@ public:
     HcclResult SetGlobalSubGroups(const CommPlane level, std::vector<std::vector<std::vector<u32>>> &globalSubGroups);
     HcclResult GetCommPlaneSubGroupVector(std::vector<std::vector<std::vector<std::vector<u32>>>> &commPlaneSubGroupVector);
     HcclResult SetCommPlaneSubGroupVector(std::vector<std::vector<std::vector<std::vector<u32>>>> &commPlaneSubGroupVector);
-    HcclResult GetAHCAlgOption(std::map<std::string, std::string> &ahcAlgOption);
-
+    void GetAHCAlgOption(std::map<AHCConcOpType, TemplateType> &ahcAlgOption);
+    void SetAHCAlgOption(std::map<AHCConcOpType, TemplateType> &ahcAlgOption);
 protected:
 
 private:

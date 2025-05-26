@@ -109,6 +109,11 @@ static std::string g_kernelNameList[] = {
  "aiv_all_reduce_910b_rdma_smalldata_step2",
  "aiv_all_reduce_910b_rdma_smalldata_graph_step3",
  "aiv_all_reduce_910b_rdma_smalldata_step3",
+ "aiv_all_to_all_91093_single_pingpong.h",
+ "aiv_all_to_all_91093_single_graph.h",
+ "aiv_all_to_all_vc_91093_single_graph.h",
+ "aiv_all_reduce_91093_smalldata.h",
+ "aiv_all_reduce_91093_bigdata_graph.h"
 };
 
 std::string GetTaskName(TaskType taskType, bool isAlgInfo = false);
@@ -123,7 +128,7 @@ constexpr u32 TASK_COUNT_UPPER_LIMIT_OP_BASE = 65535; // 单算子模式task数�
 constexpr u32 TASK_CONTEXT_SIZE = 50; // task 执行失败时打印前序task的数量
 constexpr u32 TASK_CONTEXT_INFO_SIZE = LOG_TMPBUF_SIZE - 50; // task 执行失败时打印前序task信息的长度限制
 constexpr u32 PRINT_TASK_AIV_INFO_COUNT = 10;
-constexpr u32 TASK_AIV_KERNEL_NUM = 49;
+constexpr u32 TASK_AIV_KERNEL_NUM = 54;
 constexpr u32 AIV_KERNEL_FLAG_SIZE_PER_OP = 6;
 u32 maxStrCount = 0;
 u32 maxTaskCount = 0;
@@ -618,7 +623,7 @@ string FFTSOpInfo::GetBaseInfoStr() // 防止tag字符串过长，base信息和p
     taskContent += "], taskID[";
     taskContent += std::to_string(taskID);
     taskContent += "], tag[";
-    taskContent += std::string(tag);
+    taskContent += std::string(tag.get());
     taskContent += "], ";
     taskContent += GetAlgTypeStr(algType);
     return taskContent;
@@ -741,9 +746,6 @@ void TaskExceptionHandler::PrintOpDataInfo(OpDataInfo &opDataInfo, bool isFftsPl
 bool TaskExceptionHandler::DealExceptionOpData(rtExceptionInfo *exceptionInfo, std::string &tag, bool isFftsPlus,
     u32 index)
 {
-    if (GetExternalInputHcclDftLevel() == false) {
-        return false;
-    }
     bool opDataFound = false;
     std::unique_lock<std::mutex> lock(tagOpDataMapMutex[exceptionInfo->deviceid]);
     auto opDataIt = tagOpDataMap[exceptionInfo->deviceid].find(tag);
@@ -772,9 +774,6 @@ bool TaskExceptionHandler::DealExceptionOpData(rtExceptionInfo *exceptionInfo, s
 bool TaskExceptionHandler::DealExceptionGroupRank(rtExceptionInfo *exceptionInfo, std::string &tag,
     bool isFftsPlus, std::string &groupRankContentInfo)
 {
-    if (GetExternalInputHcclDftLevel() == false) {
-        return false;
-    }
     std::unique_lock<std::mutex> lock(groupRankMapMutex[exceptionInfo->deviceid]);
     auto groupRankIt = groupRankMap[exceptionInfo->deviceid].find(tag);
     CHK_PRT_RET(groupRankIt == groupRankMap[exceptionInfo->deviceid].end(),
@@ -829,7 +828,7 @@ bool TaskExceptionHandler::DealExceptionCtx(rtExceptionInfo *exceptionInfo)
 
 	u32 index = fftsOpInfo.index;
 	std::string groupRankContentInfo = "";
-    std::string tag(fftsOpInfo.tag);
+    std::string tag(fftsOpInfo.tag.get());
 	DealExceptionGroupRank(exceptionInfo, tag, true, groupRankContentInfo);
 	DealExceptionOpData(exceptionInfo, tag, true, index);
 	std::string errMsg = GetAndPrintHeartbeatErr(exceptionInfo);
@@ -916,7 +915,7 @@ bool TaskExceptionHandler::ProcessContext(rtExceptionInfo *exceptionInfo)
     HCCL_ERROR("[TaskExceptionHandler][Callback]FFTS+ run failed, context base information is %s",
         exceptionCtxInfo.GetCtxBaseInfoStr().c_str());
     HCCL_ERROR("[TaskExceptionHandler][Callback]FFTS+ run failed, context para information is %s, tag[%s].",
-        exceptionCtxInfo.GetCtxParaInfoStr().c_str(), fftsOpInfo.tag);
+        exceptionCtxInfo.GetCtxParaInfoStr().c_str(), fftsOpInfo.tag.get());
 
     return true;
 }
@@ -947,7 +946,7 @@ bool TaskExceptionHandler::DealExceptionOp(rtExceptionInfo *exceptionInfo)
         exceptionOpInfo.GetBaseInfoStr().c_str());
     u32 index = exceptionOpInfo.index;
     std::string groupRankContentInfo = "";
-    std::string tag(exceptionOpInfo.tag);
+    std::string tag(exceptionOpInfo.tag.get());
     DealExceptionGroupRank(exceptionInfo, tag, true, groupRankContentInfo);
     DealExceptionOpData(exceptionInfo, tag, true, index);
     std::string errMsg = GetAndPrintHeartbeatErr(exceptionInfo);
@@ -1000,7 +999,7 @@ void TaskExceptionHandler::PrintTaskAivBuffer(const std::shared_ptr<std::deque<T
     u32 flagMemSize = 1024*1024;
     auto& taskInfo = taskQue->back();
     u32 cnt = taskInfo.taskPara.Aiv.rankSize;
-    s32* flagMem = reinterpret_cast<s32*>(malloc(flagMemSize));
+    s32* flagMem = static_cast<s32*>(malloc(flagMemSize));
     hrtMemSyncCopy(flagMem, flagMemSize, reinterpret_cast<u8 *>(taskInfo.taskPara.Aiv.flagMem), flagMemSize, 
                    HcclRtMemcpyKind::HCCL_RT_MEMCPY_KIND_DEVICE_TO_HOST);
 
@@ -1094,7 +1093,10 @@ bool TaskExceptionHandler::DealExceptionTask(rtExceptionInfo *exceptionInfo)
         exceptionTaskInfo.GetParaInfoStr().c_str(), exceptionTaskInfo.tag.c_str());
     u32 index = exceptionTaskInfo.index;
     std::string groupRankContentInfo = "";
-    DealExceptionGroupRank(exceptionInfo, exceptionTaskInfo.tag, false, groupRankContentInfo);
+    if (!exceptionTaskInfo.isAlgInfo){
+        // AlgInfo时不打印group rank等信息
+        DealExceptionGroupRank(exceptionInfo, exceptionTaskInfo.tag, false, groupRankContentInfo);
+    }
     DealExceptionOpData(exceptionInfo, exceptionTaskInfo.tag, false, index);
     std::string errMsg = GetAndPrintHeartbeatErr(exceptionInfo);
     if (exceptionTaskInfo.taskType == TaskType::TASK_NOTIFY_WAIT) {
@@ -1236,6 +1238,16 @@ HcclResult TaskExceptionHandler::DeInit()
     return HCCL_SUCCESS;
 }
 
+bool IsOneSideTask(u32 streamId)
+{
+    std::string tag;
+    CHK_PRT(ProfilerBase::GetTagByStream(streamId, tag));
+    if (tag.find("BatchPut_") != std::string::npos || tag.find("BatchGet_") != std::string::npos) {
+        return true;
+    }
+    return false;
+}
+
 HcclResult TaskExceptionHandler::Save(u32 captureStreamID, u32 streamID, u32 taskID, TaskType &taskType, const TaskParaNotify &para)
 {
     CHK_PRT_RET(deviceLogicId_ >= MAX_MODULE_DEVICE_NUM,
@@ -1245,7 +1257,7 @@ HcclResult TaskExceptionHandler::Save(u32 captureStreamID, u32 streamID, u32 tas
         streamID, taskID, taskType);
     if (GetExternalInputHcclEnableFfts() &&
         GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE &&
-        GetExternalInputTaskExceptionSwitch() == 1) {
+        GetExternalInputTaskExceptionSwitch() == 1 && !IsOneSideTask(captureStreamID)) {
         std::unique_lock<std::mutex> lock(ctxInfoVectorMutex[deviceLogicId_]);  // 防止存入和读取冲突
         CtxInfo tmpCtxInfo(taskType, para);
         ctxInfoArray[deviceLogicId_].insert(ctxInfoArray[deviceLogicId_].end(), tmpCtxInfo);
@@ -1281,7 +1293,7 @@ HcclResult TaskExceptionHandler::Save(u32 captureStreamID, u32 streamID, u32 tas
         streamID, taskID, taskType);
     if (GetExternalInputHcclEnableFfts() &&
         GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE &&
-        GetExternalInputTaskExceptionSwitch() == 1) {
+        GetExternalInputTaskExceptionSwitch() == 1 && !IsOneSideTask(captureStreamID)) {
         std::unique_lock<std::mutex> lock(ctxInfoVectorMutex[deviceLogicId_]);  // 防止存入和读取冲突
         CtxInfo tmpCtxInfo(taskType, para);
         ctxInfoArray[deviceLogicId_].insert(ctxInfoArray[deviceLogicId_].end(), tmpCtxInfo);
@@ -1316,7 +1328,7 @@ HcclResult TaskExceptionHandler::Save(u32 captureStreamID, u32 streamID, u32 tas
         streamID, taskID, taskType);
     if (GetExternalInputHcclEnableFfts() &&
         GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE &&
-        GetExternalInputTaskExceptionSwitch() == 1) {
+        GetExternalInputTaskExceptionSwitch() == 1 && !IsOneSideTask(captureStreamID)) {
         std::unique_lock<std::mutex> lock(ctxInfoVectorMutex[deviceLogicId_]);  // 防止存入和读取冲突
         CtxInfo tmpCtxInfo(taskType, para);
         ctxInfoArray[deviceLogicId_].insert(ctxInfoArray[deviceLogicId_].end(), tmpCtxInfo);
@@ -1417,7 +1429,10 @@ HcclResult TaskExceptionHandler::InsertOpMap(u32 &streamID, u32 &taskID, string 
     u32 &index) const
 {
     FFTSOpInfo tmpOpPara;
-    CHK_SAFETY_FUNC_RET(memcpy_s(tmpOpPara.tag, sizeof(tmpOpPara.tag), tag.c_str(), tag.size()));
+    char *tmpAddr = new (std::nothrow) char[tag.size() + 1]();
+    CHK_PTR_NULL(tmpAddr);
+    tmpOpPara.tag.reset(tmpAddr, default_delete<char[]>());
+    CHK_SAFETY_FUNC_RET(memcpy_sp(tmpOpPara.tag.get(), tag.size() + 1, tag.data(), tag.size()));
     tmpOpPara.streamID = streamID;
     tmpOpPara.taskID = taskID;
     tmpOpPara.algType = algType;
@@ -1443,7 +1458,10 @@ HcclResult TaskExceptionHandler::InsertOpCtxInfo(u32 &streamID, u32 &taskID, str
     AlgType &algType, u32 &index) const
 {
     FFTSOpInfo tmpOpInfo;
-    CHK_SAFETY_FUNC_RET(memcpy_s(tmpOpInfo.tag, sizeof(tmpOpInfo.tag), tag.c_str(), tag.size()));
+    char *tmpAddr = new (std::nothrow) char[tag.size() + 1]();
+    CHK_PTR_NULL(tmpAddr);
+    tmpOpInfo.tag.reset(tmpAddr, default_delete<char[]>());
+    CHK_SAFETY_FUNC_RET(memcpy_sp(tmpOpInfo.tag.get(), tag.size() + 1, tag.data(), tag.size()));
     tmpOpInfo.streamID = streamID;
     tmpOpInfo.taskID = taskID;
     tmpOpInfo.algType = algType;
@@ -1479,9 +1497,6 @@ HcclResult TaskExceptionHandler::InsertOpCtxInfo(u32 &streamID, u32 &taskID, str
 
 HcclResult TaskExceptionHandler::InsertRankInfo(std::string &tag) const
 {
-    if (GetExternalInputHcclDftLevel() == false) {
-        return HCCL_SUCCESS;
-    }
     std::string groupName;
     CHK_RET(ProfilerBase::GetGroupNameByTag(tag, groupName));
     GroupRankInfo groupRankInfo;
@@ -1520,9 +1535,6 @@ HcclResult TaskExceptionHandler::InsertRankInfo(std::string &tag) const
 
 HcclResult TaskExceptionHandler::InsertOpData(std::string &tag) const
 {
-    if (GetExternalInputHcclDftLevel() == false) {
-        return HCCL_SUCCESS;
-    }
     OpDataInfo opDataInfo;
     CHK_RET(ProfilerBase::GetOpDataInfoByTag(tag, opDataInfo));
     std::unique_lock<std::mutex> lock(tagOpDataMapMutex[deviceLogicId_]);

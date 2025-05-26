@@ -9,6 +9,7 @@
  */
 
 #include "calc_ring_transport_req.h"
+#include "calc_ahc_template_register.h"
 
 constexpr u32 HCCL_RANK_OFFSET = 1;
 
@@ -76,4 +77,24 @@ HcclResult CalcRingTransportReq::CalcTransportRequest(const std::string &tag, Tr
     return HCCL_SUCCESS;
 }
 
+HcclResult CalcRingTransportReq::CalcDstRanks(const u32 rank, const std::vector<u32> commGroups, std::set<u32> &dstRanks)
+{
+    CHK_PRT_RET(rank >= commGroups.size(),
+        HCCL_ERROR("[CalcRingTransportReq][CalcDstRanks] rank [%u] exceed commGroups Size [%u]  error", 
+        rank, commGroups.size() ), HCCL_E_INTERNAL);
+    
+    // 正方向下一个节点的rank号
+    const u32 targetRankPos = static_cast<u32>(rank + 1) % commGroups.size();
+    dstRanks.insert(commGroups[targetRankPos]);
+ 
+    // 反方向下一个节点的rank号
+    const u32 targetRankNeg = static_cast<u32>(rank + commGroups.size() - 1) % commGroups.size();
+    
+    HCCL_DEBUG("[CalcRingTransportReq][CalcDstRanks] local rank[%u], remote rank[%u]", commGroups[rank], commGroups[targetRankNeg]);
+
+    dstRanks.insert(commGroups[targetRankNeg]);
+ 
+    return HCCL_SUCCESS;
+}
+REGISTER_AHC_COMM_CALC_FUNC(AHCTemplateType::AHC_TEMPLATE_RING, CalcRingTransportReq, CalcRingTransportReq::CalcDstRanks);
 }  // namespace hccl

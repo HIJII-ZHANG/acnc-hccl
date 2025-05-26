@@ -109,11 +109,11 @@ HcclResult ZeroCopyMemoryAgent::EstablishSockets()
         remoteLinkInfo.devicePhyId = dstRankInfo.devicePhyId;
         remoteLinkInfo.ip = HcclIpAddress(dstRankInfo.devicePhyId);
         if (useSuperPodMode_) {
-            CHK_RET(hrtRaGetSingleSocketVnicIpInfo(rankInfoList_[userRank_].devicePhyId,
-                DeviceIdType::DEVICE_ID_TYPE_SDID, dstRankInfo.superDeviceId, remoteLinkInfo.ip));
+            CHK_RET(hrtRaGetSingleSocketVnicIpInfo(devicePhyId_, DeviceIdType::DEVICE_ID_TYPE_SDID,
+                dstRankInfo.superDeviceId, remoteLinkInfo.ip));
         } else {
-            CHK_RET(hrtRaGetSingleSocketVnicIpInfo(rankInfoList_[userRank_].devicePhyId,
-                DeviceIdType::DEVICE_ID_TYPE_PHY_ID, dstRankInfo.devicePhyId, remoteLinkInfo.ip));
+            CHK_RET(hrtRaGetSingleSocketVnicIpInfo(devicePhyId_, DeviceIdType::DEVICE_ID_TYPE_PHY_ID,
+                dstRankInfo.devicePhyId, remoteLinkInfo.ip));
         }
         remoteLinkInfo.port = HETEROG_CCL_PORT;
         remoteLinkInfo.socketsPerLink = 1;

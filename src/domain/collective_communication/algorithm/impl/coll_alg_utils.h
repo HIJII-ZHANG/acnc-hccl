@@ -26,13 +26,15 @@ constexpr u32 MIN_RING_DATA_SIZE = 64 * 1024; // Ring算法下, Server间支持�
 constexpr u64 MAX_PIPLINE_SLICE_NUM = 4; // 流水并行算法最大切分次数
 constexpr u64 MIN_PIPLINE_SLICE_NUM = 2; // 流水并行算法最小切分次数
 constexpr u64 TINY_MEM_SIZE = 2 * 1024 * 1024; // AlltoAll算子的tinyMem size
+constexpr u64 MAX_ALLTOALLV_DIRECT_FULLMESH_RANKSIZE = 64;  // alltoallv在A2支持directfulmesh的最大ranksize
+constexpr u64 MAX_ALLTOALLV_DIRECT_FULLMESH_SERVER_NUM = 8; // alltoallv在A2支持directfulmesh的最大server数
 
 bool IsAlgTypeLevel0Mesh(AlgTypeLevel0 &originalAlgTypeLevel0);
 
 bool IsSupportUnifiedMarch(const OpParam& param, const TopoType& topoType, u32 serverNum, u32 superPodNum);
 bool IsAlltoAllvcSatisfyBufferSize(const OpParam& param, u32 userRankSize);
 bool IsSupportDirectFullmeshForAlltoallv(const OpParam& param, DevType deviceType, bool useSuperPodMode, u32 serverNum,
-    bool isSingleMeshAggregation, u32 userRankSize);
+    bool isSingleMeshAggregation, u32 userRankSize, bool multiModuleDiffDeviceNumMode = false);
 bool FullmeshPairwiseSatisfyHighPerfAlltoallMeshCondition(DevType deviceType, u32 rankSize, bool useSuperPodMode);
 bool SatisfyIntraSuperPod(DevType deviceType, u32 rankSize, bool useSuperPodMode, u32 superPodNum = 1);
 bool HcclOpInplaceDefaultCase(const OpParam &param, u8 &isInplaceStatus);

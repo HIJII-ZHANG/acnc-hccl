@@ -81,5 +81,7 @@ __aicore__ inline void aiv_reduce_scatter_91093_smalldata_graph(KERNEL_ARGS_DEF)
 {
     AivReduceScatterSmallGraph91093 op;
     op.Init(KERNEL_CLASS_INIT, true);
+    op.HeadCounter();
     op.Process<T>(input, output, len, tag);
+    op.TailCounter();
 }

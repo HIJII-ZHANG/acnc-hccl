@@ -11,6 +11,7 @@
 #include <cmath>
 #include "coll_alg_utils.h"
 #include "workflow_pub.h"
+#include "stream_utils.h"
 
 namespace hccl {
     
@@ -55,7 +56,7 @@ bool IsSupportUnifiedMarch(const OpParam& param, const TopoType& topoType, u32 s
 }
 
 bool IsSupportDirectFullmeshForAlltoallv(const OpParam& param, DevType deviceType, bool useSuperPodMode, u32 serverNum,
-    bool isSingleMeshAggregation, u32 userRankSize)
+    bool isSingleMeshAggregation, u32 userRankSize, bool multiModuleDiffDeviceNumMode)
 {
     bool isDeviceType = (deviceType == DevType::DEV_TYPE_910_93 || deviceType == DevType::DEV_TYPE_910B);
     bool isOpbase = (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
@@ -65,11 +66,28 @@ bool IsSupportDirectFullmeshForAlltoallv(const OpParam& param, DevType deviceTyp
         isHCCS = (serverNum > 1) ?
             (!GetExternalInputInterHccsDisable() && useSuperPodMode) : (!GetExternalInputInterHccsDisable());
     } else if (deviceType == DevType::DEV_TYPE_910B) {
-        isHCCS = (isSingleMeshAggregation) ? (true) : (false);
-        if (isHCCS && (param.opType == HcclCMDType::HCCL_CMD_ALLTOALLVC ||
-                       param.opType == HcclCMDType::HCCL_CMD_ALLTOALL)) {
-            // 910B场景下alltoall和alltoallvc需满足数据量大于cclbuffer大小条件
-            isSatisfyBuffer = IsAlltoAllvcSatisfyBufferSize(param, userRankSize);
+        if (param.opType == HcclCMDType::HCCL_CMD_ALLTOALLV) {
+            // alltoallv算子单机和多机(小于8机64卡)acl graph场景都走directfullmesh算法，且不支持卡数不一致场景
+            rtModel_t rtModel = nullptr;
+            bool isCapture = false;
+            HcclResult retCapture = GetStreamCaptureInfo(param.stream.ptr(), rtModel, isCapture);
+            CHK_PRT_CONT(retCapture != HCCL_SUCCESS,
+                HCCL_ERROR("Get capture status error. return[%d], capture model", retCapture));
+            isHCCS = (userRankSize <= MAX_ALLTOALLV_DIRECT_FULLMESH_RANKSIZE &&
+                      serverNum <= MAX_ALLTOALLV_DIRECT_FULLMESH_SERVER_NUM && !multiModuleDiffDeviceNumMode && isCapture) ||
+                      isSingleMeshAggregation;
+            // A+X单机双module启用下， 未使能RDMA不能走directfullmesh算法
+            bool isDifModule = serverNum == 1 && !isSingleMeshAggregation && userRankSize > HCCL_ALLTOALLV_P2P_SIZE;
+            if (isDifModule && (GetExternalInputIntraRoceSwitch() == 0)) {
+                isHCCS = false;
+            }
+        } else {
+            // alltoall和alltoallvc在A2上仅支持单机
+            isHCCS = (isSingleMeshAggregation) ? (true) : (false);
+            if (isHCCS) {
+                // A2场景下alltoall和alltoallvc需满足数据量大于cclbuffer大小条件
+                isSatisfyBuffer = IsAlltoAllvcSatisfyBufferSize(param, userRankSize);
+            }
         }
     }
     HCCL_DEBUG("[IsSupportDirectFullmeshForAlltoallv]isDevice91093[%u], isOpbase[%u], isHCCS[%u], isSatisfyBuffer[%u]",

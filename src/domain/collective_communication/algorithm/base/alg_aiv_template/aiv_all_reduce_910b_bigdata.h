@@ -207,7 +207,7 @@ __aicore__ inline void aiv_all_reduce_910b_bigdata(KERNEL_ARGS_DEF)
 {
     AivAllReduceBig910B op;
     op.Init(KERNEL_CLASS_INIT, true);
-
+    op.HeadCounter();
     uint64_t maxCountPerLoop = bufferSize / UB_ALIGN_SIZE * UB_ALIGN_SIZE / sizeof(T);
     uint64_t countLeft = len;
 
@@ -226,4 +226,5 @@ __aicore__ inline void aiv_all_reduce_910b_bigdata(KERNEL_ARGS_DEF)
         curOutput += curSize;
         curTag += 1;
     }
+    op.TailCounter();
 }

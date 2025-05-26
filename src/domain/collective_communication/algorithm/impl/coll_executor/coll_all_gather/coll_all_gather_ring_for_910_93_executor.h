@@ -19,6 +19,8 @@ public:
 
 private:
     /* *************** 资源计算 *************** */
+    std::set<u32> commTargetUserRankSet_;
+    bool isZeroCopy_= false;
     HcclResult CalcStreamNum(u32& streamNum) override;
     HcclResult CalcCommInfo(std::vector<LevelNSubCommTransport>& opTransport) override;
     HcclResult CalcLevel0CommInfo(TransportMemType inputType, TransportMemType outputType,
@@ -26,6 +28,7 @@ private:
     HcclResult CalcLevel2CommInfo(TransportMemType inputType, TransportMemType outputType,
         std::vector<LevelNSubCommTransport>& opTransport) override;
     HcclResult CalcTransportMemType(TransportMemType &inputType, TransportMemType &outputType);
+    void ParseParam(const OpParam& param) override;
 
     /* *************** 算法编排 *************** */
     u64 CalcLoopMaxCount(const u64 cclBuffSize, const u32 unitSize) override;
@@ -36,6 +39,14 @@ private:
         s32 profStage, const u64 baseOffset = 0, const HcomCollOpInfo *opInfo = nullptr,
         const std::vector<std::vector<Slice>> &multRingsUserMemSlice = std::vector<std::vector<Slice>> (0));
     HcclResult KernelRun(const OpParam &param, ExecMem &execMem) override;
+    HcclResult KernelRunInterServer(const OpParam &param, ExecMem &execMem) override;
+    HcclResult KernelRunIntraServer(const OpParam &param, ExecMem &execMem) override;
+    HcclResult CalExchangeRemoteRank(u32 &remoteRankSend, u32 &remoteRankRecv);
+    HcclResult ExchangeData(Stream &stream, const ExecMem &execMem, void *userInBase);
+    HcclResult CalcExchangeCommInfo(std::vector<LevelNSubCommTransport>& opTransport);
+    HcclResult GetTransport(u32 commIndex, u32 remoteUserRank, LINK &targetLink);
+    HcclResult ExecuteBarrier(const std::shared_ptr<Transport> &preLink, const std::shared_ptr<Transport> &aftLink, Stream &stream);
+    bool IsLevel0Neighbor(u32 remoteRank, u32 userRank);
 };
 
 } // namespace hccl

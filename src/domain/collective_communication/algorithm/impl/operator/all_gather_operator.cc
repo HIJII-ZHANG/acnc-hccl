@@ -12,8 +12,10 @@
 #include "device_capacity.h"
 #include "rank_consistentcy_checker.h"
 #include "executor_impl.h"
-#include "coll_alg_op_registry.h"
+#include "coll_alg_utils.h"
+#include "stream_active_manager.h"
 #include "hccl_aiv.h"
+#include "coll_alg_op_registry.h"
 
 namespace hccl {
 AllGatherOperator::AllGatherOperator(AlgConfigurator* algConfigurator, CCLBufferManager &cclBufferManager,
@@ -139,6 +141,12 @@ HcclResult AllGatherOperator::SelectAlgfor910B(const OpParam& param, std::string
         }
     }
 
+    // AHC 算法选择逻辑
+    if (((algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC) ||
+         (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE))) {
+        CHK_RET(SelectAlgforAHC(dataSize, AHCOpType::AHC_OP_TYPE_ALLGATHER));
+    }
+
     // pipeline算法task数量多，如果超出FFTS子图限制，则重定向到HD算法
     if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_PIPELINE) {
         u32 contextNum = CalcContextNumForPipeline(HcclCMDType::HCCL_CMD_ALLGATHER);
@@ -224,7 +232,7 @@ HcclResult AllGatherOperator::SelectAlgfor91093(const OpParam& param, std::strin
 
     bool isOpbase = workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE;
     bool isAivMode = topoMatcher_->GetAivModeConfig() && IsSupportAIVCopy(param.DataDes.dataType) && serverNum_ == 1 &&
-        ((isOpbase && dataSize <= AIV_ALL_GATHER_A3_ENTRY_SIZE) ||
+        !param.isZeroCopy && ((isOpbase && dataSize <= AIV_ALL_GATHER_A3_ENTRY_SIZE) ||
         (!isOpbase && dataSize <= AIV_ALL_GATHER_A3_GRAPH_ENTRY_SIZE));
     if (isAivMode) {
         if ((isOpbase && dataSize <= AIV_ALL_GATHER_SMALL_SIZE)
@@ -242,8 +250,19 @@ HcclResult AllGatherOperator::SelectAlgfor91093(const OpParam& param, std::strin
         (param.DataDes.count * unitSize <= HCCL_SMALL_COUNT_2_MB) &&
         (deviceNumPerAggregation_ > HCCL_DEVICE_NUM_TWO) && !GetExternalInputInterHccsDisable();
     bool smallCountOptimMultiServer = SmallCountOptimMultiServer(param);
-        
-    if (multiModuleDiffDeviceNumMode_ || multiSuperPodDiffServerNumMode_) {
+ 
+    // AHC 算法选择逻辑
+    if (((algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC) ||
+         (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE))) {
+        CHK_RET(SelectAlgforAHC(dataSize, AHCOpType::AHC_OP_TYPE_ALLGATHER));
+    }
+
+    bool isHccsPlusSio = userRankSize_ == 2 && pairLinkCounter_[static_cast<u32>(LinkTypeInServer::SIO_TYPE)] == 1;
+    isHccsPlusSio = false;  //rts未适配，不启用
+
+    if (isHccsPlusSio && param.isZeroCopy) {
+        algName = "AllGatherSioHccsExecutor";
+    } else if (multiModuleDiffDeviceNumMode_) {
         algName = "AllGatherComm";
     } else if (smallCountOptimMultiServer) {
         algName = "AllGatherSmallCount";
@@ -267,9 +286,10 @@ HcclResult AllGatherOperator::SelectAlgfor91093(const OpParam& param, std::strin
                 algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_RING;
             }
         } else if (!(algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING || algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB ||
-            algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_WHOLE_RING)) {
+            algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_WHOLE_RING || algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC ||
+            algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE )) {
             algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_NHR;
-            HCCL_WARNING("[AllGatherOperator][SelectAlgfor91093] only support ring, NB and NHR in AlgoLevel1 yet, "\
+            HCCL_WARNING("[AllGatherOperator][SelectAlgfor91093] only support ring, NB AHC and NHR in AlgoLevel1 yet, "\
                 "default is algType=NHR.");
         }
         if (IsSupportUnifiedMarch(param, topoType_, serverNum_, superPodNum_)) {
@@ -285,7 +305,7 @@ HcclResult AllGatherOperator::SelectAlgfor91093(const OpParam& param, std::strin
     HCCL_INFO("[SelectAlgfor91093] all_gather SelectAlgfor91093 is algName [%s]", algName.c_str());
     return HCCL_SUCCESS;
 }
-
+ 
 REGISTER_OP(HcclCMDType::HCCL_CMD_ALLGATHER, AllGather, AllGatherOperator);
 
 }

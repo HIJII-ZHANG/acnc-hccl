@@ -97,6 +97,13 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::CalcLevel1CommInfo(TransportM
     return HCCL_SUCCESS;
 }
 
+u32 CollAllReduceSmallCountAivRdmaExecutor::CalBlockDim(u32 rankSize, u64 dataSize, HcclCMDType cmdType)
+{
+    u32 blockDim = rankSize; // 默认情况使用rankSize个AIV
+    HCCL_INFO("[CollAllReduceSmallCountAivRdmaExecutor][CalBlockDim] blockDim is set to [%u]", blockDim);
+    return blockDim;
+}
+
 HcclResult CollAllReduceSmallCountAivRdmaExecutor::Orchestrate(OpParam& param, AlgResourceResponse& algRes)
 {
     HcclUs startut = TIME_NOW();
@@ -229,10 +236,13 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::KernelRun(const OpParam &para
     AivTopoArgs topoArgs {
         intraRankId, intraRankSize, topoAttr_.isDiffDeviceModule ? topoAttr_.devicePhyId : A_X_SIZE
     };
-    AivResourceArgs resourceArgs { param.tag, param.stream.ptr(), dataBuffers, flagBuffers, execMem.inputMem.size() };
+    blockDim_ = CalBlockDim(intraRankSize);
+    AivResourceArgs resourceArgs {
+        param.tag, param.stream.ptr(), dataBuffers, flagBuffers, execMem.inputMem.size(), blockDim_
+    };
     AivAlgArgs algArgs { INTRA_RS_STEP, true };
     struct AivProfilingInfo aivProfilingInfo;
-    
+    aivProfilingInfo.counter = opCounter_;
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
         HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
         HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
@@ -243,7 +253,6 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::KernelRun(const OpParam &para
     TaskAivProfiler(opArgs.cmdType, aivProfilingInfo.tag, opArgs.count * sizeof(opArgs.dataType),
         aivProfilingInfo.blockDim, topoArgs.rankSize, resourceArgs.buffersOut[topoArgs.rank], resourceArgs.stream,
         algArgs.step, aivProfilingInfo.beginTime);
-    blockDim_ = aivProfilingInfo.blockDim;
     // use hd algo
     u32 arOutputOffset = 0;  // 跨机allreduce的结果的位置，相对于inputMem的偏移
     CHK_RET(InterServerHDOneshot(param, execMem, arOutputOffset, dataSegsSlice[commIndex].size / perDataSize,
@@ -271,7 +280,6 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::KernelRun(const OpParam &para
         HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());
         HCCL_PROFILER_DEL_TAG(param.tag);
     }
-    blockDim_ = aivProfilingInfo.blockDim;
 
     HCCL_INFO("[CollAllReduceSmallCountAivRdmaExecutor][KernelRun]allreduce aiv run success.");
     return HCCL_SUCCESS;

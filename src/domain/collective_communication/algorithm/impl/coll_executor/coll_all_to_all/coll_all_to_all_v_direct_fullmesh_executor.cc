@@ -10,6 +10,7 @@
 
 
 #include "coll_all_to_all_v_direct_fullmesh_executor.h"
+#include "stream_utils.h"
 
 namespace hccl {
 
@@ -26,6 +27,16 @@ HcclResult CollRunAlltoAllDirectFullmesh::Orchestrate(OpParam& param, AlgResourc
     tag_ = param.tag;
     algResResp_ = &algRes;
     AlltoAllVParam_ = param;
+    rtModel_t rtModel = nullptr;
+    bool isCapture = false;
+    HcclResult retCapture = GetStreamCaptureInfo(param.stream.ptr(), rtModel, isCapture);
+    CHK_PRT_CONT(retCapture != HCCL_SUCCESS,
+        HCCL_ERROR("Get capture status error. return[%d], capture model", retCapture));
+    // isA2AlltoallvMutliModule_表示A2上的alltoallV多机场景
+    isA2AlltoallvMutliModule_ = (AlltoAllVParam_.opType == HcclCMDType::HCCL_CMD_ALLTOALLV &&
+                                topoAttr_.deviceType == DevType::DEV_TYPE_910B &&
+                                !topoAttr_.isSingleMeshAggregation &&
+                                isCapture);
 
     HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
 
@@ -60,7 +71,9 @@ HcclResult CollRunAlltoAllDirectFullmesh::GetLocalSDMAGroupInfo(const u32 userRa
     u32& devNumInlocalPod, u32& rankIdxInPod)
 {
     (void) userRank;
-    if (topoMatcher_->GetExternalInputInterHccsDisable()) {
+    bool isA2MultiModule = topoAttr_.deviceType == DevType::DEV_TYPE_910B &&
+                            !topoAttr_.isSingleMeshAggregation;
+    if (topoMatcher_->GetExternalInputInterHccsDisable() || isA2MultiModule) {
         CHK_RET(topoMatcher_->GetLocalServerRankSize(topoAttr_.userRank, devNumInlocalPod, rankIdxInPod));
     } else {
         CHK_RET(topoMatcher_->GetLocalSuperPodRankSize(topoAttr_.userRank, devNumInlocalPod, rankIdxInPod));
@@ -298,6 +311,7 @@ HcclResult CollRunAlltoAllDirectFullmesh::KernelRun(const OpParam &param, ExecMe
     prepareData.isSuPodAsym = isSuPodAsym;
     prepareData.opType = param.opType;
     prepareData.algOpContext = algOpContext_;
+    prepareData.isA2AlltoallvMutliModule = isA2AlltoallvMutliModule_;
 
     CHK_RET(tempAlg->Prepare(prepareData));
 

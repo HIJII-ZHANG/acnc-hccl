@@ -23,10 +23,11 @@ namespace hccl {
 constexpr int HEAD = 0;
 constexpr int TAIL = 1;
 
-HcclResult StarsCounter(const HcclDispatcher &dispatcher, Stream &stream, int flag, bool isAicpuMode, bool isRetry);
+HcclResult StarsCounter(const HcclDispatcher &dispatcher, Stream &stream, int flag, bool isAicpuMode, bool isRetry, bool isAivMode);
 HcclResult FftsHeadCounter(const HcclDispatcher &dispatcher, Stream &stream);
 HcclResult FftsTailCounter(const HcclDispatcher &dispatcher, Stream &stream);
 HcclResult GetOpCountInfo(OpCounterInfo &opCounterInfo);
+HcclResult ClearOpCounterMem();
 
 class OpExeCounter {
 public:
@@ -36,6 +37,7 @@ public:
     HcclResult InitCounter();
     HcclResult DeInitCounter();
     HcclResult GetOpCountInfo(OpCounterInfo &opCounterInfo);
+    HcclResult ClearOpCounterMem();
 
 private:
     OpExeCounter() = default;

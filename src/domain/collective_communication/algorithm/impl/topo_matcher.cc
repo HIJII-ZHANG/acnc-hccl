@@ -17,6 +17,7 @@
 #include "topo_matcher.h"
 #include "search_path.h"
 #include "calc_p2p_transport_req.h"
+#include "calc_hccs_plus_sio_transport_req_pub.h"
 namespace hccl {
 
 TopoMatcher::TopoMatcher(const std::vector<std::vector<std::vector<u32>>> CommPlaneRanks,
@@ -81,7 +82,7 @@ HcclResult TopoMatcher::CalcCommPlaneInfo(const std::string &tag, const CommPara
                 topoInfo_.CommPlaneSubGroupVector[commParaInfo.commPlane].size() == 0,
                 HCCL_ERROR("[TopoMatcher][CalcCommPlaneInfo] CommPlaneSubGroupVector para init error."), HCCL_E_PARA);
             calcTransportReq.reset(new (std::nothrow) CalcAHCTransportReq(CommPlaneVector_[commParaInfo.commPlane],
-                isBridgeVector_, userRank_, topoInfo_.CommPlaneSubGroupVector[commParaInfo.commPlane][0]));
+                isBridgeVector_, userRank_, topoInfo_.CommPlaneSubGroupVector[commParaInfo.commPlane], topoInfo_.ahcAlgOption));
             break;
         }
         case CommType::COMM_TAG_ASYMMETRIC_HIERARCHICAL_CONCATENATE_BROKE:
@@ -91,7 +92,7 @@ HcclResult TopoMatcher::CalcCommPlaneInfo(const std::string &tag, const CommPara
                 topoInfo_.CommPlaneSubGroupVector[commParaInfo.commPlane].size() == 0,
                 HCCL_ERROR("[TopoMatcher][CalcCommPlaneInfo] CommPlaneSubGroupVector para init error."), HCCL_E_PARA);
             calcTransportReq.reset(new (std::nothrow) CalcAHCBrokeTransportReq(CommPlaneVector_[commParaInfo.commPlane],
-                isBridgeVector_, userRank_, topoInfo_.CommPlaneSubGroupVector[commParaInfo.commPlane][0]));
+                isBridgeVector_, userRank_, topoInfo_.CommPlaneSubGroupVector[commParaInfo.commPlane], topoInfo_.ahcAlgOption));
             break;
         }
         case CommType::COMM_TAG_NONUNIFORM_BRUCK:
@@ -112,6 +113,11 @@ HcclResult TopoMatcher::CalcCommPlaneInfo(const std::string &tag, const CommPara
         }
         case CommType::COMM_TAG_P2P: {
             calcTransportReq.reset(new (std::nothrow) CalcP2PTransportReq(CommPlaneVector_[commParaInfo.commPlane],
+                isBridgeVector_, userRank_));
+            break;
+        }
+        case CommType::COMM_TAG_HCCS_PLUS_SIO: {
+            calcTransportReq.reset(new (std::nothrow) CalcHccsPlusSioTransportReq(CommPlaneVector_[commParaInfo.commPlane],
                 isBridgeVector_, userRank_));
             break;
         }
@@ -145,7 +151,8 @@ HcclResult TopoMatcher::GetRankMap(const CommParaInfo &commParaInfo, std::vector
         SingleSubCommTransport &subCommTransport = commTransport[ringIndex];
         // 有建链诉求，则记录从userRank到subCommRank 和 从subCommRank到userRank的映射
         if (subCommTransport.transportRequests.size() != 0) {
-            if (commParaInfo.commType == CommType::COMM_TAG_PARTIAL_MESH_COMBINED) {
+            if (commParaInfo.commType == CommType::COMM_TAG_PARTIAL_MESH_COMBINED ||
+                commParaInfo.commType == CommType::COMM_TAG_HCCS_PLUS_SIO) {
                 CHK_RET(GetSub2UserRankMap(commParaInfo.commPlane, 0, subCommTransport.subCommRank2UserRank));
                 CHK_RET(GetUserRank2SubMap(commParaInfo.commPlane, 0, subCommTransport.userRank2subCommRank));
             } else {
@@ -162,7 +169,6 @@ HcclResult TopoMatcher::SetRankMap()
     // 构建由UserRank到子通信域的映射
     subCommRank2UserRank_.resize(static_cast<u32>(COMM_LEVEL_RESERVED));
     userRank2subCommRank_.resize(static_cast<u32>(COMM_LEVEL_RESERVED));
-
     for (u32 levelIndex = 0; levelIndex < CommPlaneVector_.size(); levelIndex++) {
         u32 ringSize = CommPlaneVector_[levelIndex].size();
         subCommRank2UserRank_[levelIndex].resize(ringSize);
@@ -267,11 +273,6 @@ u32 TopoMatcher::GetExternalInputHcclEnableFfts()
 u32 TopoMatcher::GetExternalInputHcclDeterministic()
 {
     return externalEnable_.deterministic;
-}
-
-u32 TopoMatcher::GetExternalInputHcclHighPerfEnable()
-{
-    return externalEnable_.highPerfEnable;
 }
 
 u32 TopoMatcher::GetExternalInputIntraRoceSwitch()
@@ -573,10 +574,14 @@ HcclResult TopoMatcher::SetCommPlaneSubGroupVector(std::vector<std::vector<std::
     return HCCL_SUCCESS;
 }
 
-HcclResult TopoMatcher::GetAHCAlgOption(std::map<std::string, std::string> &ahcAlgOption)
+void TopoMatcher::GetAHCAlgOption(std::map<AHCConcOpType, TemplateType> &ahcAlgOption)
 {
     ahcAlgOption = topoInfo_.ahcAlgOption;
-    return HCCL_SUCCESS;
+}
+
+void TopoMatcher::SetAHCAlgOption(std::map<AHCConcOpType, TemplateType> &ahcAlgOption)
+{
+    topoInfo_.ahcAlgOption = ahcAlgOption;
 }
 
 }

@@ -17,6 +17,7 @@ set(src_list
     ${CMAKE_CURRENT_SOURCE_DIR}/coll_reduce_scatter_semi_ring_executor.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/coll_reduce_scatter_aiv_rdma_executor.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/coll_reduce_scatter_mesh_graph_executor.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/coll_reduce_scatter_hccs_sio_executor.cc
 )
 
 target_sources(hccl_alg PRIVATE

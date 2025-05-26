@@ -25,6 +25,9 @@ constexpr u32 RETRY_CQE_ARRAY_SIZE = 128; // 重执行时获取的CQE数组的�
 constexpr u32 JITTER_TIME = 300;  // 关键事件允许的误差事件范围±300s。误差来源：EVENT和NOTIFY差异、传播耗时、计时误差
 constexpr u32 EVENT_MAX_CNT = 5000;  // 防止内存泄漏，同时不能太短，防止正常事件被冲掉
 constexpr u32 THROUND_MILS = 1000;   // 1000ms
+
+constexpr s32 HCCL_STUCK_DETECT_TIME_MIN = 60; // 卡住检测最短时间
+constexpr s32 HCCL_STUCK_DETECT_TIME_BASE = 3; // 卡住检测时间为execTime/3
 Heartbeat &Heartbeat::GetInstance(s32 deviceLogicID)
 {
     static Heartbeat hb[MAX_MODULE_DEVICE_NUM];
@@ -83,7 +86,7 @@ HcclResult Heartbeat::InitNic(const NicType nicType, const s32 devicePhyId, cons
 
 HcclResult Heartbeat::Init(const RankInfo& locRank, const bool useSuperPodMode, const bool isNeedNic, const u32 port)
 {
-    HCCL_INFO("[Init]heartbeat Init begin");
+    HCCL_INFO("[Init]heartbeat Init begin.");
     devicePhyId_ = locRank.devicePhyId;
     if (IsEnableBackupLink()) {
         CHK_RET(hrtGetPairDevicePhyId(devicePhyId_, deviceBackUpPhyId_));
@@ -136,13 +139,16 @@ HcclResult Heartbeat::Init(const RankInfo& locRank, const bool useSuperPodMode, 
     lostThreshold_ = 30;  // 心跳丢失阈值为30s
     initialized_ = true;
     isDeInit_ = false;
-    HCCL_INFO("[Init]heartbeat Init end");
+
+    stuckDetectTime_ = std::max(GetExternalInputHcclExecTimeOut() / HCCL_STUCK_DETECT_TIME_BASE,
+        HCCL_STUCK_DETECT_TIME_MIN);
+    HCCL_INFO("[Init]heartbeat Init end, stuckDetectTime[%d].", stuckDetectTime_);
     return HCCL_SUCCESS;
 }
 
 HcclResult Heartbeat::DeInit()
 {
-    HCCL_INFO("[DeInit]heartbeat deinit begin");
+    HCCL_INFO("[DeInit]heartbeat deinit begin.");
     isDeInit_ = true;
     startSendRecvTask_ = false;
     {
@@ -180,7 +186,7 @@ HcclResult Heartbeat::DeInit()
     mapLock.unlock();
 
     initialized_ = false;
-    HCCL_INFO("[DeInit]heartbeat deinit end");
+    HCCL_INFO("[DeInit]heartbeat deinit end.");
     return HCCL_SUCCESS;
 }
 
@@ -642,7 +648,7 @@ void GetSocketTypeIn91093(const std::vector<RankInfo> &rankInfos, bool useSuperP
         if (locRank.serverId == rankInfo.serverId) {  // serverId相同表示同超结点同server
             type = HcclSocketType::SOCKET_VNIC;
         } else if (locRank.superPodId == rankInfo.superPodId) {  // 同超结点
-            type = (GetExternalInputInterHccsDisable() == true || GetExternalInputInterVnicDisable() == true)
+            type = (GetExternalInputInterHccsDisable() == true)
                         ? HcclSocketType::SOCKET_NIC
                         : HcclSocketType::SOCKET_VNIC;
         } else {  // 表示不同超结点
@@ -906,7 +912,7 @@ bool Heartbeat::IsKeyEvent(HeartBeatFrame &event, HcclUs curTime)
             detectionTime = 0;
             break;
         case HeartBeatStatus::HEARTBEAT_STUCK:
-            detectionTime = 2 * GetExternalInputStuckDetectTime();  // 最长探测时间为2倍的卡住检测时间
+            detectionTime = 2 * stuckDetectTime_;  // 最长探测时间为2倍的卡住检测时间
             break;
         case HeartBeatStatus::HEARTBEAT_NOTIFY:
         default:
@@ -1067,7 +1073,7 @@ void Heartbeat::HeartbeatStatusMonitor()
 void Heartbeat::InitStuckDetection(CounterStat &counterStat)
 {
     counterStat.isNeedDetect = (GetExternalInputOpCounter() == true) ? true : false;
-    counterStat.couterPrintInter = GetExternalInputStuckDetectTime() * THROUND_MILS / BROADCAST_INTERVAL;
+    counterStat.couterPrintInter = stuckDetectTime_ * THROUND_MILS / BROADCAST_INTERVAL;
 }
 
 void Heartbeat::StuckDetection(uint64_t &cnt, CounterStat &counterStat)
@@ -1095,7 +1101,7 @@ void Heartbeat::StuckDetection(uint64_t &cnt, CounterStat &counterStat)
                 counterStat.issueCnt++;
             } else {
                 // 检测不卡之后，检测间隔恢复到默认间隔
-                counterStat.couterPrintInter = GetExternalInputStuckDetectTime() * THROUND_MILS / BROADCAST_INTERVAL;
+                counterStat.couterPrintInter = stuckDetectTime_ * THROUND_MILS / BROADCAST_INTERVAL;
                 counterStat.issueCnt = 0;
             }
             counterStat.oldCounter = counterStat.newCounter;  // 更新旧的计数器
@@ -1428,10 +1434,8 @@ u32 Heartbeat::GetPort(HcclSocketType type, u32 remoteUserRank, u32 remoteDevice
         } else {
             port = HETEROG_CCL_PORT;
         }
-    } else if (!GetExternalInputHcclDeviceNicDisable() && !GetExternalInputHcclHostRdmaEnable()) {
-            port = HETEROG_CCL_PORT;
     } else {
-            port = GetHostPort(remoteDeviceId);
+        port = HETEROG_CCL_PORT;
     }
     return port;
 }

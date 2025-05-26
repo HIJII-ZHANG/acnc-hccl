@@ -28,7 +28,6 @@ private:
         TransportMemType outputType,
         std::vector<LevelNSubCommTransport>& opTransport) override;
     HcclResult CalcTransportMemType(TransportMemType &inputType, TransportMemType &outputType);
-    bool IsSupportHighPerf();
 
     /* *************** 算法编排 *************** */
     bool IsHugeData(const u64 curSize) override;

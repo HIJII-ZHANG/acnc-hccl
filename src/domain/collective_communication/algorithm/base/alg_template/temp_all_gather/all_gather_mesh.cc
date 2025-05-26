@@ -59,35 +59,6 @@ HcclResult AllGatherMesh::Rx(const LINK &link, const Slice &srcSlice, const Slic
     return HCCL_SUCCESS;
 }
 
-HcclResult AllGatherMesh::RunAllGatherHighPerf(const std::vector<LINK> &links, const std::vector<Slice> &outputSlices,
-    const std::vector<Slice> &inputSlices)
-{
-    Stream subStream;
-    for (u32 round = 1; round < interRankSize_; round++) {
-        u32 dstRank = BackwardRank(interRank_, interRankSize_, round);
-
-        subStream = (round == interRankSize_ - 1) ? stream_ : meshStreams_[round - 1];
-
-        profilerInput_.streamID = subStream.id();
-        profilerInput_.planeID = round - 1;
-        profilerInput_.step = HCCL_EXEC_STEP_NOT_SET;
-
-        CHK_RET(links[dstRank]->TxAck(subStream));
-        CHK_RET(links[dstRank]->RxAck(subStream));
-        void *srcMemPtr = nullptr;
-        // 从对端的input内存拿数据，input==output也没有关系
-        CHK_RET(links[dstRank]->GetRemoteMem(UserMemType::OUTPUT_MEM, &srcMemPtr));
-        DeviceMem srcDevMem(static_cast<s8 *>(srcMemPtr) + baseOffset_ + inputSlices[dstRank].offset,
-            inputSlices[dstRank].size);
-        DeviceMem dstDevMem = outputMem_.range(outputSlices[dstRank].offset, outputSlices[dstRank].size);
-        CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dstDevMem, srcDevMem, subStream,
-            links[dstRank]->GetRemoteRank(), links[dstRank]->GetLinkType()));
-        CHK_RET(links[dstRank]->TxDataSignal(subStream)); // Post remoteSendReadyNotify
-        CHK_RET(links[dstRank]->RxDataSignal(subStream)); // Wait localSendReadyNotify
-    }
-    return HCCL_SUCCESS;
-}
-
 HcclResult AllGatherMesh::RunAllGather(const std::vector<LINK> &links, const std::vector<Slice> &outputSlices,
     const std::vector<Slice> &inputSlices)
 {
@@ -231,11 +202,7 @@ HcclResult AllGatherMesh::RunAsync(const u32 rank, const u32 rankSize, const std
         CHK_RET(LocalNotify::Post(stream_, dispatcher_, (*meshSignalAux_)[streamIndex],
             profilerInput_.stage));
     }
-    if (GetExternalInputHcclHighPerfEnable() != 0) {
-        CHK_RET(RunAllGatherHighPerf(links, slices_, inputSlices));
-    } else {
-        CHK_RET(RunAllGather(links, slices_, inputSlices));
-    }
+    CHK_RET(RunAllGather(links, slices_, inputSlices));
 
     for (u32 streamIndex = 0; streamIndex < rankSize - 2; streamIndex++) { // rankSize - 2 stream num
         HCCL_DEBUG("rank[%u] streamindex[%u] wait signal[%p] ",

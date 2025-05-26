@@ -202,12 +202,17 @@ HcclResult AlltoAllOperator::GetAlltoAllvSendRecvInfo(const OpParam& param, cons
 
 HcclResult AlltoAllOperator::SelectAlgforAiv(const OpParam& param, std::string& algName)
 {
+    bool isOpbase = GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE;
     if (deviceType_ == DevType::DEV_TYPE_910B && param.opType == HcclCMDType::HCCL_CMD_ALLTOALL &&
         !isSingleMeshAggregation_) {
         // aiv模式下910A2多server场景 alltoall算子
         algName = "AlltoAllStagedAIVRdmaExecutor";
     } else if (deviceType_ == DevType::DEV_TYPE_910_93 && serverNum_ > 1) {
         algName = "AlltoAllMeshAivFor91093Executor";
+    } else if (!isOpbase && deviceType_ == DevType::DEV_TYPE_910_93 && param.opType == HcclCMDType::HCCL_CMD_ALLTOALL &&
+        param.All2AllDataDes.sendCount * SIZE_TABLE[param.All2AllDataDes.sendType] <=
+        AIV_A3_ALL_TO_ALL_GRAPH_GUIYI_SIZE) {
+        algName = "AlltoAllMeshAivSmallCountExecutor";
     } else {
         algName = "AlltoAllMeshAivExecutor";
     }
@@ -235,7 +240,7 @@ HcclResult AlltoAllOperator::SelectAlgforAlltoAll(const OpParam& param, std::str
     } else if (isCommon310P3DUO_) {
         algName = "RunAlltoAllVFor310PExecutor";
     } else if (IsSupportDirectFullmeshForAlltoallv(param, deviceType_, useSuperPodMode_, serverNum_,
-        isSingleMeshAggregation_, userRankSize_) || param.aicpuUnfoldMode || deviceType_ == DevType::DEV_TYPE_310P3) {
+        isSingleMeshAggregation_, userRankSize_, multiModuleDiffDeviceNumMode_) || param.aicpuUnfoldMode || deviceType_ == DevType::DEV_TYPE_310P3) {
         algName = "RunAlltoAllDirectFullmesh";
         HCCL_INFO("[SelectAlgforAlltoAll] all_to_all algName is [%s]", algName.c_str());
         return HCCL_SUCCESS;
@@ -278,7 +283,7 @@ HcclResult AlltoAllOperator::SelectAlg(const std::string& tag, const OpParam& pa
 
     if (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
         if (IsSupportDirectFullmeshForAlltoallv(param, deviceType_, useSuperPodMode_, serverNum_,
-            isSingleMeshAggregation_, userRankSize_) || param.aicpuUnfoldMode) {
+            isSingleMeshAggregation_, userRankSize_, multiModuleDiffDeviceNumMode_) || param.aicpuUnfoldMode) {
             newTag = tag + algName;
         } else {
             newTag = tag + algName + copyMode;
@@ -291,7 +296,7 @@ HcclResult AlltoAllOperator::SelectAlg(const std::string& tag, const OpParam& pa
 
     if (!IsSatisfyAlltoAllAivCondition(param) &&
          !IsSupportDirectFullmeshForAlltoallv(param, deviceType_, useSuperPodMode_, serverNum_,
-            isSingleMeshAggregation_, userRankSize_) && !param.aicpuUnfoldMode) {
+            isSingleMeshAggregation_, userRankSize_, multiModuleDiffDeviceNumMode_) && !param.aicpuUnfoldMode) {
         CHK_RET(SetExcutorExtraInfo(algName, param));
     }
     return ret;
@@ -367,7 +372,7 @@ bool AlltoAllOperator::JudgeIfNeedPreProcessAndGetParam(const OpParam& param,
 {
     if (param.opType == HcclCMDType::HCCL_CMD_ALLTOALLV && !IsSatisfyAlltoAllAivCondition(param)) {
         if (IsSupportDirectFullmeshForAlltoallv(param, deviceType_, useSuperPodMode_, serverNum_,
-            isSingleMeshAggregation_, userRankSize_) || param.aicpuUnfoldMode) {
+            isSingleMeshAggregation_, userRankSize_, multiModuleDiffDeviceNumMode_) || param.aicpuUnfoldMode) {
             return false;
         }
         CHK_RET(PrepareAlltoAllAddrInfo(param.All2AllDataDes.sendCounts, param.All2AllDataDes.sdispls,
@@ -460,7 +465,7 @@ bool AlltoAllOperator::IsSatisfyAlltoAllAivCondition(const OpParam& param)
     bool isBufferEnough = !isOpbase ||
         cclBufferManager_.GetInCCLbufferSize() >= AIV_ALL_TO_ALL_BIG_SIZE * MAX_RANK_SIZE;
     bool isSupportAiv = topoMatcher_->GetAivModeConfig() && IsSupportAIVCopy(param.All2AllDataDes.sendType) &&
-        userRankSize_ > 1 && isBufferEnough;
+        userRankSize_ > 1 && isBufferEnough && !param.isZeroCopy;
     if (deviceType_ == DevType::DEV_TYPE_910B) {
         bool isModuleSatisfy = false;
         if (param.opType == HcclCMDType::HCCL_CMD_ALLTOALL) {
@@ -484,7 +489,7 @@ bool AlltoAllOperator::IsSatisfyAlltoAllAivCondition(const OpParam& param)
         bool isSupportInterHccs = (superPodNum_ == 1 && serverNum_ > 1 && !GetExternalInputInterHccsDisable());
         if (param.opType == HcclCMDType::HCCL_CMD_ALLTOALL) {
             u64 dataSize = param.All2AllDataDes.sendCount * SIZE_TABLE[param.All2AllDataDes.sendType];
-            return isSupportAiv && ((serverNum_ == 1 && dataSize <= AIV_ALL_TO_ALL_A3_ENTRY_SIZE) ||
+            return isSupportAiv && ((serverNum_ == 1 && (dataSize <= AIV_ALL_TO_ALL_A3_ENTRY_SIZE || !isOpbase)) ||
                 isSupportInterHccs);
         } else {
             return isSupportAiv && (serverNum_ == 1 || isSupportInterHccs);

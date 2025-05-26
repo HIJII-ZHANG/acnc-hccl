@@ -48,13 +48,7 @@ __aicore__ inline void AivAll2AllV91093::BatchRecordWaitV(GM_ADDR* buffersOut, u
         }
         globalTag.SetGlobalBuffer((__gm__ int32_t *)(flagAddrSelf_ + flagOffset + targetRanks[i] * FLAG_SIZE),
             UB_FLAG_PAD_COUNT);
-        while (true) {
-            DataCopy(localCheckTensor, globalTag, UB_FLAG_PAD_COUNT);
-            SyncFunc<HardEvent::MTE2_S>();
-            if (localCheckTensor.GetValue(0) == curTag) {
-                break;
-            }
-        }
+        WaitSignalValue((__gm__ int32_t *)(flagAddrSelf_ + flagOffset + targetRanks[i] * FLAG_SIZE), localCheckTensor, curTag);
         DataCopy(globalTag, localClearTensor, UB_FLAG_PAD_COUNT); //清零
     }
 }
@@ -169,6 +163,9 @@ __aicore__ inline void aiv_all_to_all_v_91093(KERNEL_ARGS_DEF, ExtraArgsV2* extr
 {
     AivAll2AllV91093 op;
     uint32_t baseFlagOffset = 0;
-    op.Init(buffOut0, rank, rankSize, tag, baseFlagOffset);
+    op.Init(buffOut0, rank, rankSize, tag, baseFlagOffset, true);
+    op.InitOpCounter(headCountMem, tailCountMem, addOneMem, counterMemSize, isEnableCounter);
+    op.HeadCounter();
     op.Process<T>(buffIn0, buffOut0, input, output, tag, bufferSize, extraArgs);
+    op.TailCounter();
 }

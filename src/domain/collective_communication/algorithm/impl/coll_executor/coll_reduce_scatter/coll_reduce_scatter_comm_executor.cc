@@ -101,6 +101,7 @@ HcclResult CollReduceScatterCommExecutor::CalcCombinedCommInfo(TransportMemType 
     }
 
     CommParaInfo commParaInfo(commPlane, CommType::COMM_TAG_MAX);
+
     if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
         commParaInfo.commType = CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING;
     } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
@@ -203,7 +204,6 @@ HcclResult CollReduceScatterCommExecutor::KernelRun(const OpParam &param, ExecMe
         DeviceMem dstMem = execMem.outputMem.range(0, dataSize);
         CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dstMem, srcMem, const_cast<Stream&>(param.stream)));
     }
-
     return HCCL_SUCCESS;
 }
 

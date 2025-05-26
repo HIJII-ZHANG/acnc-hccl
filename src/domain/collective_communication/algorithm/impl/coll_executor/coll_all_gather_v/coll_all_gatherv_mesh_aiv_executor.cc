@@ -56,6 +56,13 @@ HcclResult AllGatherVMeshAivExecutor::CalcLevel0CommInfo(TransportMemType inputT
     return HCCL_SUCCESS;
 }
 
+u32 AllGatherVMeshAivExecutor::CalBlockDim(u32 rankSize, u64 dataSize, HcclCMDType cmdType)
+{
+    u32 blockDim = rankSize + 1; // 单机场景，单算子AllGather大数据使用(rankSize + 1)个aiv
+    HCCL_INFO("[AllGatherVMeshAivExecutor][CalBlockDim] blockDim is set to [%u]", blockDim);
+    return blockDim;
+}
+
 HcclResult AllGatherVMeshAivExecutor::Orchestrate(OpParam& param, AlgResourceResponse& algRes)
 {
     HcclUs startut = TIME_NOW();
@@ -122,17 +129,20 @@ HcclResult AllGatherVMeshAivExecutor::KernelRun(const OpParam &param, ExecMem &e
         param.VDataDes.dataType, param.reduceType, param.root, isOpbase
     };
     AivTopoArgs topoArgs { localRank, localRankSize };
-    AivResourceArgs resourceArgs { param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size() };
+    blockDim_ = CalBlockDim(localRankSize);
+    AivResourceArgs resourceArgs {
+        param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size(), blockDim_
+    };
     AivAlgArgs algArgs {};
     struct AivProfilingInfo aivProfilingInfo;
-
+    aivProfilingInfo.counter = opCounter_;
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
         HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
         HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
     }
 
     HcclResult ret = ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, extraArgs, aivProfilingInfo);
-    
+
     TaskAivProfiler(opArgs.cmdType, aivProfilingInfo.tag, opArgs.count * sizeof(opArgs.dataType),
         aivProfilingInfo.blockDim, topoArgs.rankSize, resourceArgs.buffersOut[topoArgs.rank], resourceArgs.stream,
         algArgs.step, aivProfilingInfo.beginTime);
@@ -142,7 +152,6 @@ HcclResult AllGatherVMeshAivExecutor::KernelRun(const OpParam &param, ExecMem &e
         HCCL_PROFILER_DEL_TAG(param.tag);
     }
 
-    blockDim_ = aivProfilingInfo.blockDim;
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[AllGatherVMeshAivExecutor][KernelRun]allgatherv aiv failed, return[%d]", ret), ret);
 

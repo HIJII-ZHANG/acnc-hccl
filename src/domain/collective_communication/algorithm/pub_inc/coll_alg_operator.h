@@ -57,6 +57,7 @@ public:
         const HcclCMDType &opType, OpParam &param, std::string& algName, u8 &isInplaceStatus,
         InplaceSupportRetryStatus &inPlaceSupportRetryStatus);
     HcclResult GetBlockDim(u32& blcckDim);
+    HcclResult SetOpCounter(const OpCounterInfo& opCounter);
 protected:
     std::string GenerateNewTagByAlgTypeLevel1(std::string tag, std::string algTypeLevel1Tag) const;
     u32 CalcContextNumForPipeline(HcclCMDType hcclCMDType);
@@ -69,6 +70,11 @@ protected:
     bool Is910BSingleMesh();
     bool NeedCreateSingleMeshPlane(const bool isInlineReduce);
     virtual HcclResult SetExecutorAttr(const OpParam& param);
+    HcclResult SelectAlgforAHC(u64 dataSize, AHCOpType ahcOpType);
+    HcclResult AHCAlgSelect(AlgTypeLevel1 &algType, std::vector<std::vector<std::vector<u32>>> &globalSubGroups,
+        std::map<AHCConcOpType, TemplateType> &ahcAlgOption, AHCAlgSelectParam &ahcAlgSelectParam);
+    HcclResult AHCAlgOptionSelect(AlgTypeLevel1 &algType, std::vector<std::vector<std::vector<u32>>> &globalSubGroups,
+        std::map<AHCConcOpType, TemplateType> &ahcAlgOption, AHCAlgSelectParam &ahcAlgSelectParam);
 
     AlgType algType_;    // 算法类型
     TopoType topoType_;
@@ -116,6 +122,7 @@ protected:
     bool retryEnable_ = false;
     bool aivClearEnable_ = false;
     AlgOpContext algOpContext_;
+    OpCounterInfo opCounter_;
 private:
     virtual HcclResult SelectAlgoTypeForReduceScatter(float delay, u64 recvCurSize, float bandWidth,
         AlgTypeLevel1 &algType);

@@ -28,6 +28,8 @@
 #include "hccl_trace_info.h"
 #include "hccl_callback_task.h"
 #include "aicpu_operator_pub.h"
+#include "transport_pub.h"
+#include "h2d_dto/transport_h2d.h"
 #include "mr_manager.h"
 #include "transport_heterog_def.h"
 #include "resource_manager/queue_notify_manager.h"
@@ -43,6 +45,7 @@
 #include "heartbeat.h"
 #include "i_hccl_one_sided_service.h"
 #include "opretry_manager.h"
+#include "aclgraph/zero_copy_acl_graph.h"
 
 namespace hccl {
 using ServRankInfo_t = std::map<std::string, std::vector<RankInfo_t> >;
@@ -249,6 +252,7 @@ public:
     /* * 以下两函数用于防止重复初始化 */
     HcclResult AtomicInitSet();
     HcclResult HostMC2EnvResume();
+    HcclResult AivResume();
     void AtomicInitClear();
     bool GetNicInitialized();
     void DestroyAlgResource(AlgResourceResponse &res);
@@ -401,7 +405,7 @@ private:
     HcclResult PrintOpbaseKeyTraceInfo(void);
     HcclResult InitPara();
     HcclResult GetComm(const std::string &tag, CommBase **comm);
-    HcclResult Mc2CreateAndLaunchContext(rtStream_t aiCpuStream, bool isOpbaseMode, void **commContext);
+    HcclResult Mc2CreateAndLaunchContext(rtStream_t aiCpuStream, bool isOpbaseMode, void **commContext, const std::string &tag = "");
     HcclResult SetCommResource(u64 commBufferSize, void *commInPtr, void *commOutPtr, void *commExpPtr,
         CommBase *comm, level1StreamInfo_t &streamInfo, Stream &stream);
     HcclResult GetAicpuOpStreamAndNotify(HcclRtStream *opStream, u8 aicpuNotifyNum, void** aicpuNotify);
@@ -456,6 +460,7 @@ private:
     u32 realUserRank_;  // world group中的userrank
     u32 userRankSize_;
     std::vector<RankInfo> rankInfoList_;  // world group内rank的信息, 按照rank id递增依次排列
+    std::vector<RankInfo> rankInfoListIntraServer_; // 节点内rank信息，用于零拷贝
     bool drvInit_;                          // ra是否初始化
     ServRankInfo_t servRankInfo_;
     std::string serverId_;
@@ -595,7 +600,7 @@ private:
     HcclResult InitHDCommunicate();
     HcclResult InitOpRetry();
     HcclResult InitOpResPara();
-    HcclResult PrepareZeroCopy(HcclCMDType opType, OpParam &opParam);
+    HcclResult PrepareZeroCopy(HcclCMDType opType, OpParam &opParam, std::string algName);
     HcclResult UpdateZeroCopy(const OpParam &opParam, const AlgResourceResponse &algResource);
     HcclResult BuildZeroCopyParam();
     HcclResult AllocAndClearHostMem(u64 size, std::shared_ptr<HostMem> &buffer) const;
@@ -646,7 +651,8 @@ private:
     HcclResult BuildRemoteResByTag(const std::string &newTag, const u32 &usrRankId,
         HcclRankRelationResV2 *&rankRelationResHostPtr, HcclRankRelationResV2 *&rankRelationResDevicePtr,
         bool isBackup, bool isRetry);
-    HcclResult BuildOpRemoteLinkP2pResParam(const LINK &link, HccltagRemoteResV3 &tagRemoteRes);
+    HcclResult BuildOpRemoteLinkP2pResParam(const LINK &link, HccltagRemoteResV3 &tagRemoteRes,
+        TransportLinkType linkType = TransportLinkType::RESERVED);
     HcclResult BuildOpRemoteLinkRoceResParam(const LINK &link, HccltagRemoteResV3 &tagRemoteRes, bool isBakup,
         bool isRetry, bool isSecondBuild);
     HcclResult CheckNotifyOrQPMaxNum(u64 &existNum, const u64 &MaxNum, const bool &isNotifyRes);
@@ -656,8 +662,24 @@ private:
     void SaveLinkRes(const OpCommTransport &opTransportResponse);
     HcclResult SetDevIbverbsData(CommBase *comm, bool isSupportNormalQP, u64 commBufferSize, void *commInPtr,
         void *commOutPtr);
+    
+    // 获取 Transport 本端内存信息
+    HcclResult GetTransportLocalMem(const std::shared_ptr<Transport>& transport,
+        UserMemType memType, MemDetails& detail);
+    // 获取 Transport 远端内存信息
+    HcclResult GetTransportRemoteMem(const std::shared_ptr<Transport>& transport,
+        UserMemType memType, MemDetails& detail);
+
+    // 收集全部 Transport 内存/QP信息
+    HcclResult GenAiRMAInfo(CommBase *comm);
+    // 同步全部信息到Device
+    HcclResult H2DAiRMAInfo(const std::string &tag, rtStream_t aiCpuStream);
+    HcclResult GetAIVNormalQPInfo(CommBase *comm, const std::string &tag);
+    HcclResult GenIbvAiRMAInfo(u32 rankid, const std::shared_ptr<Transport>& transport, const std::string &tag);
+
     HcclResult CaptureSlaveStreams(rtStream_t mainStream, std::vector<Stream> &slaveStreams);
     HcclResult HandleAclGraphFirstOpAivBuff(rtStream_t mainStream);
+    
     HcclIpAddress loopBackIp_;
     bool profilingInitiated_;
     u64 callbackThreadId_;
@@ -771,6 +793,25 @@ private:
     DeviceMem ibverbsDataBuffer_;
     std::list<DeviceMem> ibverbsLocalNotify_;
     std::list<DeviceMem> ibverbsRemoteNotify_;
+
+    // Host侧收集的数据
+    HcclAiRMAInfo aiRMAInfoHost_;
+    std::vector<HcclAiRMAWQ> aiSqHost_;
+    std::vector<HcclAiRMACQ> aiScqHost_;
+    std::vector<HcclAiRMAWQ> aiRqHost_;
+    std::vector<HcclAiRMACQ> aiRcqHost_;
+    std::vector<HcclAiRMAMemInfo> aiMemHost_;
+    std::vector<MemDetails> aiMemDetailsHost_;
+
+    // Host侧同步到Device的内存空间
+    DeviceMem aiRMAInfoDev_;
+    DeviceMem aiSqDev_;
+    DeviceMem aiScqDev_;
+    DeviceMem aiRqDev_;
+    DeviceMem aiRcqDev_;
+    DeviceMem aiMemDev_;
+    DeviceMem aiMemDetailsDev_;
+    ZeroCopyAclGraph zeroCopyAclGraph_;
 };
 
 void HcclOneSidedServiceCallbackInstall(HcclResult (*func)(std::unique_ptr<IHcclOneSidedService> &,

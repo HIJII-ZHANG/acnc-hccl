@@ -21,6 +21,7 @@
 #include "calc_partial_mesh_transport_req_pub.h"
 #include "calc_ring_transport_req_pub.h"
 #include "calc_nb_transport_req_pub.h"
+#include "calc_hccs_plus_sio_transport_req_pub.h"
 
 namespace hccl {
 }

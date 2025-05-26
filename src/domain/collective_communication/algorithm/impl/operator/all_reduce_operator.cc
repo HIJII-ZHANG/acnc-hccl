@@ -308,7 +308,7 @@ HcclResult AllReduceOperator::SelectAlgfor910B(const OpParam& param, std::string
     // AHC 算法选择逻辑
     if (((algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC) ||
          (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE))) {
-        CHK_RET(SelectAlgforAHC());
+        CHK_RET(SelectAlgforAHC(dataSize, AHCOpType::AHC_OP_TYPE_ALLREDUCE));
     }
 
     // pipeline算法task数量多，如果超出FFTS子图限制，则重定向到HD算法
@@ -329,10 +329,10 @@ HcclResult AllReduceOperator::SelectAlgfor910B(const OpParam& param, std::string
             algName = "AllReduceSmallCountAivRdmaExecutor";  // 多server，满足二次幂，小数据量（单卡190K以内）
         } else if (isSupportAivRdmaMidCount) {
             algName = "AllReduceMidCountAivRdmaExecutor";  // 多server，中小数据量（总数据量16M以内）
-        } else if (isOpbaseBigCount) {
-            algName = "AllReduceMeshOpbaseBigCountAivExecutor"; // 单server，单算子AIV模式大数据单独一个Executor
+        } else if (isOpbaseBigCount || !isOpbase) {
+            algName = "AllReduceMeshAivExecutor"; // 单server，单算子AIV模式大数据 和 图模式AIV 共用一个Executor
         } else {
-            algName = "AllReduceMeshAivExecutor"; // 单server，单算子AIV模式小数据 和 图模式AIV 共用一个Executor
+            algName = "AllReduceMeshAivSmallCountExecutor"; // 单server，单算子AIV模式小数据单独一个Executor
         }
     // 小于等于两卡场景单独判断逻辑
     } else if (deviceNumPerAggregation_ <= DEVICE_TWO) {
@@ -461,15 +461,16 @@ HcclResult AllReduceOperator::SelectAlgfor91093(const OpParam& param, std::strin
     u64 dataSizePerRank = dataSize / deviceNumPerAggregation_;
     bool isOpbase = workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE;
     bool isAivMode = topoMatcher_->GetAivModeConfig() && IsSupportAIVReduce(param.DataDes.dataType, param.reduceType) &&
-        serverNum_ == 1 && dataSizePerRank <= AIV_ALL_REDUCE_A3_ENTRY_SIZE;
+        serverNum_ == 1 && !param.isZeroCopy &&
+        ((isOpbase && dataSizePerRank <= AIV_ALL_REDUCE_A3_ENTRY_SIZE) || !isOpbase);
     if (isAivMode) {
         HCCL_INFO("[SelectAlgfor91093] dataSize[%llu], dataSizePerRank[%llu], deviceNumPerAggregation[%u]",
             dataSize, dataSizePerRank, deviceNumPerAggregation_);
-        bool isOpbaseBigCount = isOpbase && (dataSize >= AIV_ALL_REDUCE_BIG_SIZE);
-        if (isOpbaseBigCount) {
-            algName = "AllReduceMeshOpbaseBigCountAivExecutor"; // 单server，单算子AIV模式大数据单独一个Executor
+        if ((isOpbase && dataSize < AIV_ALL_REDUCE_BIG_SIZE) ||
+            (!isOpbase && dataSize <= AIV_A3_ALL_REDUCE_GRAPH_GUIYI_SIZE)) {
+            algName = "AllReduceMeshAivSmallCountExecutor"; // 单server小数据
         } else {
-            algName = "AllReduceMeshAivExecutor"; // 单server，单算子AIV模式小数据 和 图模式AIV 共用一个Executor
+            algName = "AllReduceMeshAivExecutor"; // 单server大数据
         }
         HCCL_INFO("[SelectAlgfor91093] all_reduce SelectAlgfor91093 is algName [%s].", algName.c_str());
         return HCCL_SUCCESS;
@@ -478,7 +479,7 @@ HcclResult AllReduceOperator::SelectAlgfor91093(const OpParam& param, std::strin
     // AHC 算法选择逻辑
     if ((algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC) ||
         (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE)) {
-        CHK_RET(SelectAlgforAHC());
+        CHK_RET(SelectAlgforAHC(dataSize, AHCOpType::AHC_OP_TYPE_ALLREDUCE));
     }
     void *commInputPtr = nullptr;
     u64 commInputSize = 0;
@@ -537,136 +538,6 @@ HcclResult AllReduceOperator::SelectAlgfor91093(const OpParam& param, std::strin
         }
     }
     HCCL_INFO("[SelectAlgfor91093] all_reduce SelectAlgfor91093 is algName [%s].", algName.c_str());
-    return HCCL_SUCCESS;
-}
-
-HcclResult AllReduceOperator::SelectAlgforAHC()
-{
-    bool isAHCWholeConfig = (algType_.algoLevel0 == AlgTypeLevel0::ALG_LEVEL0_RESERVED &&
-        (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC ||
-        algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE));
-
-    CommPlane ahcSubGroupLevel = COMM_LEVEL1_AHC;
-    if (isAHCWholeConfig) {
-        if (deviceType_ != DevType::DEV_TYPE_910_93) {
-            ahcSubGroupLevel = COMM_COMBINE;
-        } else {
-            ahcSubGroupLevel = COMM_COMBINE_ORDER;
-        }
-    }
-
-    HCCL_INFO("[SelectAlgforAHC] isAHCWholeConfig[%u] AHClevel[%u] algType_[%u]",
-            isAHCWholeConfig, ahcSubGroupLevel, algType_.algoLevel1);
-
-    if (deviceType_ == DevType::DEV_TYPE_910_93) {
-        HCCL_INFO("[SelectAlgforAHC] select AHC proc");
-        CHK_RET(AHCAlgSelect(ahcSubGroupLevel));
-    } else if (deviceType_ == DevType::DEV_TYPE_910B) {
-        if (isAHCWholeConfig) {
-            HCCL_INFO("[SelectAlgforAHC] select AHC proc");
-            CHK_RET(AHCAlgSelect(ahcSubGroupLevel));
-            return HCCL_SUCCESS;
-        } else {
-            HCCL_ERROR("[SelectAlgforAHC] algType_[%u], is invalid.", algType_.algoLevel1);
-            return HCCL_E_PARA;
-        }
-    }
-
-    return HCCL_SUCCESS;
-}
-
-HcclResult AllReduceOperator::AHCAlgSelect(CommPlane ahcSubGroupLevel)
-{
-    // AHC 分组切分和算法选择逻辑
-    AlgTypeLevel1 algTypeLevel1;
-    CHK_RET(PrepareAHCSubGroups(algTypeLevel1, ahcSubGroupLevel));
-
-    // 支持 AHC 自适应调节为 BROKE 类型，BROKE 类型静态配置后生效，不做自适应调节
-    if (algType_.algoLevel1 != algTypeLevel1 && algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC) {
-        auto originalAlgTypeLevel0 = algType_.algoLevel0;
-        auto iter = HCCL_ALGO_LEVEL1_NAME_MAP.find(algTypeLevel1);
-        CHK_PRT_RET(iter == HCCL_ALGO_LEVEL1_NAME_MAP.end(),
-                    HCCL_ERROR("[AHCAlgSelect] level1: algType_[%u] is invalid.", algTypeLevel1),
-                    HCCL_E_INTERNAL);
-        HCCL_INFO("[AHCAlgSelect] hccl algorithm: there are %u server(%u module) in level1, using %s algo",
-                  serverNum_, moduleNum_, iter->second.c_str());
-        algType_.algoLevel0 = originalAlgTypeLevel0;
-        algType_.algoLevel1 = algTypeLevel1;
-    }
-
-    return HCCL_SUCCESS;
-}
-
-HcclResult AllReduceOperator::PrepareAHCSubGroups(AlgTypeLevel1 &algType,
-    CommPlane algLevel)
-{
-    bool isAHCType = true;
-    std::vector<std::vector<std::vector<u32>>> globalSubGroups;
-    std::vector<std::vector<u32>> subGroups;
-    CHK_RET(topoMatcher_->GetGlobalSubGroups(algLevel, globalSubGroups));
-    subGroups = globalSubGroups[0];
-
-    // subGroups 参数检查
-    CHK_RET(CommAHCBaseInfo::CheckSubGroups(subGroups));
-
-    // 根据分组等信息调整法分组策略和选择算法类型
-    bool enableSymSplit = true;
-    u32 minSubGroupSize = subGroups[0].size();
-    u32 maxSubGroupSize = subGroups[0].size();
-    for (u32 i = 0; i < globalSubGroups[0].size(); ++i) {
-        if (subGroups[i].size() < minSubGroupSize) {
-            minSubGroupSize = subGroups[i].size();
-        }
-        if (subGroups[i].size() > maxSubGroupSize) {
-            maxSubGroupSize = subGroups[i].size();
-        }
-    }
-
-    // 1.分组数量都是最小分组的倍数场景
-    for (u32 i = 0; i < subGroups.size(); ++i) {
-        if ((subGroups[i].size() % minSubGroupSize) != 0) {
-            enableSymSplit = false;
-        }
-    }
-    if (enableSymSplit) {
-        // 设置为 BROKE 类型
-        isAHCType = false;
-        // 将所有的分组切分成 minSubGroupSize 粒度的 subGroup
-        for (u32 i = 0; i < subGroups.size(); ++i) {
-            if (subGroups[i].size() == minSubGroupSize) {
-                continue;
-            }
-            std::vector<u32> originGroup = subGroups[i];
-            subGroups.erase(subGroups.begin() + i);
-            u32 splitGroupsNum = (originGroup.size() / minSubGroupSize);
-            for (u32 j = 0; j < splitGroupsNum; ++j) {
-                subGroups.push_back(std::vector<u32>(originGroup.begin() + j * minSubGroupSize,
-                                                        originGroup.begin() + (j + 1) * minSubGroupSize));
-            }
-            i--;
-        }
-        maxSubGroupSize = minSubGroupSize;
-    }
-
-    // 2.分组存在最大公约数（非倍数场景），且公约数满足一定条件时，按照最大公约数切分分组，暂不支持
-
-    // 3.根据 AHC 分组大小的偏差程度选择 AHC 的算法类型
-    constexpr float AHC_ASYM_THRESOLD = 0.05;
-    float ahcAsymDegree = ((1.0) * maxSubGroupSize - (1.0) * minSubGroupSize)  / ((1.0) * minSubGroupSize);
-    if (ahcAsymDegree < AHC_ASYM_THRESOLD) {
-        isAHCType = false; // 设置为 BROKE 类型
-    }
-
-    globalSubGroups.erase(globalSubGroups.begin());
-    globalSubGroups.push_back(subGroups);
-    topoMatcher_->SetGlobalSubGroups(algLevel, globalSubGroups);
-
-    if (isAHCType) {
-        algType = AlgTypeLevel1::ALG_LEVEL1_AHC; // 设置为 AHC 类型
-    } else {
-        algType = AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE; // 设置为 BROKE 类型
-    }
-
     return HCCL_SUCCESS;
 }
 

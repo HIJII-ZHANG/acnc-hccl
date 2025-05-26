@@ -20,7 +20,7 @@ public:
     __aicore__ inline AivAll2All91093Base() {}
 
     __aicore__ inline void Init(GM_ADDR buffOut0, uint32_t rank, uint32_t rankSize, int32_t tag,
-        uint32_t baseFlagOffset);
+        uint32_t baseFlagOffset, bool useDoubleBuffer);
 
     template<typename T>
     __aicore__ inline void DataCopyGM2UB(const LocalTensor<T>& dstLocal, const GlobalTensor<T>& srcGlobal,
@@ -31,13 +31,42 @@ public:
         const uint32_t calCount);
 
     template<typename T>
-    __aicore__ inline void CpGM2GM(__gm__ T *outputGM, __gm__ T *inputGM, uint64_t count);
+    __aicore__ inline void CpGM2GM(__gm__ T *outputGM, __gm__ T *inputGM, uint64_t count, bool atomic = false,
+        uint32_t atomicOp = 0);
 
     template<HardEvent event> 
     __aicore__ inline void SyncFunc();
 
     __aicore__ inline void BatchRecordWait(GM_ADDR* buffersOut, uint32_t flagOffset, int32_t curTag);
 
+    template<typename T>
+    __aicore__ inline void SetAtomicOp(uint32_t atomicOp);
+
+    __aicore__ inline void InitOpCounter(GM_ADDR headCountMem, GM_ADDR tailCountMem, GM_ADDR addOneMem, uint32_t counterMemSize,
+        bool isEnableCounter)
+    {
+        headCountMem_ = headCountMem;
+        tailCountMem_ = tailCountMem;
+        addOneMem_ = addOneMem;
+        counterMemSize_ = counterMemSize;
+        isEnableCounter_ = isEnableCounter;
+    }
+
+    __aicore__ inline void HeadCounter()
+    {
+        if (block_idx == 0 && isEnableCounter_) {
+            CpGM2GM((__gm__ int32_t*)headCountMem_, (__gm__ int32_t*)addOneMem_, counterMemSize_ / sizeof(int32_t), true,
+                HcclReduceOp::HCCL_REDUCE_SUM);
+        }
+    }
+
+    __aicore__ inline void TailCounter()
+    {
+        if (block_idx == 0 && isEnableCounter_) {
+            CpGM2GM((__gm__ int32_t*)tailCountMem_, (__gm__ int32_t*)addOneMem_, counterMemSize_ / sizeof(int32_t), true,
+                HcclReduceOp::HCCL_REDUCE_SUM);
+        }
+    }
 protected:
     uint32_t baseFlagOffset_ = 0;
     GM_ADDR flagAddrSelf_;
@@ -58,17 +87,24 @@ protected:
 
     uint32_t numTargets = 0;
     uint32_t targetRanks[MAX_TARGET_NUM] = {}; // 最多768/48 = 16 轮
+
+    bool useDoubleBuffer_;
+    GM_ADDR headCountMem_;
+    GM_ADDR tailCountMem_;
+    GM_ADDR addOneMem_;
+    uint32_t counterMemSize_;
+    bool isEnableCounter_;
 };
 
 __aicore__ inline void AivAll2All91093Base::Init(GM_ADDR buffOut0, uint32_t rank, uint32_t rankSize, int32_t tag,
-    uint32_t baseFlagOffset)
+    uint32_t baseFlagOffset, bool useDoubleBuffer)
 {
     baseFlagOffset_ = baseFlagOffset;
     flagAddrSelf_ = buffOut0 + baseFlagOffset;
 
     rank_ = rank;
     rankSize_ = rankSize;
-
+    useDoubleBuffer_ = useDoubleBuffer;
     pipe.InitBuffer(localFlagBuf, UB_FLAG_SIZE * FLAG_BUF_NUM);
     localSetTensor = localFlagBuf.GetWithOffset<int32_t>(UB_FLAG_PAD_COUNT, 0);
     localCheckTensor = localFlagBuf.GetWithOffset<int32_t>(UB_FLAG_PAD_COUNT, UB_FLAG_SIZE);
@@ -141,14 +177,22 @@ __aicore__ inline void AivAll2All91093Base::DataCopyUB2GM(const GlobalTensor<T>&
 }
 
 template<typename T>
-__aicore__ inline void AivAll2All91093Base::CpGM2GM(__gm__ T *outputGM, __gm__ T *inputGM, uint64_t count)
+__aicore__ inline void AivAll2All91093Base::CpGM2GM(__gm__ T *outputGM, __gm__ T *inputGM, uint64_t count, bool atomic,
+    uint32_t atomicOp)
 {
     GlobalTensor<T> inputGT;
     inputGT.SetGlobalBuffer(inputGM, count);
     GlobalTensor<T> outputGT;
     outputGT.SetGlobalBuffer(outputGM, count);
+    
+    if (atomic) {
+        SetAtomicOp<T>(atomicOp);
+    }
 
-    uint64_t maxCountPerLoop = UB_DB_DATA_BATCH_SIZE / sizeof(T);
+    uint64_t maxCountPerLoop = UB_MAX_DATA_SIZE / sizeof(T);
+    if (useDoubleBuffer_) {
+        maxCountPerLoop = UB_DB_DATA_BATCH_SIZE / sizeof(T);
+    }
 
     uint64_t curOffset = 0;
     while (count > 0) {
@@ -163,6 +207,10 @@ __aicore__ inline void AivAll2All91093Base::CpGM2GM(__gm__ T *outputGM, __gm__ T
 
         count -= curCount;
         curOffset += curCount;
+    }
+
+    if (atomic) {
+        SetAtomicNone();
     }
     return;
 }
@@ -190,14 +238,23 @@ __aicore__ inline void AivAll2All91093Base::BatchRecordWait(GM_ADDR* buffersOut,
     for (uint32_t i = 0; i < numTargets; i++) {
         globalTag.SetGlobalBuffer((__gm__ int32_t *)(flagAddrSelf_ + flagOffset + targetRanks[i] * FLAG_SIZE),
             UB_FLAG_PAD_COUNT);
-        while (true) {
-            DataCopy(localCheckTensor, globalTag, UB_FLAG_PAD_COUNT);
-            SyncFunc<HardEvent::MTE2_S>();
-            if (localCheckTensor.GetValue(0) == curTag) {
-                break;
-            }
-        }
+        WaitSignalValue((__gm__ int32_t *)(flagAddrSelf_ + flagOffset + targetRanks[i] * FLAG_SIZE), localCheckTensor, curTag);
         DataCopy(globalTag, localClearTensor, UB_FLAG_PAD_COUNT); //清零
+    }
+}
+
+template<typename T>
+__aicore__ inline void AivAll2All91093Base::SetAtomicOp(uint32_t atomicOp)
+{
+    switch (atomicOp) {
+        case HcclReduceOp::HCCL_REDUCE_SUM:
+            SetAtomicAdd<T>(); break;
+        case HcclReduceOp::HCCL_REDUCE_MAX:
+            SetAtomicMax<T>(); break;
+        case HcclReduceOp::HCCL_REDUCE_MIN:
+            SetAtomicMin<T>(); break;
+        default:
+            SetAtomicNone(); break;
     }
 }
 

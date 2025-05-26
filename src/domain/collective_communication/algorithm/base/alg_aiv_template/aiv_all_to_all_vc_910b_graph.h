@@ -29,7 +29,6 @@ __aicore__ inline void AivAll2AllVCGraph910B::Process(GM_ADDR input, GM_ADDR out
     // 内存准备
     __gm__ T *inputGM = (__gm__ T *)input;
     __gm__ T *outputGM = (__gm__ T *)output;
-    __gm__ T *cclGMSelf = (__gm__ T *)(GM_IN[rank_]);
     __gm__ T *cclGMOther = (__gm__ T *)(GM_IN[targetRank]);
 
     // 使用16个flag
@@ -43,10 +42,11 @@ __aicore__ inline void AivAll2AllVCGraph910B::Process(GM_ADDR input, GM_ADDR out
     uint32_t finalAckFlagOffset = rankSize_ * FLAG_SIZE;
 
     // 本卡已进入算子，通知其他卡可以搬运，使用第1个flag
-    SetFlagNew((__gm__ int32_t *)(flagAddrSelf + initAckFlagOffset + targetRank * FLAG_SIZE), tag);
+    SetSignalValue((__gm__ int32_t *)(flagAddrOther + initAckFlagOffset + rank_ * FLAG_SIZE), localSetTensor, tag);
     // 确认对端已进入算子
-    CheckFlagNew((__gm__ int32_t *)(flagAddrOther + initAckFlagOffset + rank_ * FLAG_SIZE), tag);
+    WaitSignalValue((__gm__ int32_t *)(flagAddrSelf + initAckFlagOffset + targetRank * FLAG_SIZE), localCheckTensor, tag);
     PipeBarrier<PIPE_ALL>();
+    SetSignalValue((__gm__ int32_t *)(flagAddrSelf + initAckFlagOffset + targetRank * FLAG_SIZE), localSetTensor, 0);
 
     uint64_t remoteSendOffset = 0; // 远端usrin发送给本端output的数据偏移，远端卡号为block_idx，可能为本rank
     for (uint32_t i = 0; i < rank_; i++) {
@@ -65,15 +65,14 @@ __aicore__ inline void AivAll2AllVCGraph910B::Process(GM_ADDR input, GM_ADDR out
     PipeBarrier<PIPE_ALL>();
 
     // 通知对端，自己已经把对端的那片数据拉回来了
-    SetFlagNew((__gm__ int32_t *)(flagAddrOther + finalAckFlagOffset + rank_ * FLAG_SIZE), tag);
+    SetSignalValue((__gm__ int32_t *)(flagAddrOther + finalAckFlagOffset + rank_ * FLAG_SIZE), localSetTensor, tag);
     
     // 确认对端已经将对应的数据拉走
-    CheckFlagNew((__gm__ int32_t *)(flagAddrSelf + finalAckFlagOffset + targetRank * FLAG_SIZE), tag);
+    WaitSignalValue((__gm__ int32_t *)(flagAddrSelf + finalAckFlagOffset + targetRank * FLAG_SIZE), localCheckTensor, tag);
     PipeBarrier<PIPE_ALL>();
 
     // 图模式最后清零flag
-    SetFlagNew((__gm__ int32_t *)(flagAddrSelf + finalAckFlagOffset + targetRank * FLAG_SIZE), 0);
-    SetFlagNew((__gm__ int32_t *)(flagAddrSelf + initAckFlagOffset + targetRank * FLAG_SIZE), 0);
+    SetSignalValue((__gm__ int32_t *)(flagAddrSelf + finalAckFlagOffset + targetRank * FLAG_SIZE), localSetTensor, 0);
     return;
 }
 
@@ -82,5 +81,7 @@ __aicore__ inline void aiv_all_to_all_vc_910b_graph(EXTERN_KERNEL_ARGS_DEF)
 {
     AivAll2AllVCGraph910B op;
     op.Init(KERNEL_CLASS_INIT, true);
+    op.HeadCounter();
     op.Process<T>(input, output, tag, extraArgs);
+    op.TailCounter();
 }

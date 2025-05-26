@@ -58,6 +58,8 @@ HcclResult AlignedAllGatherDoubleRing::RunAsync(const u32 rank, const u32 rankSi
         CHK_RET(ExecuteBarrier(leftLink_, rightLink_));
     }
 
+    CHK_RET(LaunchTaskExtend(dispatcher_, stream_, subStreams_));
+
     HCCL_INFO("AlignedAllGatherDoubleRing finished: rank[%u] end", rank);
     return HCCL_SUCCESS;
 }

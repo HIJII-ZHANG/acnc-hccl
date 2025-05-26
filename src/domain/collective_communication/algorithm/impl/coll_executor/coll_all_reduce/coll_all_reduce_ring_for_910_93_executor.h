@@ -48,6 +48,9 @@ private:
         s32 profStage, const u64 baseOffset = 0, const HcomCollOpInfo *opInfo = nullptr,
         const std::vector<std::vector<Slice>> &multRingsUserMemSlice = std::vector<std::vector<Slice>> (0));
     HcclResult KernelRun(const OpParam &param, ExecMem &execMem) override;
+    HcclResult KernelRunIntraServerReduceScatter(const OpParam &param, ExecMem &execMem, std::vector<std::vector<Slice> > &multRingsSliceZero, std::vector<Slice> &dataSegsSlice) override;
+    HcclResult KernelRunInterServerAllReduce(const OpParam &param, ExecMem &execMem) override;
+    HcclResult KernelRunIntraServerAllGather(const OpParam &param, ExecMem &execMem, std::vector<std::vector<Slice> > &multRingsSliceZero, u64 &hdCount) override;
 };
 
 } // namespace hccl

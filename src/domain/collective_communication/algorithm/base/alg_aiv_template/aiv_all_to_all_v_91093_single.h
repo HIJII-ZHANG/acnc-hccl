@@ -102,10 +102,10 @@ __aicore__ inline void AivAll2AllV91093Single::Process(GM_ADDR input, GM_ADDR ou
 
         // localcopy后的同步
         if (needSend) {
-            SetFlagNew((__gm__ int32_t *)(flagAddrOther + initAckFlagOffset + flagSetOffset), curTag);
+            SetSignalValue((__gm__ int32_t *)(flagAddrOther + initAckFlagOffset + flagSetOffset), localSetTensor, curTag);
         }
         if (needRead) {
-            CheckFlagNew((__gm__ int32_t *)(flagAddrSelf + initAckFlagOffset + flagCheckOffset), curTag);
+            WaitSignalValue((__gm__ int32_t *)(flagAddrSelf + initAckFlagOffset + flagCheckOffset), localCheckTensor, curTag);
         }
 
         PipeBarrier<PIPE_ALL>();
@@ -121,10 +121,10 @@ __aicore__ inline void AivAll2AllV91093Single::Process(GM_ADDR input, GM_ADDR ou
 
         // read后的同步
         if (needRead) {
-            SetFlagNew((__gm__ int32_t *)(flagAddrOther + finalAckFlagOffset + flagSetOffset), curTag);
+            SetSignalValue((__gm__ int32_t *)(flagAddrOther + finalAckFlagOffset + flagSetOffset), localSetTensor, curTag);
         }
         if (needSend) {
-            CheckFlagNew((__gm__ int32_t *)(flagAddrSelf + finalAckFlagOffset + flagCheckOffset), curTag);
+            WaitSignalValue((__gm__ int32_t *)(flagAddrSelf + finalAckFlagOffset + flagCheckOffset), localCheckTensor, curTag);
         }
 
         curTag += 1;
@@ -136,5 +136,7 @@ __aicore__ inline void aiv_all_to_all_v_91093_single(KERNEL_ARGS_DEF, ExtraArgs*
 {
     AivAll2AllV91093Single op;
     op.Init(KERNEL_CLASS_INIT, true);
+    op.HeadCounter();
     op.Process<T>(input, output, tag, bufferSize, extraArgs);
+    op.TailCounter();
 }
