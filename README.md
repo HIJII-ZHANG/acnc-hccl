@@ -79,7 +79,7 @@ HCCL支持源码编译，在源码编译前，请根据如下步骤完成相关�
    
      HCCL源码编译过程中涉及Json文件的解析，编译前需要参见如下步骤下载依赖的nlohmann json头文件。
    
-     a. 单击[Link](https://github.com/nlohmann/json/releases/download/v3.11.2/include.zip)，下载nlohmann json的头文件压缩包`include.zip`。
+     a. 单击[Link](https://github.com/nlohmann/json/releases/download/v3.11.3/include.zip)，下载nlohmann json的头文件压缩包`include.zip`。
    
      b. 解压缩`include.zip`。
      
@@ -224,6 +224,10 @@ HCCL仓欢迎广大开发者体验并参与贡献，在参与社区贡献前，�
 
 1. 提交PR时，请按照PR模板仔细填写本次PR的业务背景、目的、方案等信息。
 2. 若您的修改不是简单的bug修复，而是涉及到新增特性、新增接口、新增配置参数或者修改代码流程等，请务必先通过Issue进行方案讨论，以避免您的代码被拒绝合入。若您不确定本次修改是否可被归为“简单的bug修复”，亦可通过提交Issue进行方案讨论。
+
+## 安全声明
+- 请参考配套版本的“[CANN软件安装指南](https://hiascend.com/document/redirect/CannCommunityInstSoftware)”的“安全加固”章节对系统进行安全加固。
+- HCCL开放的端口、端口使用的传输层协议、认证方式以及用途等信息说明请参见配套版本的“[通信矩阵](https://hiascend.com/document/redirect/CannCommunityCommMatrix)”。
 
 ## 许可证
 
