@@ -108,6 +108,7 @@ target_link_options(hccl PRIVATE
     -Wl,-z,relro
     -Wl,-z,now
     -Wl,-z,noexecstack
+    -s
 )
 
 target_compile_definitions(hccl PRIVATE

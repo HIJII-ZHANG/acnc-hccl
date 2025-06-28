@@ -62,7 +62,7 @@ struct RemoteRes {
     u64 outbuffer;
     u32 outbufferKey;
 };
-#define HCCL_AICPU_HOST_BASE_TIME_MS 10*1000 // 10秒
+#define HCCL_AICPU_HOST_BASE_TIME_MS (10*1000) // 10秒
 struct AicpuOpTiling {
     std::string newTag;
     std::string algName;

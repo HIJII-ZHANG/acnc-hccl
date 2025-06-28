@@ -79,5 +79,5 @@ if __name__ == '__main__':
     if not os.path.exists(generate_dir):
         os.makedirs(generate_dir, exist_ok=True)
 
-    with os.fdopen(os.open(absolute_file, os.O_RDWR | os.O_CREAT | os.O_TRUNC), 'w') as ofd:
+    with os.fdopen(os.open(absolute_file, os.O_RDWR | os.O_CREAT | os.O_TRUNC, mode=0o666), 'w') as ofd:
         ofd.write(res)

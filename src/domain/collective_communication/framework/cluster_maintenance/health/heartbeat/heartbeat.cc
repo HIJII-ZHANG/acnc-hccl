@@ -773,11 +773,11 @@ HcclResult Heartbeat::SendFrame(UIDType &dst, UIDType &crimer, UIDType &informer
             rankId2SocketMap_[dst].sendBuffer.push(bf);
         }
         while (rankId2SocketMap_[dst].sendBuffer.size() > 0) {
-            HeartBeatFrame bf = rankId2SocketMap_[dst].sendBuffer.front();
+            HeartBeatFrame hbf = rankId2SocketMap_[dst].sendBuffer.front();
             u64 sendDis = sizeof(HeartBeatFrame) - rankId2SocketMap_[dst].restSize;
             u64 compSize = 0;
             HcclResult ret = rankId2SocketMap_[dst].socket->ISend(
-                reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(&bf) + sendDis),
+                reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(&hbf) + sendDis),
                 rankId2SocketMap_[dst].restSize,
                 compSize);
             if (ret != HCCL_SUCCESS) {
