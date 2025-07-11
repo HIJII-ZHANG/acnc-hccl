@@ -84,6 +84,7 @@ HcclResult CollAllGatherSmallCountExecutor::CalcCombinedCommInfo(TransportMemTyp
 
 HcclResult CollAllGatherSmallCountExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollAllGatherSmallCountExecutor][KernelRun] starts.");
     CommPlane commPlane = COMM_COMBINE_ORDER;
 
     CHK_RET(CheckCommSize(commPlane, COMM_INDEX_0 + 1));

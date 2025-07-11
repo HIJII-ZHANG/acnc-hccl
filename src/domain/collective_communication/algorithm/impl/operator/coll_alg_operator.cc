@@ -41,8 +41,7 @@ CollAlgOperator::CollAlgOperator(AlgConfigurator* algConfigurator, CCLBufferMana
                                  HcclDispatcher dispatcher, std::unique_ptr<TopoMatcher> &topoMatcher,
                                  HcclCMDType opType)
     : algConfigurator_(algConfigurator), cclBufferManager_(cclBufferManager),
-      dispatcher_(dispatcher), topoMatcher_(topoMatcher),
-      workflowMode_(GetWorkflowMode())
+      dispatcher_(dispatcher), topoMatcher_(topoMatcher), workflowMode_(GetWorkflowMode())
 {
     SetTopoAttr(algConfigurator_);
     SetAlgoAttr(algConfigurator_);
@@ -54,6 +53,55 @@ CollAlgOperator::CollAlgOperator(AlgConfigurator* algConfigurator, CCLBufferMana
 HcclResult CollAlgOperator::SelectAlg(const std::string& tag,
     const OpParam& param, std::string& algName, std::string& newTag)
 {
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollAlgOperator::GetAivExecParam(std::string& algName, const OpParam& param,
+    AlgResourceResponse& algRes, AivSuperKernelArgs &args)
+{
+    if (executor_.get() == nullptr) {
+        executor_ = CollAlgExecRegistry::Instance().GetAlgExec(algName, dispatcher_, topoMatcher_);
+        CHK_PRT_RET(executor_.get() == nullptr,
+            HCCL_ERROR("[CollAlgOperator][CalcResRequest]Fail to find executor for algName[%s]", algName.c_str()),
+            HCCL_E_PARA);
+    }
+    return executor_->GetAivExecParam(param, algRes, args);
+}
+
+HcclResult CollAlgOperator::CalBlockDim(std::string& algName, const OpParam& param, u32 &blockDim)
+{
+    if (executor_.get() == nullptr) {
+        executor_ = CollAlgExecRegistry::Instance().GetAlgExec(algName, dispatcher_, topoMatcher_);
+        CHK_PRT_RET(executor_.get() == nullptr,
+            HCCL_ERROR("[CollAlgOperator][CalcResRequest]Fail to find executor for algName[%s]", algName.c_str()),
+            HCCL_E_PARA);
+    }
+
+     if (param.opType == HcclCMDType::HCCL_CMD_ALLTOALL){
+        blockDim = executor_->CalBlockDim(userRankSize_,
+            param.All2AllDataDes.sendCount * sizeof(param.All2AllDataDes.sendType), param.opType);
+    } else {
+        blockDim = executor_->CalBlockDim(userRankSize_,
+            param.DataDes.count * sizeof(param.DataDes.dataType), param.opType);
+    }
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollAlgOperator::SelectAlg(const std::string& tag, const OpParam &param, const ResourceLimit &limit,
+    std::string &algName, AlgDesc &algDesc, std::string &newTag)
+{
+    // 兼容老接口
+    CHK_RET(SelectAlg(tag, param, algName, newTag));
+
+    // 从对应executor获取算法描述
+    if (executor_.get() == nullptr) {
+        executor_ = CollAlgExecRegistry::Instance().GetAlgExec(algName, dispatcher_, topoMatcher_);
+        CHK_PRT_RET(executor_.get() == nullptr,
+            HCCL_ERROR("[CollAlgOperator][SelectAlg]Fail to find executor for algName[%s]", algName.c_str()),
+            HCCL_E_PARA);
+        CHK_RET(SetExecutorAttr(param));
+    }
+    algDesc = executor_->GetAlgDesc();
     return HCCL_SUCCESS;
 }
 
@@ -84,6 +132,31 @@ HcclResult CollAlgOperator::Orchestrate(const std::string& algName, OpParam& par
     executor_->SetAlgOpContext(algOpContext_);
     executor_->SetOpCounter(opCounter_);
     return executor_->Orchestrate(param, algResource);
+}
+
+HcclResult CollAlgOperator::GetAdjInfo(const std::string& algName, OpParam& param,
+                                       AlgResourceResponse& algResource, AdjInfo& nslbAdjInfo)
+{
+    if (executor_.get() == nullptr) {
+        executor_ = CollAlgExecRegistry::Instance().GetAlgExec(algName, dispatcher_, topoMatcher_);
+        CHK_PRT_RET(executor_.get() == nullptr,
+            HCCL_ERROR("[CollAlgOperator][Orchestrate]Fail to find executor for algName[%s]", algName.c_str()),
+            HCCL_E_PARA);
+        CHK_RET(SetExecutorAttr(param));
+    }
+
+    return executor_->GetAdjInfo(algResource, nslbAdjInfo);
+}
+
+HcclResult CollAlgOperator::PrepareCommInfoToDevice(const std::string& algName, AlgResourceResponse& algResource)
+{
+    if (executor_.get() == nullptr) {
+        executor_ = CollAlgExecRegistry::Instance().GetAlgExec(algName, dispatcher_, topoMatcher_);
+        CHK_PRT_RET(executor_.get() == nullptr,
+            HCCL_ERROR("[CollAlgOperator][PrepareCommInfoToDevice]Fail to find executor for algName[%s]",
+            algName.c_str()), HCCL_E_PARA);
+    }
+    return executor_->PrepareCommInfoToDevice(algResource);
 }
 
 HcclResult CollAlgOperator::CalcIncreLinkRequest(const std::string& algName, const OpParam& param,
@@ -279,7 +352,7 @@ HcclResult CollAlgOperator::GetDefaultAlgoLevel1V2(HcclCMDType hcclCMDType, u64 
     // So pipeline mode is more dominant than normal serial orchestration now.
     auto originalAlgTypeLevel0 = algType_.algoLevel0;
     bool disdeterniminsticWithInlineReduce = isInlineReduce && isRdmaReduce &&
-        topoMatcher_->GetDeterministicConfig() == DETERMINISTIC_CONFIG_DISABLE;
+        topoMatcher_->GetDeterministicConfig() == DETERMINISTIC_DISABLE;
 
     // 对于不支持Rdma Lite的场景，下发性能较差，RS和AG需要一个很大的数据量（AR的一半）才能掩盖下发时间
     u64 pipelineMinSize = (isSupportRdmaLite_) ? (PIPELINE_MIN_SIZE) : (PIPELINE_MIN_SIZE_NO_LITE);
@@ -539,7 +612,7 @@ bool CollAlgOperator::Is910BSingleMesh()
 bool CollAlgOperator::NeedCreateSingleMeshPlane(const bool isInlineReduce)
 {
     // 910B 图模式非确定计算，inlineReduce使能，MESH拓扑场景下，创建一个mesh平面
-    bool meshSinglePlane = Is910BSingleMesh() && topoMatcher_->GetDeterministicConfig() == DETERMINISTIC_CONFIG_DISABLE &&
+    bool meshSinglePlane = Is910BSingleMesh() && topoMatcher_->GetDeterministicConfig() == DETERMINISTIC_DISABLE &&
         isInlineReduce && (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
 
     return meshSinglePlane;

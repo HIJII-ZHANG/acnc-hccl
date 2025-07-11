@@ -43,13 +43,21 @@ class TopoInfoExchangeAgent : public TopoInfoExchangeBase {
 public:
     explicit TopoInfoExchangeAgent(HcclIpAddress &serverIp, u32 serverPort, std::string identifier,
         HcclNetDevCtx netDevCtx, HcclBasicRankInfo localRankInfo);
+    explicit TopoInfoExchangeAgent(HcclIpAddress &serverIp, u32 serverPort, std::string identifier,
+        HcclNetDevCtx netDevCtx, HcclBasicRankInfo localRankInfo, u32 connSize, u32 connRank);
+    explicit TopoInfoExchangeAgent(HcclIpAddress &serverIp, u32 serverPort, std::string identifier,
+        HcclNetDevCtx netDevCtx, HcclBasicRankInfo localRankInfo, HcclRankHandle RankInfo);
     ~TopoInfoExchangeAgent() override;
+    HcclResult SetupMember();
     HcclResult Setup();
+    HcclResult SetupRank(std::shared_ptr<HcclSocket> socket);
     HcclResult SetupByMasterInfo();
     HcclResult Teardown();
     HcclResult GetClusterTopoInfo(RankTable_t &clusterInfo);
     HcclResult GetIdentifier(u32 &indentify);
     HcclResult GetConnection(std::shared_ptr<HcclSocket> &socket);
+    HcclResult GetGroupLeader(HcclRankHandle &rankHandle);
+    HcclResult SendGroupLeaderPortInfo(std::shared_ptr<HcclSocket> socket,  HcclRankHandle &rankHandle);
 
 private:
     HcclResult DetectClusterTopoInfo(std::shared_ptr<HcclSocket> socket, RankTable_t &clusterTopoInfo);
@@ -57,8 +65,7 @@ private:
     HcclResult GetConnection(HcclIpAddress &serverIp, u32 port,
         std::shared_ptr<HcclSocket> &socket);
     HcclResult Disconnect(std::shared_ptr<HcclSocket> &socket);
-    HcclResult SendClusterInfo(std::shared_ptr<HcclSocket> socket, const RankTable_t &clusterInfo);
-    HcclResult RecvClusterInfo(std::shared_ptr<HcclSocket> socket, RankTable_t &clusterInfo);
+    HcclResult RecvGrpLeaderInfo(std::shared_ptr<HcclSocket> socket, GroupLeader_t &leaderInfo);
     HcclResult SetServerIdx(RankTable_t &clusterInfo) const;
     HcclResult SetSuperPodIdx(RankTable_t &clusterInfo) const;
     HcclResult GenerateLocalRankInfo(u32 rankSize, u32 rankID);
@@ -82,9 +89,14 @@ private:
     std::string identifier_;
     SocketHandle socketHandle_;
     HcclBasicRankInfo localRankInfo_;
+    HcclRankHandle localRankHandle_;
     RankTable_t clusterTopoInfo_;
+    GroupLeader_t grpLeaderInfo_;
+    HcclRankHandle grpLeader_;
     HcclNetDevCtx netDevCtx_{nullptr};
     std::shared_ptr<HcclSocket> socket_;
+    u32 connSize_;
+    u32 connRank_;
 };
 }  // namespace hccl
 

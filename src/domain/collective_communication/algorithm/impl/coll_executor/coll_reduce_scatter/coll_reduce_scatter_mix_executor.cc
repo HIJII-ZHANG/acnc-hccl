@@ -40,12 +40,12 @@ void CollReduceScatterMixExecutor::ParseParam(const OpParam& param)
     bool isInlineReduce = IsSupportSDMAReduce(param.inputPtr, param.outputPtr, param.DataDes.dataType,
         param.reduceType);
     meshSinglePlane_ = (topoAttr_.deviceType == DevType::DEV_TYPE_910B) &&
-        topoMatcher_->GetExternalInputHcclDeterministic() == DETERMINISTIC_CONFIG_DISABLE &&
+        topoMatcher_->GetExternalInputHcclDeterministic() == DETERMINISTIC_DISABLE &&
         isInlineReduce && (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
     
     bool isAlsoSupportDMAReduce = topoAttr_.deviceType == DevType::DEV_TYPE_910B && isInlineReduce &&
         workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE &&
-        topoMatcher_->GetExternalInputHcclDeterministic() == DETERMINISTIC_CONFIG_DISABLE &&
+        topoMatcher_->GetExternalInputHcclDeterministic() == DETERMINISTIC_DISABLE &&
         param.DataDes.dataType != HCCL_DATA_TYPE_INT64 && param.reduceType != HCCL_REDUCE_PROD;
     if (isAlsoSupportDMAReduce) {
         DMAReduceFlag_ = true;
@@ -227,7 +227,7 @@ HcclResult CollReduceScatterMixExecutor::CalLevel1DataSegsSlice(
 
 HcclResult CollReduceScatterMixExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollReduceScatterMixExecutor][KernelRun] The ReduceScatterMixExecutor starts.");
+    HCCL_CONFIG_INFO(HCCL_ALG,"[CollReduceScatterMixExecutor][KernelRun] The ReduceScatterMixExecutor starts.");
     u32 perDataSize = 0;
     CHK_RET(SalGetDataTypeSize(param.DataDes.dataType, perDataSize));
 

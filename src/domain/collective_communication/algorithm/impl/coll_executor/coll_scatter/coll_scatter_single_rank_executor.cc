@@ -19,6 +19,7 @@ CollScatterSingleRankExecutor::CollScatterSingleRankExecutor(const HcclDispatche
 
 HcclResult CollScatterSingleRankExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollScatterSingleRankExecutor][KernelRun] starts.");
     u64 totalSize = execMem.count * SIZE_TABLE[param.DataDes.dataType];
     bool hugeData = IsHugeData(totalSize); // override
     auto opMeta = HcclOpMetaInfo::GetOneForScatter( param.root, hugeData);

@@ -99,6 +99,7 @@ HcclResult CollBatchSendRecvRetryExecutor::CheckSendRecvPair(const std::vector<H
 HcclResult CollBatchSendRecvRetryExecutor::Orchestrate(OpParam& param, AlgResourceResponse& algResource)
 {
     HcclUs startut = TIME_NOW();
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollBatchSendRecvRetryExecutor] batchsendrecv retry starts.");
     algResResp_ = &algResource;
 
     HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);

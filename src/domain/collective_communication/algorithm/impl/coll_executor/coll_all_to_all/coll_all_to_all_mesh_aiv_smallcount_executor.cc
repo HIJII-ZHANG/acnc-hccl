@@ -16,6 +16,7 @@ CollAlltoAllMeshAivSmallCountExecutor::CollAlltoAllMeshAivSmallCountExecutor(con
                                                          std::unique_ptr<TopoMatcher> &topoMatcher)
     : CollAlltoAllExecutor(dispatcher, topoMatcher)
 {
+    desc_.isAivMode = true;
 }
 
 HcclResult CollAlltoAllMeshAivSmallCountExecutor::CalcStreamNum(u32& streamNum)
@@ -100,9 +101,55 @@ HcclResult CollAlltoAllMeshAivSmallCountExecutor::Orchestrate(OpParam& param, Al
     return HCCL_SUCCESS;
 }
 
+HcclResult CollAlltoAllMeshAivSmallCountExecutor::GetAivExecParam(const OpParam& param, AlgResourceResponse& algRes, AivSuperKernelArgs &args)
+{
+    HcclUs startut = TIME_NOW();
+    tag_ = param.tag;
+    algResResp_ = &algRes;
+ 
+    HcclResult ret = HCCL_SUCCESS;
+    ExecMem execMem;
+    execMem.count = param.All2AllDataDes.sendCount;
+    execMem.inputPtr = param.inputPtr;
+    execMem.outputPtr = param.outputPtr;
+ 
+    // 单算子大数据量
+    execMem.inputMem = algRes.aivInputMem;
+    execMem.outputMem = algRes.aivOutputMem;
+
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_MESH_L0, COMM_INDEX_0);
+ 
+    u32 localRank = level0CommInfo.localRank;
+    u32 localRankSize = level0CommInfo.localRankSize;
+    HCCL_DEBUG("[CollAlltoAllMeshAivSmallCountExecutor][GetAivExecParam] userRank [%d] localRank [%d]",
+        topoAttr_.userRank, localRank);
+ 
+    for (u32 i = 0; i < localRankSize; i++) {
+        if (i != localRank) {
+            CHK_RET(level0CommInfo.links[i]->GetRemoteMem(UserMemType::INPUT_MEM, &(args.buffersIn[i])));
+            CHK_RET(level0CommInfo.links[i]->GetRemoteMem(UserMemType::OUTPUT_MEM, &(args.buffersOut[i])));
+        } else {
+            args.buffersIn[i] = execMem.inputMem.ptr();
+            args.buffersOut[i] = execMem.outputMem.ptr();
+        }
+    }
+    args.rank = localRank;
+    args.rankSize = localRankSize;
+    args.len = execMem.count;
+    args.dataType = param.All2AllDataDes.sendType;
+
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[CollAlltoAllMeshAivSmallCountExecutor][Orchestrate]errNo[0x%016llx] tag[%s] excutor kernel "
+            "run failed", HCCL_ERROR_CODE(ret), param.tag.c_str()), ret);
+ 
+    HCCL_INFO("tag[%s], AlltoAll executor getalgexecparam success, take time [%lld]us.",
+        param.tag.c_str(), DURATION_US(TIME_NOW() - startut));
+    return HCCL_SUCCESS;
+}
+
 HcclResult CollAlltoAllMeshAivSmallCountExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollAlltoAllMeshAivSmallCountExecutor][KernelRun]alltoall aiv enter.");
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollAlltoAllMeshAivSmallCountExecutor][KernelRun]alltoall aiv enter.");
 
     CHK_RET(CheckCommSize(COMM_MESH_L0, COMM_INDEX_0 + 1));
     SubCommInfo level0CommInfo = GetSubCommInfo(COMM_MESH_L0, COMM_INDEX_0);
@@ -124,10 +171,6 @@ HcclResult CollAlltoAllMeshAivSmallCountExecutor::KernelRun(const OpParam &param
         }
     }
 
-    if (aivClearEnable_) {
-        ClearAivSyncBuf(buffersOut, localRank, localRankSize, param.stream.ptr());
-    }
-
     ExtraArgs extraArgs;
     bool isOpbase = (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
     HcclResult ret;
@@ -141,22 +184,22 @@ HcclResult CollAlltoAllMeshAivSmallCountExecutor::KernelRun(const OpParam &param
     AivTopoArgs topoArgs { localRank, localRankSize, MAX_RANK_SIZE, 0, topoAttr_.serverNum, topoAttr_.deviceType };
     blockDim_ = CalBlockDim(localRankSize, dataSize, opArgs.cmdType);
     AivResourceArgs resourceArgs {
-        param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size(), blockDim_
+        param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size(), blockDim_, param.aivTag
     };
     AivAlgArgs algArgs {};
     struct AivProfilingInfo aivProfilingInfo;
     aivProfilingInfo.counter = opCounter_;
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-        HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
+        HCCL_PROFILER_ADD_TAG_AIV(param.tag, algoAttr_.identifier, workflowMode_);
         HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
+    }
+
+    if (aivClearEnable_) {
+        ClearAivSyncBuf(buffersOut, param.stream.ptr(), topoArgs);
     }
 
     // alltoall pingpong 图模式走单算子归一流程 或者 单算子模式
     ret = ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, aivProfilingInfo);
-
-    TaskAivProfiler(opArgs.cmdType, aivProfilingInfo.tag, opArgs.count * sizeof(opArgs.dataType),
-        aivProfilingInfo.blockDim, topoArgs.rankSize, resourceArgs.buffersOut[topoArgs.rank], resourceArgs.stream,
-        algArgs.step, aivProfilingInfo.beginTime);
 
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) { 
         HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());

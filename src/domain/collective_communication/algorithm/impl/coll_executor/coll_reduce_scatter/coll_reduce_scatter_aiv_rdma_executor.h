@@ -8,8 +8,8 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-#ifndef COLL_ALLREDUCE_MID_COUNT_AIV_RDMA_EXECUTOR_H
-#define COLL_ALLREDUCE_MID_COUNT_AIV_RDMA_EXECUTOR_H
+#ifndef COLL_REDUCESCATTER_AIV_RDMA_EXECUTOR_H
+#define COLL_REDUCESCATTER_AIV_RDMA_EXECUTOR_H
 
 #include "coll_reduce_scatter_executor.h"
 #include "hccl_aiv.h"

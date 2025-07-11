@@ -30,7 +30,8 @@ public:
         std::shared_ptr<HcclSocket> agentConnection, std::map<u32, std::shared_ptr<HcclSocket> > &serverConnections,
         std::shared_ptr<HDCommunicate> h2dPtr, std::shared_ptr<HDCommunicate> d2hPtr,
         std::shared_ptr<HcclOpStreamRes> opStreamPtr, OpRetryResetNotifyCallback notifyResetCallback,
-        OpRetrySetTransprotStatusCallback setTransprotStatusCallback, bool isEnableBackupLink,
+        OpRetrySetTransportStatusCallback setTransportStatusCallback,
+        OpRetryGetSwitchRanksCallback getSwitchRanksCallback, bool isEnableBackupLink,
         const OpRetryServerInfo& serverInfo, const OpRetryAgentInfo& agentInfo);
     HcclResult UnRegisterOpRetryManager(const std::string& group);
 
@@ -39,14 +40,16 @@ public:
     static HcclResult GetLinkInfoByIdentifier(s32 deviceLogicID, const std::string &identifier, 
         const std::string &newTag, std::vector<u32> &remoteRankList);
     static HcclResult DeleteLinkInfoByIdentifier(s32 deviceLogicID, const std::string &identifier);
-
+    HcclResult SetRetryStateToWaitResume(const std::string& group, bool isRoot);
+    HcclResult ExitWaitResumeState(const std::string& group, bool isRoot);
 private:
     HcclResult Init();
     HcclResult DeInit();
     HcclResult RegisterAgentRetryMachine(const std::string& group, std::shared_ptr<HcclSocket> socket,
         std::shared_ptr<HDCommunicate> h2dPtr, std::shared_ptr<HDCommunicate> d2hPtr,
         std::shared_ptr<HcclOpStreamRes> opStreamPtr, OpRetryResetNotifyCallback notifyResetCallback,
-        OpRetrySetTransprotStatusCallback setTransprotStatusCallback, bool isEnableBackupLink,
+        OpRetrySetTransportStatusCallback setTransportStatusCallback,
+        OpRetryGetSwitchRanksCallback getSwitchRanksCallback, bool isEnableBackupLink,
         const OpRetryAgentInfo& agentInfo);
     HcclResult RegisterServerRetryMachine(const std::string& group,
         std::map<u32, std::shared_ptr<HcclSocket>> &serverConnections, const OpRetryAgentInfo& agentInfo);

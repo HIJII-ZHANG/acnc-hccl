@@ -108,6 +108,8 @@ HcclResult CollAllGatherVFor310PExecutor::CalcCurCountsAndCurDispls(const u64 ma
 
 HcclResult CollAllGatherVFor310PExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG,
+        "[CollAllGatherVFor310PExecutor][KernelRun] userRank[%u] starts.", topoAttr_.userRank);
     HcclDataType dataType = HCCL_DATA_TYPE_RESERVED;
     dataType = param.VDataDes.dataType;
     const u32 unitSize = SIZE_TABLE[dataType];

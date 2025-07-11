@@ -377,7 +377,7 @@ HcclResult CollRunAlltoAllVStaged::PrepareAlltoAllVStaged2(DeviceMem &recvBuf, D
 
 HcclResult CollRunAlltoAllVStaged::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollRunAlltoAllVStaged][KernelRun] alltoall staged starts");
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollRunAlltoAllVStaged][KernelRun] alltoall staged starts");
     CHK_PRT_RET(topoAttr_.userRankSize % topoAttr_.meshAggregationRankSize != 0,
         HCCL_ERROR("userRankSize[%u] is not an Integer multiple of MeshAggregation Dev Num[%u]",
         topoAttr_.userRankSize, topoAttr_.meshAggregationRankSize), HCCL_E_PARA);
@@ -433,8 +433,10 @@ HcclResult CollRunAlltoAllVStaged::KernelRun(const OpParam &param, ExecMem &exec
             HCCL_INFO("[AlltoAllOperator][RunAlltoAllVStaged] staged 0 use parallel multi-thread delivery of tasks");
             CHK_RET(RunTemplateWithVirtualLink(alltoallLevel0, level0CommInfo));
             // 多流场景下，并行多线程下发task处理
+#ifndef CCL_KERNEL_AICPU
             CHK_RET(ParallelTaskLoaderProcess(tag_, const_cast<Stream&>(param.stream), level0CommInfo,
                 algResResp_->slaveStreams));
+#endif
         } else {
             CHK_RET(RunAlltoAllVTemplateStaged(alltoallLevel0, level0CommInfo));
         }

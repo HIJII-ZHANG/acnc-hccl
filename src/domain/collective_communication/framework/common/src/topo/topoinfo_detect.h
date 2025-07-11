@@ -27,9 +27,15 @@ class TopoInfoDetect {
 public:
     explicit TopoInfoDetect();
     ~TopoInfoDetect();
-    HcclResult SetupAgent(u32 rankSize, u32 myrank, const HcclRootHandle &rootInfo);
+    HcclResult SetupGroupMember(u32 rankSize, u32 myrank, const HcclRootHandle &rootInfo); // Group内成员rank
+    HcclResult SetupAgent(u32 rankSize, u32 myrank, const HcclRootHandle &rootInfo, const HcclRankHandle &rankHandle);  // 分层建链时使用的SetupAgent
+    HcclResult PrepareHandle (HcclRankHandle &rankHandle, std::vector<HcclIpAddress> &whitelist); //准备要发送的agent
+    HcclResult SetupRank(std::shared_ptr<HcclSocket> &agentConnRoot); //分层建链时获得每个GroupLeader的监听端口
     HcclResult SetupAgentByMasterInfo(HcclIpAddress &localHostIp, const HcclRootHandle &rootInfo);
     HcclResult SetupServer(HcclRootHandle &rootInfo);
+    HcclResult GroupLeaderAccept(HcclRankHandle &grpLeaderInfo, std::vector<HcclIpAddress> whitelist,
+        std::shared_ptr<HcclSocket> grpLeaderToRoot);
+    HcclResult GroupLeaderListen(u32 myrank, HcclRankHandle &rankHandle, std::vector<HcclIpAddress> &whitelist);
     HcclResult SetupServerByMasterInfo(const HcclIpAddress &masterIP, u32 masterPort, const HcclRootHandle &rootInfo);
     HcclResult Teardown();
     HcclResult WaitComplete(const HcclRootHandle &rootInfo);
@@ -39,8 +45,10 @@ public:
     HcclResult TransformRankTableStr(const RankTable_t &clusterInfo, std::string &ranktableStr);
     HcclResult GetServerConnections(std::map<u32, std::shared_ptr<HcclSocket>> &connectSockets);
     HcclResult GetAgentConnection(std::shared_ptr<HcclSocket> &connectSocket);
+    HcclResult SendGroupLeaderPort(std::shared_ptr<HcclSocket> &connectSocket, HcclRankHandle &rankHandle);
     HcclResult GetAgentListenSocket(HcclSocketPortConfig &commPortConfig);
     HcclResult GenerateRootInfo(const HcclIpAddress &hostIP, u32 hostPort, u32 devicePhysicID, HcclRootHandle &rootInfo);
+    HcclResult GetGroupLeader(HcclRankHandle &rankHandle);
 
 protected:
 private:
@@ -51,6 +59,8 @@ private:
     HcclResult StartNetwork(HcclIpAddress &hostIP, bool bInitDevNic);
     HcclResult StopNetwork(HcclIpAddress &hostIP, bool bInitDevNic);
     HcclResult StartRootNetwork(const HcclIpAddress &hostIP, u32 &usePort);
+    HcclResult StartGroupLeaderNetwork(const std::vector<HcclIpAddress> &whitelist,
+        const HcclIpAddress &hostIP, u32 &listenSocket_);
     HcclResult AddSocketWhiteList(u32 port,
         const std::vector<HcclIpAddress> &whitelist) const;
     HcclResult GenerateLocalRankInfo(u32 rankSize, u32 rankID, HcclBasicRankInfo &localRankInfo);
@@ -63,13 +73,17 @@ private:
         nlohmann::json &perServerJson, u32 serverIndex);
     HcclResult TransformSuperPodList(const std::vector<RankInfo_t> &rankInfo, nlohmann::json &superPodListJson) const;
     void SetupTopoExchangeServer(s32 devicePhysicID, s32 deviceLogicID, HcclIpAddress hostIP, u32 hostPort,
+        std::vector<HcclIpAddress> whitelist, HcclNetDevCtx netDevCtx,
+       std::shared_ptr<HcclSocket> listenSocket, bool isMasterInfo = false);
+    void SetupTopoGroupLeader(s32 devicePhysicID, s32 deviceLogicID, HcclIpAddress hostIP, u32 hostPort,
         std::vector<HcclIpAddress> whitelist, HcclNetDevCtx netDevCtx, std::shared_ptr<HcclSocket> listenSocket,
-        bool isMasterInfo = false);
+        std::shared_ptr<HcclSocket> grpLeaderToRoot, bool isMasterInfo = false);
     HcclResult WaitTopoExchangeServerCompelte(u32 idx) const;
     void SetBootstrapHostIP(HcclIpAddress &ip);
     HcclIpAddress GetBootstrapHostIP() const;
     HcclResult FilterDevIPs(std::vector<HcclIpAddress> &sourceDeviceIPs,
         std::vector<HcclIpAddress> &targetDeviceIPs) const;
+    HcclResult CalcGroupSizeAndRank(const u32 nRanks, const u32 rank, u32 &groupSize, u32 &groupRank);
     HcclResult PreemptDeviceNicPort(const u32 devPhyId, const s32 devLogicId, const HcclIpAddress &deviceIp,
         u32 &usePort);
     HcclResult PreemptBackupDeviceNicPort(const u32 devPhyId, const s32 devLogicId, const HcclIpAddress &deviceIp,
@@ -92,6 +106,7 @@ private:
     std::shared_ptr<hccl::TopoInfoExchangeAgent> pTopoExchangeAgent_{nullptr};
     std::shared_ptr<TopoInfoExchangeServer> pTopoExchangeServer_{nullptr};
     std::unique_ptr<std::thread> exchangeServerThreadPtr_{nullptr};
+    HcclRankHandle grpLeader_;
 };
 }  // namespace hccl
 #endif /* TOPOINFO_DETECT_H */

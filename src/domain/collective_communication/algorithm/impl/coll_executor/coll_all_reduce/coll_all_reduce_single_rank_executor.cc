@@ -20,6 +20,7 @@ CollAllReduceSingleRankExecutor::CollAllReduceSingleRankExecutor(const HcclDispa
 
 HcclResult CollAllReduceSingleRankExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollAllReduceSingleRankExecutor][KernelRun] allreduce single rank");
     u64 totalSize = execMem.count * SIZE_TABLE[param.DataDes.dataType];
     ReduceType reduceType =
         ((param.reduceType != HCCL_REDUCE_PROD) && (param.DataDes.dataType != HCCL_DATA_TYPE_INT64)) ?

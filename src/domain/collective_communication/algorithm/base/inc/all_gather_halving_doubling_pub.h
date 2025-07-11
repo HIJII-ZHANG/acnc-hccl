@@ -23,7 +23,8 @@ public:
     HcclResult Prepare(u32 blockSize, UserMemType hdInputMemType, UserMemType hdOutputMemType) override;
 
     HcclResult RunAsync(const u32 rank, const u32 rankSize, const std::vector<LINK> &links) override;
-
+    HcclResult GetNslbAdjInfo(const u32 rank, const u32 rankSize,
+                              const std::vector<LINK> &links, AdjInfo& nslbAdjInfo) override;
 protected:
 private:
     HcclResult RunAllGather(u32 rank, u32 stepNum,

@@ -17,6 +17,8 @@
 #include "stream_active_manager.h"
 #include "comm_factory_pub.h"
 #include "rank_consistentcy_checker.h"
+#include "hccl_aiv.h"
+#include "config_log.h"
 
 namespace hccl {
 constexpr u64 HCCL_INPLACE_MEMCOPY_SIZE = 131072; // 128K数据量 = 131072B数据量
@@ -64,14 +66,15 @@ protected:
         std::vector<LevelNSubCommTransport>& opTransport, AlgResourceRequest& resourceRequest);
     HcclResult PrintTransportRequest(AlgResourceRequest& resourceRequest);
     /* *************** 算法编排 *************** */
-    // 虚函数，执行具体的数据搬运、reduce操作。  各Executor重载。
-    // 按Level0、Level1、Level2可继续进行拆分。
+    // 非零拷贝场景走KernelRun
     virtual HcclResult KernelRun(const OpParam &param, ExecMem &execMem);
+    // 零拷贝场景走KernelRunIntraServerPre、KernelRunInterServer、KernelRunIntraServerPost
     virtual HcclResult KernelRunInterServer(const OpParam &param, ExecMem &execMem) {return HCCL_SUCCESS;}
-    virtual HcclResult KernelRunIntraServer(const OpParam &param, ExecMem &execMem) {return HCCL_SUCCESS;}
-    virtual HcclResult KernelRunIntraServerReduceScatter(const OpParam &param, ExecMem &execMem, std::vector<std::vector<Slice> > &multRingsSliceZero, std::vector<Slice> &dataSegsSlice) {return HCCL_SUCCESS;}
-    virtual HcclResult KernelRunInterServerAllReduce(const OpParam &param, ExecMem &execMem) {return HCCL_SUCCESS;}
-    virtual HcclResult KernelRunIntraServerAllGather(const OpParam &param, ExecMem &execMem, std::vector<std::vector<Slice> > &multRingsSliceZero, u64 &hdCount) {return HCCL_SUCCESS;}
+    virtual HcclResult KernelRunIntraServerPre(const OpParam &param, ExecMem &execMem) {return HCCL_SUCCESS;}
+    virtual HcclResult KernelRunIntraServerPost(const OpParam &param, ExecMem &execMem) {return HCCL_SUCCESS;}
+    virtual HcclResult Getlevel1CommRank(SubCommInfo& level1CommInfo);
+    virtual HcclResult SelectTempAlg(std::unique_ptr<AlgTemplateBase> &level1TempAlg, u32 level1RankSize);
+    virtual HcclResult GetDevNumInlocalPod(u32& devNumInlocalPod);
 
     // 图模式下激活从流
     HcclResult ActiveSlaveStreams(const Stream &stream);
@@ -89,6 +92,9 @@ protected:
     HcclResult SendRecvSignalOnLinks(OpParam &param, ExecMem &execMem, std::vector<LINK> links);
     bool OpSyncCheckCommSize(const CommPlane levelIndex, const u32 expectedSize);
     HcclResult InplaceOpSync(OpParam &param, ExecMem &execMem);
+
+    HcclResult CopyAivCommInfoToDevice(const CommPlane levelIndex, const u32 subLevelIndex,
+        AlgResourceResponse& algResource);
 
     /* ---------------以下为 protected 成员变量定义领域-------------------------- */
     std::string tag_;

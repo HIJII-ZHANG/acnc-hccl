@@ -81,6 +81,7 @@ bool CollAllReduceCommExecutor::IsSmallData(const u64 totalSize, const u64 curSi
 
 HcclResult CollAllReduceCommExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollAllReduceCommExecutor][KernelRun] userRank[%u] starts.", topoAttr_.userRank);
     CommPlane commPlane = COMM_COMBINE;
     if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
         commPlane = COMM_COMBINE_ORDER;

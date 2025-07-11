@@ -36,7 +36,8 @@ private:
 
     /* *************** 算法编排 *************** */
     HcclResult KernelRun(const OpParam &param, ExecMem &execMem) override;
-    
+    HcclResult Getlevel1CommRank(SubCommInfo& level1CommInfo) override;
+    HcclResult SelectTempAlg(std::unique_ptr<AlgTemplateBase> &level1TempAlg, u32 level1RankSize) override;
     bool meshSinglePlane_ = false;
 };
 

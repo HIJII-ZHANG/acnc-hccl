@@ -43,9 +43,13 @@
 #include "peterson_lock.h"
 #include "coll_alg_utils.h"
 #include "heartbeat.h"
+#include "../nslbdp/hccl_nslbdp_pub.h"
+#if (!defined(HCCD)) && (!defined(CCL_KERNEL_AICPU))
 #include "i_hccl_one_sided_service.h"
 #include "opretry_manager.h"
 #include "aclgraph/zero_copy_acl_graph.h"
+#endif
+#include "../nslbdp/hccl_nslbdp.h"
 
 namespace hccl {
 using ServRankInfo_t = std::map<std::string, std::vector<RankInfo_t> >;
@@ -54,6 +58,8 @@ constexpr u32 INPUT = 0;
 constexpr u32 OUTPUT = 1;
 const std::string COMM_LOOPBACK_IP = "127.0.0.1";
 constexpr u8 INPLACE_PRESYNC_STATUS_SEVEN = 7;
+constexpr u32 NSLBDP_HCCP_VERSION = 1; 
+constexpr u32 NSLBDP_HCCP_NICPOSION = 1; 
 struct RemoteRes {
     u64 inbufferSize;
     u64 outbufferSize;
@@ -97,6 +103,7 @@ public:
         WorldGroupInfo &globalData);
 
     virtual HcclResult GetAlgType(AlgType &algType, HcclCMDType opType);
+    virtual HcclResult InitHccp();
 
     virtual HcclResult GetDeviceNumPerAggregation(u32 &deviceNumPerAggregation);
 
@@ -124,6 +131,7 @@ public:
     virtual HcclResult AllGatherVOutPlace(const std::string &tag, void *inputPtr, void *outputPtr, 
         u64 inputCount, const void *outputCounts, const void *outputDispls, HcclDataType dataType, HcclRtStream stream);
 
+    #ifndef CCL_KERNEL_AICPU
     virtual HcclResult AllReduce(const std::string &tag, void *inputPtr, void *outputPtr, u64 count,
         HcclDataType dataType, HcclReduceOp op, HcclRtStream stream,
         SyncMode syncMode = SyncMode::DEFAULT_TIMEWAITSYNCMODE, const HcomCollOpInfo *opInfo = nullptr);
@@ -131,6 +139,7 @@ public:
     virtual HcclResult AllReduceOutPlace(const std::string &tag, void *inputPtr, void *outputPtr, u64 count,
         HcclDataType dataType, HcclReduceOp op, HcclRtStream stream,
         SyncMode syncMode = SyncMode::DEFAULT_TIMEWAITSYNCMODE);
+    #endif
 
     virtual HcclResult AlltoAllV(const void *sendBuf, const void *sendCounts, const void *sdispls,
         HcclDataType sendType, const void *recvBuf, const void *recvCounts, const void *rdispls, HcclDataType recvType,
@@ -222,6 +231,15 @@ public:
 
     virtual bool Is310PDuoCard();
 
+    HcclResult HcclSelectAlg(HcclCMDType opType, u64 count, HcclDataType dataType,
+        HcclReduceOp op, bool &ifAiv, std::string &algName, bool isSuperKernel = false);
+
+    HcclResult HcclCalcBlockDim(HcclCMDType opType, u64 count, HcclDataType dataType,
+        std::string &algName, u32 &blockDim);
+
+    HcclResult HcclGetAlgExecParam(const std::string &tag, HcclCMDType opType, u64 count, void *inputPtr, void *outputPtr,
+        bool clearEnable, HcclDataType dataType, HcclReduceOp op, void *&commContext, u64 &len, u32 aivCoreLimit);
+
     HcclResult CheckDeviceType(const DevType deviceType) const;
 
     HcclResult CheckReductionOp(const HcclReduceOp op) const;
@@ -242,9 +260,11 @@ public:
 
     static bool CompareWithNicName(const NetworkInfo_t &left, const NetworkInfo_t &right);
 
+    #if (!defined(HCCD)) && (!defined(CCL_KERNEL_AICPU))
     HcclResult GetOneSidedService(IHcclOneSidedService** service);
     HcclResult InitOneSidedServiceNetDevCtx(u32 remoteRankId);
     HcclResult DeInitOneSidedServiceNetDevCtx();
+    #endif
 
     u32 GetUserRank();
     u32 GetGroupRank();
@@ -313,8 +333,7 @@ public:
         const uint64_t count, void *pCount, void *pDispls);
     HcclResult AllocComResource(const std::string &newTag, const std::string &algName,
         const HcclCMDType commType, const OpParam& opParam, rtStream_t stream);
-    HcclResult AllocComResourceByTiling(const std::string &algConfig, const std::string &tag, 
-        uint32_t opType, uint32_t reduceType, rtStream_t stream);
+    HcclResult AllocComResourceByTiling(const std::string &algConfig, void *param);
 
     virtual HcclResult CreateCommResource(const std::string &tag, rtStream_t aiCpuStream, bool isOpbaseMode,
         void **commContext);
@@ -352,6 +371,9 @@ public:
         blockDim = blockDim_;
         return HCCL_SUCCESS;
     }
+    HcclResult SwitchNic(uint32_t nRanks, uint32_t *ranks, bool *useBackup);
+    HcclResult GetSwitchRanks(u32 *distSwitchRankList, bool *distSwitchUseBackup, u32 &distSwitchRankNum,
+        u8 *distRemoteRankNicStatus, u32 &distNicStatusNum, bool &needCheckDefaultNic, bool &needCheckBackupNic);
     HcclResult SetTransportStatus(const HcclOpIdentifier &opId, bool statusStop,
         const std::map<u32, bool> &remoteRankPortMap, const std::map<u32, bool> &isChangeLinkMap, bool isChangeLinkFlag);
     static HcclResult GetTransportCqeErrors(const HcclNetDevCtx netDevCtx, std::vector<ErrCqeInfo> &infos, u32 &num);
@@ -384,7 +406,9 @@ private:
     HcclResult InitProfiling();
     HcclResult DeinitProfiling();
     HcclResult InitProfiler();
+    #if (!defined(HCCD)) && (!defined(CCL_KERNEL_AICPU))
     HcclResult InitOneSidedService(const RankTable_t &rankTable);
+    #endif
     HcclResult RegistTaskExceptionHandler() const;
     HcclResult UnRegistTaskExceptionHandler() const;
     HcclResult UnRegisterBackGroundThread();
@@ -397,6 +421,7 @@ private:
     HcclResult DeinitNic();
     HcclResult RegisterToHeartBeat();
     HcclResult RegisterToHeartBeat(u32 peerRankId, std::string &tag);
+    HcclResult HeartBeatInit();
     void UnRegisterToHeartBeat();
     HcclResult MrManagerInit();
     HcclResult MrManagerDeInit();
@@ -414,8 +439,8 @@ private:
     const std::string &kernelName, const AicpuOpTiling opTilingInfo);
     HcclResult AicpuKfcTilingDataLaunchExt(const OpParam &opParam, const HcclCMDType &opType,
         const DeviceMem &deviceContext, const std::string &kernelName, const AicpuOpTiling opTilingInfo);
-    u64 CalcOpTilingDynamicDataSize(
-        const OpParam &opParam, const HcclCMDType &opType, const u32 &rankSize);
+    u64 CalcOpTilingDynamicDataSize(const OpParam &opParam, const HcclCMDType &opType, const u32 &rankSize,
+        const std::string &algName = "");
     HcclResult AicpuInitOpTilingDataFromOpParam(const OpParam &opParam, const HcclCMDType &opType,
         struct OpTilingData* opTilingData);
     HcclResult AicpuInitOpTilingDataBuf(const OpParam &opParam, const HcclCMDType &opType, 
@@ -428,9 +453,14 @@ private:
     HcclResult SetDynamicTilingDataAlltoall(const OpParam &opParam, HostMem &dynamicDataMem);
     HcclResult ProfilerDel(const OpParam &param);
     HcclResult ProfilerAdd(const OpParam &param, AlgType algType);
-    HcclResult SetDynamicTilingDataAlltoallv(const OpParam &opParam, HostMem &dynamicDataMem);
+    HcclResult SetDynamicTilingDataAlltoallv(const OpParam &opParam, HostMem &dynamicDataMem,
+        const std::string &algName = "");
     HcclResult SetDynamicTilingDataAlltoallvc(const OpParam &opParam, HostMem &dynamicDataMem);
+    HcclResult SetDynamicTilingDataV(const OpParam &opParam, HostMem &dynamicDataMem);
     HcclResult GetReportHcclMC2Info(const Stream &kfcStream, const std::vector<Stream> &aicpuStreams);
+
+    HcclDataType GetDataType(const OpParam &opParam);
+    u64 GetDataCount(const OpParam &opParam);
 
     HcclResult ReAllocTransports(const std::string &tag, const std::string &newTag);
     HcclResult SetTransportStatusImpl(OpCommTransport &opCommTransport, bool statusStop,
@@ -449,6 +479,13 @@ private:
         u32 linkIdx, bool statusStop);
     void InsertNewTagToTagMap(std::string &newTag, std::string &tag);
     HcclResult GetTagFromNewTag(const std::string &newTag, std::string &tag);
+    HcclResult ParseSwitchRanks(uint32_t nRanks, uint32_t *ranks, bool *useBackup,
+        std::unordered_map<u32, bool> &switchRanks);
+    HcclResult SetRemoteRankLinkInfo(std::unordered_map<u32, bool> &switchRanks, ChangeLinkInfo &changeLinkInfo);
+    HcclResult SetSingleLinkInfo(std::unordered_map<u32, bool> &switchRanks, u32 remoteRankId,
+        ChangeLinkInfo &changeLinkInfo);
+    HcclResult PrepareHeartBeatInit(HcclCMDType opType, OpParam &opParam);
+    HcclResult setVnicIpToRankInfoList();
 
     u32 deviceNumPerServer_;
     HcclDispatcher dispatcher_; // dispatcher放到最后析构
@@ -475,6 +512,7 @@ private:
     std::vector<HcclIpAddress> devBackupIpAddr_;
     u32 devBackupPort_{HCCL_INVALID_PORT};
     HcclIpAddress hostIp_;
+    HcclIpAddress deviceVnicIp_;
     u32 hostPort_{HCCL_INVALID_PORT};
     u32 localRank_;
     SocketHandle hostSocketHandle_;
@@ -543,6 +581,7 @@ private:
     HcclResult TraverseLinkVector(std::vector<std::unique_ptr<CommBase> > &commBaseVector, bool isStop);
     HcclResult CheckSuspendingStatus();
     HcclResult InitCombinOpara();
+    HcclResult RegisterRanksToDca();
     HcclResult InitWorkSpace();
     void ReleaseWorkSpacebuffer();
     HcclResult CreateWorkSpace(u64 size, DeviceMem &buffer) const;
@@ -561,10 +600,13 @@ private:
         std::unique_ptr<PreProcessMetaInfo> &preMetaInfo);
     HcclResult RegressCalPreOp(AlltoAllOperator* &alltoAllOperator, const OpParam &opParam,
         std::unique_ptr<PreProcessMetaInfo> &preMetaInfo, Stream &preProcessStream);
+    HcclResult NslbDp_CollectOperTable(HcclCMDType opType, OpParam &opParam,
+                                       AlgType nslbAlgType, std::string& algName);
+    HcclResult NslbDp_CollectSendAdjTable(HcclCMDType opType, OpParam &opParam,
+                                          AlgType nslbAlgType, AdjInfo &nslbAdjInfo);
     HcclResult ExecOp(HcclCMDType opType, OpParam &opParam);
     // alltoall专用
     HcclResult ExecOpAlltoAll(HcclCMDType opType, OpParam &opParam);
-    HcclResult CopyAivCommInfoToDevice(AlgResourceResponse &algResResp);
     HcclResult FreeScratchMemOnOpBaseMode(DeviceMem &scratchMem, const OpParam &opParam,
         const HcclCMDType &opType);
     HcclResult CalcTinySendRecvMem(const OpParam &opParam, AlgResourceResponse &algResResponse,
@@ -600,7 +642,8 @@ private:
     HcclResult InitHDCommunicate();
     HcclResult InitOpRetry();
     HcclResult InitOpResPara();
-    HcclResult PrepareZeroCopy(HcclCMDType opType, OpParam &opParam, std::string algName);
+    bool IsSupportZeroCopy(const OpParam &opParam);
+    HcclResult PrepareZeroCopy(const std::string &algName, const AlgDesc &algDesc, OpParam &opParam);
     HcclResult UpdateZeroCopy(const OpParam &opParam, const AlgResourceResponse &algResource);
     HcclResult BuildZeroCopyParam();
     HcclResult AllocAndClearHostMem(u64 size, std::shared_ptr<HostMem> &buffer) const;
@@ -679,7 +722,8 @@ private:
 
     HcclResult CaptureSlaveStreams(rtStream_t mainStream, std::vector<Stream> &slaveStreams);
     HcclResult HandleAclGraphFirstOpAivBuff(rtStream_t mainStream);
-    
+    bool StreamIsCapture(rtStream_t mainStream);
+
     HcclIpAddress loopBackIp_;
     bool profilingInitiated_;
     u64 callbackThreadId_;
@@ -689,7 +733,7 @@ private:
     bool isHostUseDevNic_;
     std::mutex socketListenMutex_;
 
-    HcclAlg *implAlg_ = nullptr;
+    std::unique_ptr<HcclAlg> implAlg_ = nullptr;
     HcclCommunicatorAttrs attrCollector_;
 
     u32 deviceNumPerAggregation_;
@@ -734,7 +778,9 @@ private:
     std::unique_ptr<QueueNotifyManager> queueNotifyManagerRefac_ = { nullptr };
     std::unique_ptr<HcclSocketManager> socketManager_;
     std::unique_ptr<TransportManager> transportManager_ = { nullptr };
+#if (!defined(HCCD)) && (!defined(CCL_KERNEL_AICPU))
     std::unique_ptr<ZeroCopyMemoryAgent> zeroCopyMemoryAgent_ = { nullptr };
+#endif
     std::unordered_map<std::string, AlgResourceResponse> resMap_; // tag : AlgResourceResponse
     std::unordered_set<std::string> hostResMap_;
     std::unordered_set<std::string> hbSendRecvTags_;
@@ -765,13 +811,17 @@ private:
     DeviceMem serverAndsuperPodToRankDevice_;
     DeviceMem commplaneSubGroupRankDevice_;
     DeviceMem hierarchicalAlgOptionDevice_;
+    #if (!defined(HCCD)) && (!defined(CCL_KERNEL_AICPU))
     std::unique_ptr<IHcclOneSidedService> oneSideService_ = {nullptr};
+    #endif
     HcclRankLinkInfo hcclRankLinkInfo_{};
     std::atomic<bool> isOneSidedServiceNetDevCtxInited{false};
     std::atomic<bool> isOneSidedServiceNicInited{false};
+#if (!defined(HCCD)) && (!defined(CCL_KERNEL_AICPU))
     std::unique_ptr<OpRetryManager> opRetryManager_ = { nullptr };
     std::shared_ptr<HcclOpStreamRes> opRetryStreamPtr_;
     std::unordered_set<u32> captureModelIds_;
+#endif
     std::unordered_map<u32, std::unordered_map<std::string, HccltagRemoteResV3>> rankTagRemoteRes_;  // 以rankid&tag粒度保存HccltagRemoteResV3
     std::shared_ptr<HDCommunicate> kfcControlTransferH2D_;
     std::shared_ptr<HDCommunicate> kfcStatusTransferD2H_;
@@ -794,6 +844,12 @@ private:
     std::list<DeviceMem> ibverbsLocalNotify_;
     std::list<DeviceMem> ibverbsRemoteNotify_;
 
+    // alltoallv
+    HostMem hostCollectBuffer_;
+
+    // AIV通信同步标识
+    s32 aivTag_ = 1;
+
     // Host侧收集的数据
     HcclAiRMAInfo aiRMAInfoHost_;
     std::vector<HcclAiRMAWQ> aiSqHost_;
@@ -811,11 +867,25 @@ private:
     DeviceMem aiRcqDev_;
     DeviceMem aiMemDev_;
     DeviceMem aiMemDetailsDev_;
+#if (!defined(HCCD)) && (!defined(CCL_KERNEL_AICPU))
     ZeroCopyAclGraph zeroCopyAclGraph_;
+#endif     
+
+#if (!defined(HCCD)) && (!defined(CCL_KERNEL_AICPU))
+    u32 switchRanksNum_{ 0 };
+    u32 switchRankList_[AICPU_MAX_RANK_NUM] {};
+    bool switchUseBackup_[AICPU_MAX_RANK_NUM] {};
+    u8 remoteRankNicStatus_[AICPU_MAX_RANK_NUM] {};
+    bool needCheckDefaultNic_ { false };
+    bool needCheckBackupNic_ { false };
+    bool switchNicWaitingResult_ { false };
+#endif
 };
 
+#if (!defined(HCCD)) && (!defined(CCL_KERNEL_AICPU))
 void HcclOneSidedServiceCallbackInstall(HcclResult (*func)(std::unique_ptr<IHcclOneSidedService> &,
     std::unique_ptr<hccl::HcclSocketManager> &, std::unique_ptr<hccl::NotifyPool> &));
 void HcclOneSidedServiceCallbackUninstall();
+#endif
 }  // end namespace hccl
 #endif  // HCCL_IMPL_BASE_H

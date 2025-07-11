@@ -111,11 +111,20 @@ using RoleTableInfo = struct RoleTableInfoTag {
 };
 
 constexpr uint32_t ROOTINFO_INDENTIFIER_MAX_LENGTH = 128;
+constexpr uint32_t ROOTINFO_PORT_MAX_LENGTH = 16;
 using HcclRootHandle = struct HcclRootHandleDef {
     char ip[IP_ADDRESS_BUFFER_LEN];
     uint32_t port;
     NICDeployment nicDeploy;
     char identifier[ROOTINFO_INDENTIFIER_MAX_LENGTH];
+    u32 rankId;
+};
+
+using HcclRankHandle = HcclRootHandle;
+
+using GroupLeader_t = struct tagGroupLeaderInfo {
+    u32 grpLeaderNum { 0 };
+    std::vector<HcclRankHandle> GroupLeaderList;
 };
 
 const std::string PROP_STEP = "step";
@@ -156,6 +165,10 @@ const std::string PROP_NETWORK_IPADDR = "ip_addr";
 const std::string PROP_NETWORK_NETWORKPORT = "network_port";
 const std::string PROP_NETWORK_REFIP = "ref_ip";
 const std::string PROP_NETWORK_PLANEID = "plane_id";
+
+const std::string PROP_NETWORK_IDENTIFIER = "identifier";
+const std::string PROP_GROUP_LEADER_LIST = "group_leader_list";
+const std::string PROP_GROUP_CLUSTER_LIST = "group_cluster_list";
 
 const std::string TOPO_DETECT_TAG = "topo_detect_default_tag";
 }

@@ -1,8 +1,6 @@
 cmake_minimum_required(VERSION 3.16.0)
 project(hccl_alg)
 
-set(CMAKE_VERBOSE_MAKEFILE ON)
-
 add_library(hccl_alg SHARED)
 
 set(HCCL_BASE_DIR ${TOP_DIR}/ace/comop/hccl/whole/hccl/)
@@ -11,7 +9,6 @@ target_include_directories(hccl_alg PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/base/inc
     ${HCCL_BASE_DIR}/pub_inc
     ${HCCL_BASE_DIR}/pub_inc/hccl
-    ${HCCL_BASE_DIR}/algorithm/alg_research/alg_template
     ${HCCL_BASE_DIR}/inc
     ${HCCL_BASE_DIR}/inc/adapter
     ${TOP_DIR}/inc
@@ -21,7 +18,15 @@ target_include_directories(hccl_alg PRIVATE
     ${TOP_DIR}/ace/npuruntime/acl/inc/external
     ${CMAKE_CURRENT_SOURCE_DIR}/base/alg_aiv_template
     ${CMAKE_CURRENT_SOURCE_DIR}/base/alg_template
-    ${CMAKE_CURRENT_SOURCE_DIR}/base/alg_template/component/inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/base/alg_template/component/
+    ${CMAKE_CURRENT_SOURCE_DIR}/base/alg_template/temp_all_gather
+    ${CMAKE_CURRENT_SOURCE_DIR}/base/alg_template/temp_all_reduce
+    ${CMAKE_CURRENT_SOURCE_DIR}/base/alg_template/temp_alltoall
+    ${CMAKE_CURRENT_SOURCE_DIR}/base/alg_template/temp_alltoallv
+    ${CMAKE_CURRENT_SOURCE_DIR}/base/alg_template/temp_broadcast
+    ${CMAKE_CURRENT_SOURCE_DIR}/base/alg_template/temp_reduce
+    ${CMAKE_CURRENT_SOURCE_DIR}/base/alg_template/temp_reduce_scatter
+    ${CMAKE_CURRENT_SOURCE_DIR}/base/alg_template/temp_scatter
     ${CMAKE_CURRENT_SOURCE_DIR}/base/mc2_handler
     ${CMAKE_CURRENT_SOURCE_DIR}/base/communicator
     ${CMAKE_CURRENT_SOURCE_DIR}/base/communicator/legacy
@@ -60,10 +65,14 @@ target_include_directories(hccl_alg PRIVATE
     ${HCCL_BASE_DIR}/../../../../inc
     ${TOP_DIR}/ace/comop/inc/external/hccl
     ${TOP_DIR}/ace/comop/inc/hccl
-    ${TOP_DIR}/ace/comop/hccl/whole/hccl/algorithm/alg_research/pub_inc
     ${TOP_DIR}/ace/comop/hccl/whole/hccl/platform/inc/adapter/
     ${TOP_DIR}/ace/comop/hccl/whole/hccl/platform/inc
     ${TOP_DIR}/drivers/network/inc
+    ${HCCL_BASE_DIR}/framework/common/src/config
+    ${HCCL_BASE_DIR}/framework/inc/
+    ${CMAKE_CURRENT_SOURCE_DIR}/../framework/cluster_maintenance/detect/detect_connect_anomalies
+    ${CMAKE_CURRENT_SOURCE_DIR}/../framework/common/src/config
+    ${CMAKE_CURRENT_SOURCE_DIR}/../framework/inc/
 )
 
 if(BUILD_OPEN_PROJECT)
@@ -131,7 +140,6 @@ if(BUILD_OPEN_PROJECT)
         c_sec
         ascendalog
         -Wl,--no-as-needed
-        hccl_alg_research
         hccl_plf
     )
 else()
@@ -145,7 +153,6 @@ else()
         slog
         mmpa
         -Wl,--no-as-needed
-        hccl_alg_research
         hccl_plf
         ofed_headers
     )

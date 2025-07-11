@@ -11,6 +11,32 @@
 #ifndef CALC_TRANSPORT_REQ_BASE_H
 #define CALC_TRANSPORT_REQ_BASE_H
 
-#include "calc_transport_req_base_pub.h"
+#include <hccl/hccl_types.h>
+#include <vector>
+#include "hccl/base.h"
+#include "coll_alg_param.h"
+
+namespace hccl {
+class CalcTransportReqBase {
+public:
+    explicit CalcTransportReqBase(std::vector<std::vector<u32>> &subCommPlaneVector,
+        std::vector<bool> &isBridgeVector, u32 userRank);
+
+    virtual ~CalcTransportReqBase();
+
+    virtual HcclResult CalcTransportRequest(const std::string &tag, TransportMemType inputMemType,
+        TransportMemType outputMemType, const CommParaInfo &commParaInfo,
+        std::vector<SingleSubCommTransport> &commTransport, u32 subUserRankRoot = INVALID_VALUE_RANKID);
+
+protected:
+    // 获取本rank在子通信域(多平面)内当前平面的rank号
+    const u32 GetSubCollectiveRank(const std::vector<u32> &vecPara) const;
+    HcclResult GetRankByUserRank(const std::vector<u32> &vecPara, const u32 userRank, u32 &rank) const;
+
+    const std::vector<std::vector<u32>> &subCommPlaneVector_;
+    const std::vector<bool> &isBridgeVector_;
+    const u32 userRank_;
+};
+}  // namespace hccl
 
 #endif /* CALC_TRANSPORT_REQ_BASE_H */

@@ -45,7 +45,7 @@ __aicore__ inline void AivAllReduceMid910B::Process(GM_ADDR input, GM_ADDR outpu
     __gm__ T *cclGmOther = (__gm__ T *)(GM_IN[block_idx] + dataOffset);
 
     if (block_idx == rank_) {
-        SetFlagNew((__gm__ int32_t *)(flagAddrSelf), 0);
+        SetSignalValue((__gm__ int32_t *)(flagAddrSelf), localSetTensor, 0);
         PipeBarrier<PIPE_ALL>();
     }
 
@@ -56,12 +56,12 @@ __aicore__ inline void AivAllReduceMid910B::Process(GM_ADDR input, GM_ADDR outpu
     CpGM2GM(cclGmSelf + gmOffset, inputGm + gmOffset, count);
     PipeBarrier<PIPE_ALL>();
 
-    SetFlagNew((__gm__ int32_t*)(flagAddrSelf + FLAG_SIZE + block_idx * FLAG_SIZE), tag);
+    SetSignalValue((__gm__ int32_t*)(flagAddrSelf + FLAG_SIZE + block_idx * FLAG_SIZE), localSetTensor, tag);
 
     // ReduceScatter
     if (block_idx != rank_) {
-        CheckFlagNew((__gm__ int32_t *)(flagAddrSelf + FLAG_SIZE + rank_ * FLAG_SIZE), tag);
-        CheckFlagNew((__gm__ int32_t *)(flagAddrOther + FLAG_SIZE + rank_ * FLAG_SIZE), tag);
+        WaitSignalValue((__gm__ int32_t *)(flagAddrSelf + FLAG_SIZE + rank_ * FLAG_SIZE), localCheckTensor, tag);
+        WaitSignalValue((__gm__ int32_t *)(flagAddrOther + FLAG_SIZE + rank_ * FLAG_SIZE), localCheckTensor, tag);
 
         count = CalActualCount(rank_, sliceCount, avgLengthPerSlice, tailLength);
 
@@ -73,11 +73,11 @@ __aicore__ inline void AivAllReduceMid910B::Process(GM_ADDR input, GM_ADDR outpu
         PipeBarrier<PIPE_MTE3>();
         
         // 本aiv reduce完成
-        SetFlagNew((__gm__ int32_t *)(flagAddrSelf), tag, true);
+        AddSignalValue((__gm__ int32_t *)(flagAddrSelf), localSetTensor, tag);
     }
 
     // 每个aiv读相应对端的flag
-    CheckFlagNew((__gm__ int32_t *)(flagAddrOther), (rankSize_ - 1) * tag);
+    WaitSignalValue((__gm__ int32_t *)(flagAddrOther), localCheckTensor, (rankSize_ - 1) * tag);
 
     // AllGather
     gmOffset = block_idx * avgLengthPerSlice;

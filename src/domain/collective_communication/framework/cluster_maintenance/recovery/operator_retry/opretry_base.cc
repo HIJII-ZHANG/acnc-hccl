@@ -156,7 +156,7 @@ HcclResult OpRetryBase::CheckOpName(const RetryInfo &retryInfo1, const RetryInfo
             "rank[%u] tag2[%s] index2[%u] Stag2[%s] Sindex2[%u], Rtag2[%s] Rindex2[%u], IpInfo2[%s]",
             retryInfo1.rankId, tag1, index1, tag1Send, index1Send, tag1Recv, index1Recv, retryInfo1.dfxIpInfo,
             retryInfo2.rankId, tag1, index2, tag2Send, index2Send, tag2Recv, index2Recv, retryInfo2.dfxIpInfo),
-            HCCL_E_PARA);
+            HCCL_E_OPRETRY_FAIL);
         return HCCL_SUCCESS;
     }
     const char* tag1 = reinterpret_cast<const char*>(retryInfo1.opInfo.opId.tag);
@@ -168,7 +168,7 @@ HcclResult OpRetryBase::CheckOpName(const RetryInfo &retryInfo1, const RetryInfo
         HCCL_ERROR("[OpRetry][CheckOpName]hccl aicpu can not retry, opName is inconsistent: "\
         "rank[%u] tag1[%s] index1[%u] IpInfo1[%s], rank[%u] tag2[%s] index2[%u], IpInfo2[%s]",
         retryInfo1.rankId, tag1, index1, retryInfo1.dfxIpInfo, retryInfo2.rankId, tag2, index2,
-        retryInfo2.dfxIpInfo), HCCL_E_PARA);
+        retryInfo2.dfxIpInfo), HCCL_E_OPRETRY_FAIL);
     return HCCL_SUCCESS;
 }
 
@@ -349,7 +349,7 @@ HcclResult OpRetryBase::SetTransportStatusForStop(RetryContext* retryCtx)
     std::map<u32, bool> isChangeLinkMap;
     bool isChangeLinkFlag = false;
     // stop阶段对当前正在使用的link执行，使用lastLinkPortStatus_表示当前正在使用的网口情况，默认为true，使用主网口
-    return retryCtx->setTransprotStatusCallback_(retryCtx->localRetryInfo_.opInfo.opId, true,
+    return retryCtx->setTransportStatusCallback_(retryCtx->localRetryInfo_.opInfo.opId, true,
         retryCtx->lastLinkPortStatus_, isChangeLinkMap, isChangeLinkFlag);
 }
 
@@ -392,7 +392,7 @@ HcclResult OpRetryBase::SetTransportStatusForResume(RetryContext* retryCtx)
     retryCtx->localRetryInfo_.isChangeLinkFlag = isChangeLinkFlag;  // 向server上报
     retryCtx->localChangeLinkInfo_.isChangeLinkFlag = isChangeLinkFlag;  // 向aicpu下发
 
-    return retryCtx->setTransprotStatusCallback_(retryCtx->localRetryInfo_.opInfo.opId, false,
+    return retryCtx->setTransportStatusCallback_(retryCtx->localRetryInfo_.opInfo.opId, false,
         remoteRankPortMap, isChangeLinkMap, isChangeLinkFlag);
 }
 
@@ -404,6 +404,7 @@ HcclResult OpRetryBase::Send(std::shared_ptr<HcclSocket> socket, void *data, u64
 
     u64 restSize = size; // 待发送数据长度
     while (true) {
+        CHK_PRT_RET(!enableSendRecv, HCCL_DEBUG("[OpRetry][Send]Exit send."), HCCL_SUCCESS);
         u64 sendDis = size - restSize;
         void* dataPtr = reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(data) + sendDis);
         /* 获取当前时间，如果耗时超过timeout，则返回错误 */
@@ -437,6 +438,7 @@ HcclResult OpRetryBase::Recv(std::shared_ptr<HcclSocket> socket, void *data, u64
 
     u64 recvSize = 0;
     while (true) {
+        CHK_PRT_RET(!enableSendRecv, HCCL_DEBUG("[OpRetry][Recv]Exit recv."), HCCL_SUCCESS);
         // 超时判断
         const auto elapsed =
             std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start);
@@ -520,6 +522,7 @@ HcclResult OpRetryBase::InitChangeLinkInfo(RetryContext* retryCtx, bool incre)
 
 HcclResult OpRetryBase::GetLinkPortStatus(RetryContext* retryCtx, LinkPortStatus &linkPortStatus)
 {
+#ifndef CCL_KERNEL_AICPU
     std::string newTag = std::string(reinterpret_cast<const char*>(retryCtx->localRetryInfo_.opInfo.opId.newTag));
     HCCL_RUN_INFO("[OpRetry][Agent]begin to GetLinkPortStatus from: deviceLogicId[%d], identifier[%s] tag[%s]",
         retryCtx->deviceLogicId_, retryCtx->group_.c_str(), newTag.c_str());
@@ -572,6 +575,7 @@ HcclResult OpRetryBase::GetLinkPortStatus(RetryContext* retryCtx, LinkPortStatus
 
     HCCL_RUN_INFO("[OpRetry][Agent]GetLinkPortStatus success: deviceLogicId[%d], rankSize[%d], identifier[%s], tag[%s]",
         retryCtx->deviceLogicId_, linkPortStatus.rankSize, retryCtx->group_.c_str(), newTag.c_str());
+#endif
     return HCCL_SUCCESS;
 }
 HcclResult OpRetryBase::SetBsrOpId(RetryContext* retryCtx, HcclSendRecvType type)
@@ -607,5 +611,71 @@ HcclResult OpRetryBase::GetBsrOpId(RetryContext* retryCtx, HcclSendRecvType type
     opId.isSendRecv = true;
     opId.opType = HcclCMDType::HCCL_CMD_BATCH_SEND_RECV;
     return HCCL_SUCCESS;
+}
+
+HcclResult OpRetryBase::IssueActiveSwitchInfo(std::shared_ptr<HcclSocket> socket, ActiveSwitchInfo &switchInfo)
+{
+    HcclResult ret = Send(socket, &switchInfo, sizeof(ActiveSwitchInfo));
+    if (ret == HCCL_SUCCESS) {
+        HCCL_INFO("[SwitchNic][send] send success fin[%u], switchRankNm[%u], remoteRankNum[%u]",
+            switchInfo.refreshTransportFin, switchInfo.switchRankNum, switchInfo.remoteRankNum);
+    } else {
+        HCCL_ERROR("[SwitchNic] send active switch info fail.");
+    }
+    return ret;
+}
+
+HcclResult OpRetryBase::WaitActiveSwitchInfo(std::shared_ptr<HcclSocket> socket, ActiveSwitchInfo &switchInfo)
+{
+    HcclResult ret = Recv(socket, &switchInfo, sizeof(ActiveSwitchInfo));
+    if (ret == HCCL_SUCCESS) {
+        HCCL_INFO("[SwitchNic] recv success fin[%u], switchRankNm[%u], remoteRankNum[%u]",
+            switchInfo.refreshTransportFin, switchInfo.switchRankNum, switchInfo.remoteRankNum);
+    }
+    return ret;
+}
+
+HcclResult OpRetryBase::RecvActiveSwitchInfo(std::shared_ptr<HcclSocket> socket,
+    const u32 rankId, ActiveSwitchInfo &switchInfo)
+{
+    std::chrono::steady_clock::time_point startTime = std::chrono::steady_clock::now();
+    const auto timeout = std::chrono::seconds(GetExternalInputHcclLinkTimeOut() * ACTIVE_SWITCH_TIMES);
+    HcclResult ret = HCCL_SUCCESS;
+    while (true) {
+        // 判断是否超时
+        std::chrono::steady_clock::time_point curTime = std::chrono::steady_clock::now();
+        const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(curTime - startTime);
+        CHK_PRT_RET(elapsed > timeout,
+            HCCL_ERROR("[SwitchNic][Server] timeout in recv agent ActiveSwitchInfo, waitime[%u>%u]",
+            elapsed, timeout), HCCL_E_TIMEOUT);
+        ret = WaitActiveSwitchInfo(socket, switchInfo);
+        if (ret == HCCL_SUCCESS) {
+            HCCL_INFO("[SwitchNic][Server] recv ActiveSwitchInfo form rank[%u]", rankId);
+            break;
+        } else if (ret == HCCL_E_AGAIN) {
+            // 未收到数据，发送一个保活数据给agent
+            RetryCommand command = RETRY_CMD_RUNNING;
+            CHK_RET(IssueCommand(socket, command));
+            HCCL_DEBUG("[SwitchNic][Server] send keeping active info to rank[%u]", rankId);
+        } else {
+            HCCL_ERROR("[SwitchNic][Server] failed to recv ActiveSwitchInfo, rank[%u], ret[%u]", rankId, ret);
+            break;
+        }
+        SaluSleep(OP_RETRY_POLL_AICPU_STATE_INTERVAL);
+    }
+    return ret;
+}
+
+HcclResult OpRetryBase::GetSwitchRanks(RetryContext* retryCtx, bool &needCheckDefaultNic, bool &needCheckBackupNic)
+{
+    CHK_PTR_NULL(retryCtx);
+    return retryCtx->getSwitchRanksCallback_(retryCtx->switchInfo_.switchRankList,
+        retryCtx->switchInfo_.switchUseBackup, retryCtx->switchInfo_.switchRankNum,
+        retryCtx->switchInfo_.remoteRankNicStatus, retryCtx->switchInfo_.remoteRankNum,
+        needCheckDefaultNic, needCheckBackupNic);
+}
+
+void OpRetryBase::SetEnableSendRecv(bool enable){
+    enableSendRecv = enable;
 }
 }

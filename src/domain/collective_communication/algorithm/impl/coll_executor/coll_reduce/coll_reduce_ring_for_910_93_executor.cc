@@ -87,7 +87,7 @@ HcclResult CollReduceRingFor91093Executor::CalcLevel2CommInfo(TransportMemType i
     TransportMemType outputType,
     std::vector<LevelNSubCommTransport>& opTransport)
 {
-    CommParaInfo commParaLevel2(COMM_LEVEL2, CommType::COMM_TAG_MAX);
+    CommParaInfo commParaLevel2(COMM_LEVEL2, CommType::COMM_TAG_MAX, root_);
     if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_RING) {
         commParaLevel2.commType = CommType::COMM_TAG_RING_INNER;
     } else {
@@ -100,7 +100,7 @@ HcclResult CollReduceRingFor91093Executor::CalcLevel2CommInfo(TransportMemType i
 
 HcclResult CollReduceRingFor91093Executor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollReduceRingFor91093Executor][Run]The CollReduceRingFor91093Executor starts.");
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollReduceRingFor91093Executor][Run]The CollReduceRingFor91093Executor starts.");
     u32 perDataSize = 0;
     CHK_RET(SalGetDataTypeSize(param.DataDes.dataType, perDataSize));
     CHK_PRT_RET(perDataSize == 0, 
@@ -300,7 +300,31 @@ HcclResult CollReduceRingFor91093Executor::KernelRun(const OpParam &param, ExecM
     HCCL_INFO("[CollReduceRingFor91093Executor]reduce double ring stage2 run success.");
     return HCCL_SUCCESS;
 }
+HcclResult CollReduceRingFor91093Executor::Getlevel1CommRank(SubCommInfo& level1CommInfo)
+{
+    if (CheckCommSize(COMM_LEVEL2, COMM_INDEX_0 + 1) != HCCL_SUCCESS) {
+        return HCCL_E_UNAVAIL;
+    }
+    level1CommInfo = GetSubCommInfo(COMM_LEVEL2, COMM_INDEX_0);
 
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollReduceRingFor91093Executor::SelectTempAlg(std::unique_ptr<AlgTemplateBase> &level1TempAlg, u32 level1RankSize)
+{
+    if (level1RankSize > 1) {
+        if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_RING) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_REDUCE_RING, dispatcher_);
+            HCCL_INFO("[CollReduceRingFor91093Executor][superpod]reduce: using ring algo inter-server.");
+        } else {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_REDUCE_RECURSIVE_HALVING_DOUBLING, 
+                dispatcher_);
+            HCCL_INFO("[CollReduceRingFor91093Executor][superpod]reduce: using halving-doubling algo inter-server.");
+        }
+        return HCCL_SUCCESS;
+    }
+    return HCCL_E_UNAVAIL;
+}
 REGISTER_EXEC("ReduceRingFor91093Executor", ReduceRingFor91093, CollReduceRingFor91093Executor);
 
 } // namespace hccl

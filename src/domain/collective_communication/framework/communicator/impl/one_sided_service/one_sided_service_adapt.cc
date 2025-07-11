@@ -59,6 +59,38 @@ static HcclResult AddDescTraceInfo(hccl::hcclComm* hcclComm, HcclOneSideOpDesc* 
     return HCCL_SUCCESS;
 }
 
+HcclResult HcclRemapRegistedMemory(HcclComm *comm, HcclMem *memInfoArray, u64 commSize, u64 arraySize)
+{
+    RPT_INPUT_ERR(comm == nullptr, "EI0003", std::vector<std::string>({"ccl_op", "parameter", "value", "tips"}),\
+    std::vector<std::string>({"HcclRemapRegistedMemory", "comm", "nullptr", "please check comm"}));
+    CHK_PTR_NULL(comm);
+    RPT_INPUT_ERR(memInfoArray == nullptr, "EI0003", std::vector<std::string>({"ccl_op", "parameter", "value", "tips"}),\
+        std::vector<std::string>({"HcclRemapRegistedMemory", "memInfoArray", "nullptr", "please check memInfoArray"}));
+    CHK_PTR_NULL(memInfoArray);
+
+    RPT_INPUT_ERR(commSize <= ONE_SIDE_HOST_MEM_ZERO, "EI0003", std::vector<std::string>(
+        {"ccl_op", "parameter", "value", "tips"}), std::vector<std::string>({"HcclRemapRegistedMemory", "commSize", \
+        "less than or equal to 0", "please check commSize"}));
+    CHK_PRT_RET(commSize <= ONE_SIDE_HOST_MEM_ZERO, HCCL_ERROR("[HcclRemapRegistedMemory]commSize[%llu] is invalid, "\
+        "please check commSize", commSize), HCCL_E_PARA);
+    RPT_INPUT_ERR(arraySize <= ONE_SIDE_HOST_MEM_ZERO, "EI0003", std::vector<std::string>(
+        {"ccl_op", "parameter", "value", "tips"}), std::vector<std::string>({"HcclRemapRegistedMemory", "arraySize", \
+        "less than or equal to 0", "please check arraySize"}));
+    CHK_PRT_RET(arraySize <= ONE_SIDE_HOST_MEM_ZERO, HCCL_ERROR("[HcclRemapRegistedMemory]arraySize[%llu] is invalid, "\
+        "please check arraySize", arraySize), HCCL_E_PARA);
+
+    IHcclOneSidedService *service = nullptr;
+    for (u64 i = 0; i < commSize; i++) {
+        hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm[i]);
+        CHK_PTR_NULL(hcclComm);
+        CHK_RET(hcclComm->GetOneSidedService(&service));
+        CHK_PTR_NULL(service);
+        CHK_RET(reinterpret_cast<HcclOneSidedService*>(service)->ReMapMem(memInfoArray, arraySize));
+    }
+
+    return HCCL_SUCCESS;
+}
+
 static HcclResult CallOneSideMsprofReportHostApi(hccl::hcclComm* hcclComm, HcclCMDType cmdType, uint64_t beginTime, u64 count,
                                                  HcclDataType dataType, std::string tag)
 {
@@ -78,22 +110,22 @@ HcclResult HcclRegisterMem(HcclComm comm, u32 remoteRank, int type,
 {
     EXCEPTION_HANDLE_BEGIN
         // 参数校验和适配
-        RPT_INPUT_ERR(comm == nullptr, "EI0003", std::vector<std::string>({"api", "parameter", "value", "tips"}),\
+        RPT_INPUT_ERR(comm == nullptr, "EI0003", std::vector<std::string>({"ccl_op", "parameter", "value", "tips"}),\
         std::vector<std::string>({"HcclRegisterMem", "comm", "nullptr", "please check comm"}));
         CHK_PTR_NULL(comm);
-        RPT_INPUT_ERR(addr == nullptr, "EI0003", std::vector<std::string>({"api", "parameter", "value", "tips"}),\
+        RPT_INPUT_ERR(addr == nullptr, "EI0003", std::vector<std::string>({"ccl_op", "parameter", "value", "tips"}),\
         std::vector<std::string>({"HcclRegisterMem", "addr", "nullptr", "please check addr"}));
         CHK_PTR_NULL(addr);
-        RPT_INPUT_ERR(desc == nullptr, "EI0003", std::vector<std::string>({"api", "parameter", "value", "tips"}),\
+        RPT_INPUT_ERR(desc == nullptr, "EI0003", std::vector<std::string>({"ccl_op", "parameter", "value", "tips"}),\
         std::vector<std::string>({"HcclRegisterMem", "memory description", "nullptr", "please check params"}));
         CHK_PTR_NULL(desc);
-
-        HCCL_RUN_INFO("Entry-%s:commPtr[%p], remoteRank[%u], memType[%d], memAddr[%p], memSize[%llu], memDescPtr[%p]",
-                      __func__, comm, remoteRank, type, addr, size, desc);
 
         u32 localRank = INVALID_VALUE_RANKID;
         hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
         CHK_RET(hcclComm->GetUserRank(localRank));
+        std::string commIdentifier = hcclComm->GetIdentifier();
+        HCCL_RUN_INFO("Entry-%s:comm[%s], remoteRank[%u], memType[%d], memAddr[%p], memSize[%llu], memDescPtr[%p]",
+                      __func__, commIdentifier.c_str(), remoteRank, type, addr, size, desc);
         CHK_PRT_RET(remoteRank == localRank, HCCL_WARNING("remoteRank[%u] is equal to localRank[%u], no need to "\
         "register memeory, return HcclRegisterMem success", remoteRank, localRank), HCCL_SUCCESS);
 
@@ -121,8 +153,8 @@ HcclResult HcclRegisterMem(HcclComm comm, u32 remoteRank, int type,
         }
         CHK_RET(reinterpret_cast<HcclOneSidedService*>(service)->RegMem(addr, size, static_cast<HcclMemType>(type), remoteRank, *desc));
 
-        HCCL_RUN_INFO("%s success:commPtr[%p], remoteRank[%u], memType[%d], memAddr[%p], memSize[%llu], memDescPtr[%p]",
-                      __func__, comm, remoteRank, type, addr, size, desc);
+        HCCL_RUN_INFO("%s success:comm[%s], remoteRank[%u], memType[%d], memAddr[%p], memSize[%llu], memDescPtr[%p]",
+                      __func__, commIdentifier.c_str(), remoteRank, type, addr, size, desc);
     EXCEPTION_HANDLE_END
     return HCCL_SUCCESS;
 }
@@ -131,22 +163,22 @@ HcclResult HcclDeregisterMem(HcclComm comm, HcclMemDesc* desc)
 {
     EXCEPTION_HANDLE_BEGIN
         // 参数校验和适配
-        RPT_INPUT_ERR(comm == nullptr, "EI0003", std::vector<std::string>({"api", "parameter", "value", "tips"}),\
+        RPT_INPUT_ERR(comm == nullptr, "EI0003", std::vector<std::string>({"ccl_op", "parameter", "value", "tips"}),\
         std::vector<std::string>({"HcclDeregisterMem", "comm", "nullptr", "please check comm"}));
         CHK_PTR_NULL(comm);
-        RPT_INPUT_ERR(desc == nullptr, "EI0003", std::vector<std::string>({"api", "parameter", "value", "tips"}),\
+        RPT_INPUT_ERR(desc == nullptr, "EI0003", std::vector<std::string>({"ccl_op", "parameter", "value", "tips"}),\
         std::vector<std::string>({"HcclDeregisterMem", "memory description", "nullptr", "please check params"}));
         CHK_PTR_NULL(desc);
 
-        HCCL_RUN_INFO("Entry-%s:commPtr[%p], memDescPtr[%p]", __func__, comm, desc);
-
         hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
+        std::string commIdentifier = hcclComm->GetIdentifier();
+        HCCL_RUN_INFO("Entry-%s:comm[%s], memDescPtr[%p]", __func__, commIdentifier.c_str(), desc);
         IHcclOneSidedService *service = nullptr;
         CHK_RET(hcclComm->GetOneSidedService(&service));
         CHK_PTR_NULL(service);
         CHK_RET(reinterpret_cast<HcclOneSidedService*>(service)->DeregMem(*desc));
 
-        HCCL_RUN_INFO("%s success:commPtr[%p], memDescPtr[%p]", __func__, comm, desc);
+        HCCL_RUN_INFO("%s success:comm[%s], memDescPtr[%p]", __func__, commIdentifier.c_str(), desc);
     EXCEPTION_HANDLE_END
     return HCCL_SUCCESS;
 }
@@ -156,23 +188,23 @@ HcclResult HcclExchangeMemDesc(HcclComm comm, u32 remoteRank, HcclMemDescs* loca
 {
     EXCEPTION_HANDLE_BEGIN
         // 参数校验和适配
-        RPT_INPUT_ERR(comm == nullptr, "EI0003", std::vector<std::string>({"api", "parameter", "value", "tips"}),\
+        RPT_INPUT_ERR(comm == nullptr, "EI0003", std::vector<std::string>({"ccl_op", "parameter", "value", "tips"}),\
         std::vector<std::string>({"HcclExchangeMemDesc", "comm", "nullptr", "please check comm"}));
         CHK_PTR_NULL(comm);
-        RPT_INPUT_ERR(local == nullptr, "EI0003", std::vector<std::string>({"api", "parameter", "value", "tips"}),\
+        RPT_INPUT_ERR(local == nullptr, "EI0003", std::vector<std::string>({"ccl_op", "parameter", "value", "tips"}),\
         std::vector<std::string>({"HcclExchangeMemDesc", "local memory description", "nullptr", "please check params"}));
         CHK_PTR_NULL(local);
-        RPT_INPUT_ERR(remote == nullptr, "EI0003", std::vector<std::string>({"api", "parameter", "value", "tips"}),\
+        RPT_INPUT_ERR(remote == nullptr, "EI0003", std::vector<std::string>({"ccl_op", "parameter", "value", "tips"}),\
         std::vector<std::string>({"HcclExchangeMemDesc", "remote memory description", "nullptr", "please check params"}));
         CHK_PTR_NULL(remote);
-        RPT_INPUT_ERR(actualNum == nullptr, "EI0003", std::vector<std::string>({"api", "parameter", "value", "tips"}),\
+        RPT_INPUT_ERR(actualNum == nullptr, "EI0003", std::vector<std::string>({"ccl_op", "parameter", "value", "tips"}),\
         std::vector<std::string>({"HcclExchangeMemDesc", "actualNum", "nullptr", "please check params"}));
         CHK_PTR_NULL(actualNum);
 
-        HCCL_RUN_INFO("Entry-%s:commPtr[%p], remoteRank[%u], localMemDescPtr[%p], timeout[%d], remoteMemDescPtr[%p], "
-                      "actualNum[%u]", __func__, comm, remoteRank, local, timeout, remote, *actualNum);
-
         hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
+        std::string commIdentifier = hcclComm->GetIdentifier();
+        HCCL_RUN_INFO("Entry-%s:comm[%s], remoteRank[%u], localMemDescPtr[%p], timeout[%d], remoteMemDescPtr[%p], "
+                      "actualNum[%u]", __func__, commIdentifier.c_str(), remoteRank, local, timeout, remote, *actualNum);
         u32 localRank = INVALID_VALUE_RANKID;
         CHK_RET(hcclComm->GetUserRank(localRank));
         CHK_PRT_RET(remoteRank == localRank, HCCL_WARNING("remoteRank[%u] is equal to localRank[%u], no need to "\
@@ -181,12 +213,11 @@ HcclResult HcclExchangeMemDesc(HcclComm comm, u32 remoteRank, HcclMemDescs* loca
         IHcclOneSidedService *service = nullptr;
         CHK_RET(hcclComm->GetOneSidedService(&service));
         CHK_PTR_NULL(service);
-        std::string commIdentifier = hcclComm->GetIdentifier();
         CHK_RET(reinterpret_cast<HcclOneSidedService *>(service)->ExchangeMemDesc(
                 remoteRank, *local, *remote, *actualNum, commIdentifier, timeout));
 
-        HCCL_RUN_INFO("%s success:commPtr[%p], remoteRank[%u], localMemDescPtr[%p], timeout[%d], remoteMemDescPtr[%p], "
-                      "actualNum[%u]", __func__, comm, remoteRank, local, timeout, remote, *actualNum);
+        HCCL_RUN_INFO("%s success:comm[%s], remoteRank[%u], localMemDescPtr[%p], timeout[%d], remoteMemDescPtr[%p], "
+                      "actualNum[%u]", __func__, commIdentifier.c_str(), remoteRank, local, timeout, remote, *actualNum);
     EXCEPTION_HANDLE_END
     return HCCL_SUCCESS;
 }
@@ -195,26 +226,26 @@ HcclResult HcclEnableMemAccess(HcclComm comm, HcclMemDesc* remoteMemDesc, HcclMe
 {
     EXCEPTION_HANDLE_BEGIN
         // 参数校验和适配
-        RPT_INPUT_ERR(comm == nullptr, "EI0003", std::vector<std::string>({"api", "parameter", "value", "tips"}),\
+        RPT_INPUT_ERR(comm == nullptr, "EI0003", std::vector<std::string>({"ccl_op", "parameter", "value", "tips"}),\
         std::vector<std::string>({"HcclEnableMemAccess", "comm", "nullptr", "please check comm"}));
         CHK_PTR_NULL(comm);
-        RPT_INPUT_ERR(remoteMemDesc == nullptr, "EI0003", std::vector<std::string>({"api", "parameter", "value", "tips"}),\
+        RPT_INPUT_ERR(remoteMemDesc == nullptr, "EI0003", std::vector<std::string>({"ccl_op", "parameter", "value", "tips"}),\
         std::vector<std::string>({"HcclEnableMemAccess", "remote memory description", "nullptr", "please check params"}));
         CHK_PTR_NULL(remoteMemDesc);
-        RPT_INPUT_ERR(remoteMem == nullptr, "EI0003", std::vector<std::string>({"api", "parameter", "value", "tips"}),\
+        RPT_INPUT_ERR(remoteMem == nullptr, "EI0003", std::vector<std::string>({"ccl_op", "parameter", "value", "tips"}),\
         std::vector<std::string>({"HcclEnableMemAccess", "remoteMem Param error", "nullptr", "please check params"}));
         CHK_PTR_NULL(remoteMem);
 
-        HCCL_RUN_INFO("Entry-%s:commPtr[%p], remoteMemDescPtr[%p], remoteMemPtr[%p]", __func__, comm, remoteMemDesc,
-                      remoteMem);
-
         hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
+        std::string commIdentifier = hcclComm->GetIdentifier();
+        HCCL_RUN_INFO("Entry-%s:comm[%s], remoteMemDescPtr[%p], remoteMemPtr[%p]", __func__, commIdentifier.c_str(), remoteMemDesc,
+                      remoteMem);
         IHcclOneSidedService *service = nullptr;
         CHK_RET(hcclComm->GetOneSidedService(&service));
         CHK_PTR_NULL(service);
         reinterpret_cast<HcclOneSidedService*>(service)->EnableMemAccess(*remoteMemDesc, *remoteMem);
 
-        HCCL_RUN_INFO("%s success:commPtr[%p], remoteMemDescPtr[%p], remoteMemPtr[%p]", __func__, comm, remoteMemDesc,
+        HCCL_RUN_INFO("%s success:comm[%s], remoteMemDescPtr[%p], remoteMemPtr[%p]", __func__, commIdentifier.c_str(), remoteMemDesc,
                       remoteMem);
     EXCEPTION_HANDLE_END
     return HCCL_SUCCESS;
@@ -224,22 +255,22 @@ HcclResult HcclDisableMemAccess(HcclComm comm, HcclMemDesc* remoteMemDesc)
 {
     EXCEPTION_HANDLE_BEGIN
         // 参数校验和适配
-        RPT_INPUT_ERR(comm == nullptr, "EI0003", std::vector<std::string>({"api", "parameter", "value", "tips"}),\
+        RPT_INPUT_ERR(comm == nullptr, "EI0003", std::vector<std::string>({"ccl_op", "parameter", "value", "tips"}),\
         std::vector<std::string>({"HcclEnableMemAccess", "comm", "nullptr", "please check comm"}));
         CHK_PTR_NULL(comm);
-        RPT_INPUT_ERR(remoteMemDesc == nullptr, "EI0003", std::vector<std::string>({"api", "parameter", "value", "tips"}),\
+        RPT_INPUT_ERR(remoteMemDesc == nullptr, "EI0003", std::vector<std::string>({"ccl_op", "parameter", "value", "tips"}),\
         std::vector<std::string>({"HcclEnableMemAccess", "remote memory description", "nullptr", "please check params"}));
         CHK_PTR_NULL(remoteMemDesc);
 
-        HCCL_RUN_INFO("Entry-%s:commPtr[%p], remoteMemDescPtr[%p]", __func__, comm, remoteMemDesc);
-
         hccl::hcclComm* hcclComm = static_cast<hccl::hcclComm *>(comm);
+        std::string commIdentifier = hcclComm->GetIdentifier();
+        HCCL_RUN_INFO("Entry-%s:comm[%s], remoteMemDescPtr[%p]", __func__, commIdentifier.c_str(), remoteMemDesc);
         IHcclOneSidedService *service = nullptr;
         CHK_RET(hcclComm->GetOneSidedService(&service));
         CHK_PTR_NULL(service);
         reinterpret_cast<HcclOneSidedService*>(service)->DisableMemAccess(*remoteMemDesc);
 
-        HCCL_RUN_INFO("%s success:commPtr[%p], remoteMemDescPtr[%p]", __func__, comm, remoteMemDesc);
+        HCCL_RUN_INFO("%s success:comm[%s], remoteMemDescPtr[%p]", __func__, commIdentifier.c_str(), remoteMemDesc);
     EXCEPTION_HANDLE_END
     return HCCL_SUCCESS;
 }

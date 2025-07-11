@@ -54,6 +54,7 @@ HcclResult CollAllGatherFor310PExecutor::CalcLevel0CommInfo(TransportMemType inp
 
 HcclResult CollAllGatherFor310PExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollAllGatherFor310PExecutor] allgather starts.");
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
     SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
 

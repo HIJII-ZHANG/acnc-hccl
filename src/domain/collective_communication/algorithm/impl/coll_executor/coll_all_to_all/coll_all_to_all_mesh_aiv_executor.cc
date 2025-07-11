@@ -9,7 +9,6 @@
  */
 
 #include "coll_all_to_all_mesh_aiv_executor.h"
-#include "alg_profiling.h"
 
 namespace hccl {
 
@@ -17,6 +16,7 @@ CollAlltoAllMeshAivExecutor::CollAlltoAllMeshAivExecutor(const HcclDispatcher di
                                                          std::unique_ptr<TopoMatcher> &topoMatcher)
     : CollAlltoAllExecutor(dispatcher, topoMatcher)
 {
+    desc_.isAivMode = true;
 }
 
 HcclResult CollAlltoAllMeshAivExecutor::CalcStreamNum(u32& streamNum)
@@ -127,9 +127,60 @@ HcclResult CollAlltoAllMeshAivExecutor::Orchestrate(OpParam& param, AlgResourceR
     return HCCL_SUCCESS;
 }
 
+HcclResult CollAlltoAllMeshAivExecutor::GetAdjInfo(AlgResourceResponse& algRes, AdjInfo& adjInfo)
+{
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollAlltoAllMeshAivExecutor::GetAivExecParam(const OpParam& param, AlgResourceResponse& algRes, AivSuperKernelArgs &args)
+{
+    HcclUs startut = TIME_NOW();
+    tag_ = param.tag;
+    algResResp_ = &algRes;
+ 
+    HcclResult ret = HCCL_SUCCESS;
+    ExecMem execMem;
+    execMem.count = param.All2AllDataDes.sendCount;
+    execMem.inputPtr = param.inputPtr;
+    execMem.outputPtr = param.outputPtr;
+ 
+    // 单算子大数据量
+    execMem.inputMem = algRes.paramInputMem;
+    execMem.outputMem = algRes.aivOutputMem;
+
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_MESH_L0, COMM_INDEX_0);
+ 
+    u32 localRank = level0CommInfo.localRank;
+    u32 localRankSize = level0CommInfo.localRankSize;
+    HCCL_DEBUG("[CollAlltoAllMeshAivExecutor][GetAivExecParam] userRank [%d] localRank [%d]",
+        topoAttr_.userRank, localRank);
+ 
+    for (u32 i = 0; i < localRankSize; i++) {
+        if (i != localRank) {
+            CHK_RET(level0CommInfo.links[i]->GetRemoteMem(UserMemType::INPUT_MEM, &(args.buffersIn[i])));
+            CHK_RET(level0CommInfo.links[i]->GetRemoteMem(UserMemType::OUTPUT_MEM, &(args.buffersOut[i])));
+        } else {
+            args.buffersIn[i] = execMem.inputMem.ptr();
+            args.buffersOut[i] = execMem.outputMem.ptr();
+        }
+    }
+    args.rank = localRank;
+    args.rankSize = localRankSize;
+    args.len = execMem.count;
+    args.dataType = param.All2AllDataDes.sendType;
+
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[CollAlltoAllMeshAivExecutor][Orchestrate]errNo[0x%016llx] tag[%s] excutor kernel "
+            "run failed", HCCL_ERROR_CODE(ret), param.tag.c_str()), ret);
+ 
+    HCCL_INFO("tag[%s], AlltoAll executor getalgexecparam success, take time [%lld]us.",
+        param.tag.c_str(), DURATION_US(TIME_NOW() - startut));
+    return HCCL_SUCCESS;
+}
+
 HcclResult CollAlltoAllMeshAivExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollAlltoAllMeshAivExecutor][KernelRun]alltoall aiv enter");
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollAlltoAllMeshAivExecutor][KernelRun]alltoall aiv enter");
 
     CHK_RET(CheckCommSize(COMM_MESH_L0, COMM_INDEX_0 + 1));
     SubCommInfo level0CommInfo = GetSubCommInfo(COMM_MESH_L0, COMM_INDEX_0);
@@ -151,10 +202,6 @@ HcclResult CollAlltoAllMeshAivExecutor::KernelRun(const OpParam &param, ExecMem 
         }
     }
 
-    if (aivClearEnable_) {
-        ClearAivSyncBuf(buffersOut, localRank, localRankSize, param.stream.ptr());
-    }
-
     ExtraArgs extraArgs;
     bool isOpbase = (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
     HcclResult ret;
@@ -166,13 +213,19 @@ HcclResult CollAlltoAllMeshAivExecutor::KernelRun(const OpParam &param, ExecMem 
             param.All2AllDataDes.sendType, HCCL_REDUCE_RESERVED, 0, isOpbase
     };
     AivTopoArgs topoArgs { localRank, localRankSize, MAX_RANK_SIZE, 0, topoAttr_.serverNum, topoAttr_.deviceType };
-    AivResourceArgs resourceArgs { param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size(), 0};
+    AivResourceArgs resourceArgs {
+        param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size(), 0, param.aivTag
+    };
     AivAlgArgs algArgs {};
     struct AivProfilingInfo aivProfilingInfo;
     aivProfilingInfo.counter = opCounter_;
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
-        HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
+        HCCL_PROFILER_ADD_TAG_AIV(param.tag, algoAttr_.identifier, workflowMode_);
         HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
+    }
+
+    if (aivClearEnable_) {
+        ClearAivSyncBuf(buffersOut, param.stream.ptr(), topoArgs);
     }
 
     if (param.opType == HcclCMDType::HCCL_CMD_ALLTOALL && ((isOpbase && dataSize < AIV_ALL_TO_ALL_BIG_SIZE) ||
@@ -212,10 +265,6 @@ HcclResult CollAlltoAllMeshAivExecutor::KernelRun(const OpParam &param, ExecMem 
         resourceArgs.blockDim = blockDim_;
         ret = ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, extraArgs, aivProfilingInfo);
     }
-
-    TaskAivProfiler(opArgs.cmdType, aivProfilingInfo.tag, opArgs.count * sizeof(opArgs.dataType),
-        aivProfilingInfo.blockDim, topoArgs.rankSize, resourceArgs.buffersOut[topoArgs.rank], resourceArgs.stream,
-        algArgs.step, aivProfilingInfo.beginTime);
 
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){ 
         HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());

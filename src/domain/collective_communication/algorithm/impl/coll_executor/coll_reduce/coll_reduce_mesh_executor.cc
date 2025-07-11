@@ -26,7 +26,7 @@ void CollReduceMeshExecutor::ParseParam(const OpParam& param)
     bool isInlineReduce = IsSupportSDMAReduce(param.inputPtr, param.outputPtr,
         param.DataDes.dataType, param.reduceType);
     meshSinglePlane_ = (topoAttr_.deviceType == DevType::DEV_TYPE_910B) &&
-        topoMatcher_->GetDeterministicConfig() == DETERMINISTIC_CONFIG_DISABLE && isInlineReduce &&
+        topoMatcher_->GetDeterministicConfig() == DETERMINISTIC_DISABLE && isInlineReduce &&
         (GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
 }
 
@@ -75,6 +75,7 @@ HcclResult CollReduceMeshExecutor::CalcLevel0CommInfo(TransportMemType inputType
 
 HcclResult CollReduceMeshExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollReduceMeshExecutor][KernelRun] userRank[%u] starts.", topoAttr_.userRank);
     u32 perDataSize = SIZE_TABLE[param.DataDes.dataType];
 
     std::vector<Slice> dataSegsSlice;   // 数据分成ranksize份，每份的起始偏移和大小
@@ -92,7 +93,7 @@ HcclResult CollReduceMeshExecutor::KernelRun(const OpParam &param, ExecMem &exec
 
     CHK_RET(ActiveSlaveStreams(param.stream));
 
-    if (topoMatcher_->GetExternalInputHcclDeterministic() == DETERMINISTIC_CONFIG_DISABLE &&
+    if (topoMatcher_->GetExternalInputHcclDeterministic() == DETERMINISTIC_DISABLE &&
         (param.DataDes.dataType != HCCL_DATA_TYPE_INT64) &&
         (topoAttr_.deviceType == DevType::DEV_TYPE_910B && param.reduceType != HCCL_REDUCE_PROD)) {
         CHK_RET(MultiStreamReduceScatterMeshAtomic(tag_, execMem.inputMem, execMem.outputMem, execMem.count,

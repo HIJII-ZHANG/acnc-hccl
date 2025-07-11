@@ -18,7 +18,8 @@ enum CommConfigVersion {
     COMM_CONFIG_VERSION_TWO = 2,
     COMM_CONFIG_VERSION_THREE = 3,
     COMM_CONFIG_VERSION_FOUR = 4,
-    COMM_CONFIG_VERSION_FIVE = 5                     // 当前支持的最高版本
+    COMM_CONFIG_VERSION_FIVE = 5,                     // 当前支持的最高版本
+    COMM_CONFIG_VERSION_SIX = 6
 };
 
 enum CommConfigOpExpansion {
@@ -46,6 +47,8 @@ typedef struct CommConfigHandleDef {
     u32 opExpansionMode;    // 0：默认值  1：host  2：aicpu  3:aiv
     u32 trafficClass;
     u32 serviceLevel;
+    u32 worldRankID;
+    u64 jobID;
 } CommConfigHandle;
 
 namespace hccl {
@@ -63,6 +66,8 @@ public:
     bool GetConfigAicpuUnfold() const;         // 获取AICPU配置, 在310P和A3中AICPU展开
     u32 GetConfigTrafficClass() const;
     u32 GetConfigServiceLevel() const;
+    u32 GetConfigWorldRankID() const;
+    u64 GetConfigJobID() const;
 
 private:
     HcclResult CheckMagicWord(const CommConfigHandle& config);      // 检查Magic Word是否合法
@@ -75,13 +80,15 @@ private:
     HcclResult SetConfigOpExpansionMode(const CommConfigHandle& config);  // 设置AIV和AICPU, 在310P和A3中AICPU展开
 
     u64 bufferSize_;        // CCL buffer大小配置，单位B
-    u8 deterministic_;      // 确定性计算配置：0-关闭，1-开启，其他数字暂时保留
+    u8 deterministic_;      // 确定性计算配置：0-关闭，1-开启确定性（不支持规约保序），2-开启确定性&规约保序，其他数字暂时保留
     std::string commName_;  // 通信域名称
     std::string udi_;       // user define information，用于在报错日志中定位错误通信域
     bool aivMode_;
     bool aicpuUnfold_;
     u32 trafficClass_;
     u32 serviceLevel_;
+    u32 worldRankID_;
+    u64 jobID_;
 };
 }
 #endif /* HCCL_COMM_CONFIG_PUB_H */

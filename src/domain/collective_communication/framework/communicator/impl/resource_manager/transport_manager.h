@@ -182,9 +182,10 @@ public:
 
     HcclResult CreateVirturalTransport(SingleSubCommTransport& singleSubCommTransport);
     HcclResult Alloc(const std::string &tag, const TransportIOMem &transMem, OpCommTransport &opTransportResponse,
-        bool isAicpuModeEn, bool isBackup = false, bool isZeroCopy = false, const HcclCMDType &opType=HcclCMDType::HCCL_CMD_INVALID);
+        bool isAicpuModeEn, bool isBackup = false, bool isZeroCopy = false, const HcclCMDType &opType=HcclCMDType::HCCL_CMD_INVALID,
+        bool isCapture = false);
     HcclResult IncreAlloc(const std::string &tag, const TransportIOMem &transMem, OpCommTransport &opTransportReq,
-        OpCommTransport &opTransportResponse, bool isAicpuModeEn, bool isBackup = false);
+        OpCommTransport &opTransportResponse, bool isAicpuModeEn, bool isBackup = false, bool isCapture = false);
     HcclResult GetRemoteRankList(OpCommTransport &opTransportResponse, std::vector<u32> &rankList,
         TransportType transportType);
     HcclResult GetIncreRemoteRankList(OpCommTransport &opTransportReq,
@@ -218,8 +219,8 @@ private:
     HcclResult SetMachinePara(const std::string &tag, MachineType machineType, const std::string &serverId, u32 dstRank,
         const bool supportDataReceivedAck, const LinkMode linkMode,
         const std::vector<std::shared_ptr<HcclSocket> > &socketList, const DeviceMem &inputMem,
-        const DeviceMem &outputMem, const DeviceMem &expMem, bool isAicpuModeEn, bool isBackup,
-        u32 notifyNum, u32 trafficClass, u32 serviceLevel, MachinePara &machinePara,
+        const DeviceMem &outputMem, const DeviceMem &expMem, bool isAicpuModeEn, bool isBackup, bool isCapture,
+        u32 notifyNum, u32 trafficClass, u32 serviceLevel, MachinePara &machinePara, RankInfo &loaclRank, RankInfo &remoteRank,
         TransportLinkType linkType = TransportLinkType::RESERVED);
     TransportType GetTransportType(const u32 dstRank, bool isUsedRdma);
     void SetTransportParam(TransportPara &para, MachinePara &machinePara);
@@ -230,7 +231,7 @@ private:
         const bool enableUseOneDoorbell, const std::string threadStr,
         const std::vector<std::shared_ptr<HcclSocket> > sockets, const DeviceMem inputMem, const DeviceMem outputMem,
         bool isUsedRdma, std::shared_ptr<Transport> &link, bool isAicpuModeEn,
-        u32 notifyNum = 0, bool isBackup = false, const DeviceMem expMem = DeviceMem(),
+        u32 notifyNum = 0, bool isBackup = false, bool isCapture = false, const DeviceMem expMem = DeviceMem(),
         TransportLinkType linkType = TransportLinkType::RESERVED);
     bool IsHccsTransport(u32 remoteRank, TransportLinkType linkType);
     HcclResult ConstructTransTag(const std::string& tag, std::string& transTag, bool isInterRdma, u32 subCommIndex = 0,
@@ -240,11 +241,12 @@ private:
     HcclResult LoadMultiQpSrcPortFromFile();
     HcclResult GetConfigSrcPorts(MachinePara &machinePara);
     HcclResult createSubCommLinkThreads(const std::string &tag, const TransportIOMem &transMem,
-        struct SubCommLinkPara &subCommLinkPara, bool isAicpuModeEn, bool isBackup, u32 subCommIndex);
+        struct SubCommLinkPara &subCommLinkPara, bool isAicpuModeEn, bool isBackup, u32 subCommIndex, bool isCapture = false);
     HcclResult waitSubCommLinkThreadsComplete(struct SubCommLinkPara &subCommLinkPara);
     HcclResult checkSubCommLinkThreadsStatus(const std::string &tag, struct SubCommLinkPara &subCommLinkPara, bool isBackup);
     HcclResult AllocSubCommLinks(const std::string &tag, const TransportIOMem &transMem,
-        struct SingleSubCommTransport &singleSubCommTransport, bool isAicpuModeEn, bool isBackup, u32 subCommIndex);
+        struct SingleSubCommTransport &singleSubCommTransport, bool isAicpuModeEn, bool isBackup, u32 subCommIndex,
+        bool isCapture = false);
 
     std::mutex mutex_;	// 用于控制互斥资源的访问
     CCLBufferManager &cclBufferManager_;

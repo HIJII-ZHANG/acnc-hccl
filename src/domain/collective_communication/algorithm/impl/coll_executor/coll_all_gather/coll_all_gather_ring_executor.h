@@ -28,6 +28,8 @@ private:
     /* *************** 算法编排 *************** */
     u64 CalcLoopMaxCount(const u64 cclBuffSize, const u32 unitSize) override;
     HcclResult KernelRun(const OpParam &param, ExecMem &execMem) override;
+    HcclResult Getlevel1CommRank(SubCommInfo& level1CommInfo) override;
+    HcclResult SelectTempAlg(std::unique_ptr<AlgTemplateBase> &level1TempAlg, u32 level1RankSize) override;
 };
 
 } // namespace hccl

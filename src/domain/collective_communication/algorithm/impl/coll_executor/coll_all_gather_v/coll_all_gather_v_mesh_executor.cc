@@ -55,13 +55,15 @@ HcclResult CollAllGatherVMeshExecutor::CalcLevel0CommInfo(TransportMemType input
 {
     CommParaInfo commParaLevel0(COMM_LEVEL0, CommType::COMM_TAG_MESH);
     commParaLevel0.meshSinglePlane = (topoAttr_.deviceType == DevType::DEV_TYPE_910B) &&
-        !topoMatcher_->GetExternalInputHcclDeterministic() && (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
+        topoMatcher_->GetExternalInputHcclDeterministic() == DETERMINISTIC_DISABLE &&
+        (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
     CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel0, opTransport[COMM_LEVEL0], inputType, outputType));
     return HCCL_SUCCESS;
 }
 
 HcclResult CollAllGatherVMeshExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollAllGatherVMeshExecutor][KernelRun] userRank[%u] starts.", topoAttr_.userRank);
     u32 perDataSize = SIZE_TABLE[param.VDataDes.dataType];
 
     // 获取子通信域信息

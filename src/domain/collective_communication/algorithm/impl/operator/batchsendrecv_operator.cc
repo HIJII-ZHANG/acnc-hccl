@@ -30,6 +30,11 @@ HcclResult BatchSendRecvOperator::SelectAlg(const std::string& tag, const OpPara
     }
     newTag = tag;
     newTag += (param.aicpuUnfoldMode ? "_device" : "_host");
+
+    if (UNLIKELY(EnvConfig::GetExternalInputDebugConfig() & HCCL_ALG)) {
+        HCCL_CONFIG_INFO(HCCL_ALG, 
+            "[BatchSendRecvOperator][SelectAlg]userRank_[%u], algName[%s]",userRank_, algName.c_str());
+    }
     return HCCL_SUCCESS;
 }
 

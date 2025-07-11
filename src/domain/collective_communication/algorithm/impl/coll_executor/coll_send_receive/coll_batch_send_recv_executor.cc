@@ -136,6 +136,7 @@ HcclResult CollBatchSendRecvExecutor::ProcessSelfSendRecvTasks(Stream& stream)
 HcclResult CollBatchSendRecvExecutor::Orchestrate(OpParam& param, AlgResourceResponse& algResource)
 {
     HcclUs startut = TIME_NOW();
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollBatchSendRecvExecutor] batchsendrecv starts.");
 
     algResResp_ = &algResource;
     CHK_RET(CheckCommSize(COMM_COMBINE_ORDER, COMM_SIZE_TWO));
@@ -174,6 +175,7 @@ HcclResult CollBatchSendRecvExecutor::RunLoopInHostUnfoldMode(OpParam& param)
     if (topoMatcher_->GetExternalInputHcclEnableFfts()) {
         auto meta = HcclOpMetaInfo::GetOneForBatchSendRecv();
         CHK_RET(InitTask(dispatcher_, param.stream, meta.isEnableCache, meta.GetCacheKey()));
+        // 多流子图前后需加空拷贝
         CHK_RET(AlgTemplateBase::ExecEmptyTask(algResResp_->cclInputMem, algResResp_->cclOutputMem, param.stream,
             dispatcher_));
     }
@@ -193,9 +195,45 @@ HcclResult CollBatchSendRecvExecutor::RunLoopInHostUnfoldMode(OpParam& param)
     CHK_RET(SubPostMainWait(param.stream, algResResp_->slaveStreams[STREAM_INDEX_0]));
     HCCL_INFO("[BatchSendRecv] Stream sync: subStream record, main stream wait.");
     if (topoMatcher_->GetExternalInputHcclEnableFfts()) {
+        // 多流子图前后需加空拷贝
         CHK_RET(AlgTemplateBase::ExecEmptyTask(algResResp_->cclInputMem,
             algResResp_->cclOutputMem, param.stream, dispatcher_));
         CHK_RET(LaunchTaskExtend(dispatcher_, param.stream, algResResp_->slaveStreams));
+    }
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollBatchSendRecvExecutor::GetAdjInfo(AlgResourceResponse& algRes, AdjInfo& adjInfo)
+{
+    algResResp_ = &algRes;
+    SubCommInfo level1CommInfo = {0};
+    AdjInfo nslbAdjInfo = {0};
+    if (Getlevel1CommRank(level1CommInfo) != HCCL_SUCCESS) {
+        return HCCL_SUCCESS;
+    }
+    u32 localRank= level1CommInfo.localRank;
+    u32 localRankSize = level1CommInfo.localRankSize;
+
+    std::unique_ptr<AlgTemplateBase> level1TempAlg;
+    if (SelectTempAlg(level1TempAlg, localRankSize) != HCCL_SUCCESS) {
+        return HCCL_SUCCESS;
+    }
+    if(level1TempAlg == nullptr) {
+        return HCCL_SUCCESS;
+    }
+    CHK_RET(level1TempAlg->GetNslbAdjInfo(localRank, localRankSize, level1CommInfo.links, nslbAdjInfo));
+
+    adjInfo.dstRankNum = nslbAdjInfo.dstRankNum;
+    HCCL_INFO("[nslbdp] adjInfo.dstRankNum[%u].", adjInfo.dstRankNum);
+    
+    for (size_t i = 0; i < nslbAdjInfo.nsAdjInfo.size(); i++) {
+        NslbDpAdjInfo dpAdjInfo = {0};
+        dpAdjInfo.dstLocalRankId = nslbAdjInfo.nsAdjInfo[i].dstLocalRankId;
+        dpAdjInfo.phaseId = nslbAdjInfo.nsAdjInfo[i].phaseId;
+        dpAdjInfo.rev = 0;
+        adjInfo.nsAdjInfo.push_back(dpAdjInfo); 
+        HCCL_INFO("[nslbdp]GetAdjInfo dstLocalRankId[%u], phaseId[%u].",
+                   nslbAdjInfo.nsAdjInfo[i].dstLocalRankId, nslbAdjInfo.nsAdjInfo[i].phaseId);
     }
     return HCCL_SUCCESS;
 }
@@ -360,6 +398,7 @@ HcclResult CollBatchSendRecvExecutor::SendKernelRun(Stream& stream, ExecMem &exe
     CHK_RET(executor.SendPrepare(execMem.inputMem, remoteUserRank, stream));
     CHK_RET(executor.RegisterProfiler(0, PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, stream));
     CHK_RET(executor.BatchSendRunAsync());
+
     return HCCL_SUCCESS;
 }
 

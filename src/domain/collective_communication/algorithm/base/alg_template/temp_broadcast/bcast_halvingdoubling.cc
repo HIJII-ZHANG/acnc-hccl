@@ -395,5 +395,10 @@ HcclResult BcastHalvingDoubling::GatherBetweenBlocksLowerBlock(const u32 rank, c
 
     return HCCL_SUCCESS;
 }
+HcclResult BcastHalvingDoubling::GetNslbAdjInfo(const u32 rank, const u32 rankSize,
+                                                const std::vector<LINK> &links, AdjInfo& nslbAdjInfo)
+{
+    return HCCL_SUCCESS;
+}
 REGISTER_TEMPLATE(TemplateType::TEMPLATE_BROADCAST_HALVLINGDOUBLING, BcastHalvingDoubling);
 }  // namespace hccl

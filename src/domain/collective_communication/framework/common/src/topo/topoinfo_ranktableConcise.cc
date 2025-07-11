@@ -346,11 +346,13 @@ HcclResult TopoinfoRanktableConcise::GetSingleDevice(const nlohmann::json &devic
     u32 devicePhyId = 0;
     CHK_RET(SalStrToULong(strDevid, HCCL_BASE_DECIMAL, devicePhyId));
 
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
     if ((deviceType == DevType::DEV_TYPE_310P3 || deviceType == DevType::DEV_TYPE_910B ||
-        deviceType == DevType::DEV_TYPE_910_93) &&  devicePhyId > (MAX_MODULE_DEVICE_NUM - 1)) {
-        // deviceid in 0 ~ 15
-        HCCL_ERROR("[Get][SingleDevice]errNo[0x%016llx] device_id[%u] more than 15 is invalid",
-            HCOM_ERROR_CODE(HCCL_E_PARA), devicePhyId);
+        deviceType == DevType::DEV_TYPE_910_93) &&  devicePhyId > (maxDeviceNum - 1)) {
+        // deviceid in 0 ~ maxDeviceNum
+        HCCL_ERROR("[Get][SingleDevice]errNo[0x%016llx] device_id[%u] more than maxDeviceNum[%u] invalid",
+            HCOM_ERROR_CODE(HCCL_E_PARA), devicePhyId, maxDeviceNum);
         return HCCL_E_PARA;
     } else if ((deviceType != DevType::DEV_TYPE_310P3 && deviceType != DevType::DEV_TYPE_910B &&
         deviceType != DevType::DEV_TYPE_910_93) && devicePhyId > (HCCL_AISERVER_DEVICE_NUM - 1)) {

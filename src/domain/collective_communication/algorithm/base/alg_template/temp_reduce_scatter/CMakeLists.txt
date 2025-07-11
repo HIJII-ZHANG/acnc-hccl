@@ -10,6 +10,21 @@ set(src_list_pub
     ${CMAKE_CURRENT_SOURCE_DIR}/reduce_scatter_ring.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/reduce_scatter_mesh_mix.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/reduce_scatter_mesh_mix_single_stream.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/reduce_scatter_graph_pipeline.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/reduce_scatter_nhr.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/reduce_scatter_nhr_v1.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/reduce_scatter_nb.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/reduce_scatter_ahc.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/reduce_scatter_ahc_broke.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/reduce_scatter_hd_stage.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/reduce_scatter_local_reduce.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/reduce_scatter_pipeline.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/reduce_scatter_plant_local_reduce.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/reduce_scatter_plant_local_reduce_combine.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/reduce_scatter_unified_march.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/reduce_scatter_hccs_sio.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/reduce_scatter_slim_ring.cc
+
 )
 
 target_sources(hccl_alg PRIVATE

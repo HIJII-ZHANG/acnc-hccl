@@ -35,7 +35,9 @@ public:
         const std::string profName, uint32_t threadId);
     static bool GetAllState();
     static HcclResult ClearStoragedProfilingInfo();
-    static void SetCaptureStatus(bool isCapture);
+    static void SetThreadCaptureStatus(s32 threadID, bool isCapture);
+    static bool GetThreadCaptureStatus();
+    static void DeleteThreadCaptureStatus(s32 threadID);
 };
 } // namespace hccl
 #endif // COMMON_PROFILING_PROFILING_MANAGER_H

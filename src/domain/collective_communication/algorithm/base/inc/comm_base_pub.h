@@ -23,7 +23,6 @@
 #include "alg_template_base_pub.h"
 #include "workflow_pub.h"
 #include "common.h"
-#include "common_pub.h"
 
 namespace hccl {
 constexpr u32 HCCL_RANK_SIZE_EQ_TWO = 2;

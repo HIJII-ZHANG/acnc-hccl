@@ -81,6 +81,7 @@ bool CollAllGatherMeshOpbaseExecutor::IsSmallData(const u64 size)
 
 HcclResult CollAllGatherMeshOpbaseExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollAllGatherMeshOpbaseExecutor] allgather KernelRun");
     u8 *curInputPtr = static_cast<u8 *>(execMem.inputPtr);
     u8 *curOutputPtr = static_cast<u8 *>(execMem.outputPtr);
     CHK_PTR_NULL(curInputPtr);

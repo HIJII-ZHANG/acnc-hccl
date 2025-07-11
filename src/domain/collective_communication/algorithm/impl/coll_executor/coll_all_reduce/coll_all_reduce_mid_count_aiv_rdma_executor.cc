@@ -9,7 +9,6 @@
  */
 
 #include "coll_all_reduce_mid_count_aiv_rdma_executor.h"
-#include "alg_profiling.h"
 
 namespace hccl {
 constexpr s32 INTRA_RS_STEP = 0;
@@ -20,6 +19,8 @@ CollAllReduceMidCountAivRdmaExecutor::CollAllReduceMidCountAivRdmaExecutor(const
     : CollAllReduceExecutor(dispatcher, topoMatcher)
 {
     DMAReduceFlag_ = false;
+    desc_.isAivMode = true;
+    desc_.aivTagNum = AIV_A2_ALL_REDUCE_RDMA_KERNEL_NUM;
 }
 
 HcclResult CollAllReduceMidCountAivRdmaExecutor::CalcStreamNum(u32& streamNum)
@@ -109,9 +110,14 @@ HcclResult CollAllReduceMidCountAivRdmaExecutor::Orchestrate(OpParam& param, Alg
     return HCCL_SUCCESS;
 }
 
+HcclResult CollAllReduceMidCountAivRdmaExecutor::GetAdjInfo(AlgResourceResponse& algRes, AdjInfo& adjInfo)
+{
+    return HCCL_SUCCESS;
+}
+
 HcclResult CollAllReduceMidCountAivRdmaExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollAllReduceMidCountAivRdmaExecutor][KernelRun]allreduce aiv enter");
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollAllReduceMidCountAivRdmaExecutor][KernelRun]allreduce aiv enter");
     HcclWorkflowMode workflow = workflowMode_;
     bool isOpbase = (workflow == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
     CHK_RET(ActiveSlaveStreams(param.stream));
@@ -144,10 +150,6 @@ HcclResult CollAllReduceMidCountAivRdmaExecutor::KernelRun(const OpParam &param,
         dataBuffers, flagBuffers, UserMemType::INPUT_MEM, UserMemType::INPUT_MEM, 0, HCCL_MID_COUNT_32_MB));
     // 先做本地拷贝到AIVIN再跨片拷贝；output统一为allreduceInput的位置，即buffer中原位
 
-    if (aivClearEnable_) {
-        ClearAivSyncBuf(flagBuffers, intraRankId, intraRankSize, param.stream.ptr());
-    }
-
     AivOpArgs opArgs {
         HcclCMDType::HCCL_CMD_ALLREDUCE, execMem.inputPtr, nullptr, execMem.count,
         param.DataDes.dataType, param.reduceType, 0, isOpbase
@@ -155,21 +157,22 @@ HcclResult CollAllReduceMidCountAivRdmaExecutor::KernelRun(const OpParam &param,
     AivTopoArgs topoArgs { intraRankId, intraRankSize };
     blockDim_ = CalBlockDim(intraRankSize);
     AivResourceArgs resourceArgs {
-        param.tag, param.stream.ptr(), dataBuffers, flagBuffers, execMem.inputMem.size(), blockDim_
+        param.tag, param.stream.ptr(), dataBuffers, flagBuffers, execMem.inputMem.size(), blockDim_, param.aivTag
     };
     AivAlgArgs algArgs { INTRA_RS_STEP, false };
     struct AivProfilingInfo aivProfilingInfo;
     aivProfilingInfo.counter = opCounter_;
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
-        HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
+        HCCL_PROFILER_ADD_TAG_AIV(param.tag, algoAttr_.identifier, workflowMode_);
         HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
+    }
+
+    if (aivClearEnable_) {
+        ClearAivSyncBuf(flagBuffers, param.stream.ptr(), topoArgs);
     }
 
     CHK_RET(ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, aivProfilingInfo));
 
-    TaskAivProfiler(opArgs.cmdType, aivProfilingInfo.tag, opArgs.count * sizeof(opArgs.dataType),
-        aivProfilingInfo.blockDim, topoArgs.rankSize, resourceArgs.buffersOut[topoArgs.rank], resourceArgs.stream,
-        algArgs.step, aivProfilingInfo.beginTime);
     // allreduce 阶段
     std::unique_ptr<AlgTemplateBase> level1TempAlg;
     DeviceMem allreduceInput = execMem.inputMem.range(dataSegsSlice[commIndex].offset, dataSegsSlice[commIndex].size);
@@ -243,13 +246,10 @@ HcclResult CollAllReduceMidCountAivRdmaExecutor::KernelRun(const OpParam &param,
     opArgs.output = execMem.outputPtr;
     resourceArgs.buffersIn = dataBuffers;
     resourceArgs.buffersOut = flagBuffers;
+    resourceArgs.aivTag = GetNextAivTag(resourceArgs.aivTag);
     algArgs.step = INTRA_AG_STEP;
 
     CHK_RET(ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, aivProfilingInfo));
-
-    TaskAivProfiler(opArgs.cmdType, aivProfilingInfo.tag, opArgs.count * sizeof(opArgs.dataType),
-        aivProfilingInfo.blockDim, topoArgs.rankSize, resourceArgs.buffersOut[topoArgs.rank], resourceArgs.stream,
-        algArgs.step, aivProfilingInfo.beginTime);
 
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){ 
         HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());

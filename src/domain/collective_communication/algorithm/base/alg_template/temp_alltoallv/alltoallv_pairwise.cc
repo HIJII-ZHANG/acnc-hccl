@@ -280,5 +280,23 @@ HcclResult AlltoAllVPairWise::RunZCopyAlltoAll(const u32 rank, const u32 rankSiz
 
     return HCCL_SUCCESS;
 }
+HcclResult AlltoAllVPairWise::GetNslbAdjInfo(const u32 rank, const u32 rankSize,
+                                         const std::vector<LINK> &links, AdjInfo& nslbAdjInfo)
+{
+    for (u32 i = 1; i < rankSize; i++) {
+        u32 nextRank = (rank + i) % rankSize;
+        if (i < NSLBDP_PAIRWISE_MAXPHASE) {
+            NslbDpAdjInfo adjInfoStep = {0};
+            adjInfoStep.dstLocalRankId = nextRank;
+            adjInfoStep.phaseId = i;
+            adjInfoStep.rev = 0;
+            HCCL_INFO("AlltoAllVPairWise-nslb: adjInfoStep.phaseId[%u], remoteuserRank[%u]", adjInfoStep.phaseId, nextRank);
+            nslbAdjInfo.nsAdjInfo.push_back(adjInfoStep);
+        }
+    }
+    nslbAdjInfo.dstRankNum = nslbAdjInfo.nsAdjInfo.size();
+
+    return HCCL_SUCCESS;
+}
 REGISTER_TEMPLATE(TemplateType::TEMPLATE_ALL_2_ALL_V_PAIRWISE, AlltoAllVPairWise);
 } // namespace hccl

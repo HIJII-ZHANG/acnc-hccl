@@ -40,6 +40,8 @@ HcclResult CollBroadcastFor310PCommExecutor::CalcLevel0CommInfo(TransportMemType
 
 HcclResult CollBroadcastFor310PCommExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG,
+        "[CollBroadcastFor310PCommExecutor][KernelRun] userRank[%u] starts.", topoAttr_.userRank);
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
     SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
     std::unique_ptr<AlgTemplateBase> tempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(

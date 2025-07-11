@@ -33,9 +33,9 @@ public:
 
         if (block_idx == 0) {
             // 本卡该片数据已经可以被跨片读取
-            SetFlagNew((__gm__ int32_t *)(GM_IN[rank_]), tag); 
+            SetSignalValue((__gm__ int32_t *)(GM_IN[rank_]), localSetTensor, tag); 
         }
-        CheckFlagNew((__gm__ int32_t *)(GM_IN[block_idx]), tag);
+        WaitSignalValue((__gm__ int32_t *)(GM_IN[block_idx]), localCheckTensor, tag);
 
         for (int i = 0; i < serverNum; i++) {
             if (block_idx == rank_) {
@@ -46,9 +46,9 @@ public:
         }
 
         if (block_idx == 0) {
-            SetFlagNew((__gm__ int32_t *)(GM_IN[rank_]) + 8, tag); 
+            SetSignalValue((__gm__ int32_t *)(GM_IN[rank_]) + 8, localSetTensor, tag); 
         }
-        CheckFlagNew((__gm__ int32_t *)(GM_IN[block_idx]) + 8, tag);
+        WaitSignalValue((__gm__ int32_t *)(GM_IN[block_idx]) + 8, localCheckTensor, tag);
     }
 };
 

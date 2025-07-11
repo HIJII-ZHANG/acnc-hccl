@@ -52,7 +52,7 @@ __aicore__ inline void AivAllGatherSmallGraph91093::Process(GM_ADDR input, GM_AD
     } else {
         globalSet.SetGlobalBuffer(ctrlFlagsGMX, UB_FLAG_PAD_COUNT);
         DataCopy(globalSet, localSetTensor, UB_FLAG_PAD_COUNT);
-        CheckFlagNew(ctrlFlagsGM, tag);
+        WaitSignalValue(ctrlFlagsGM, localCheckTensor, tag);
         PipeBarrier<PIPE_ALL>();
 
         CpGM2GM(outputGM + dstRank * len + blockOffset, (__gm__ T *)(GM_IN[dstRank]) + blockOffset, count);
@@ -62,7 +62,7 @@ __aicore__ inline void AivAllGatherSmallGraph91093::Process(GM_ADDR input, GM_AD
         PipeBarrier<PIPE_MTE3>();
         globalSet.SetGlobalBuffer(ctrlFlagsGMX, UB_FLAG_PAD_COUNT);
         DataCopy(globalSet, localSetTensor, UB_FLAG_PAD_COUNT);
-        CheckFlagNew(ctrlFlagsGM, tag);
+        WaitSignalValue(ctrlFlagsGM, localCheckTensor, tag);
     }
     return;
 }

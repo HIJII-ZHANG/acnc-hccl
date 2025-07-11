@@ -47,7 +47,7 @@ extern HcclResult HcclCommInitClusterInfoConfig(const char *clusterInfo, uint32_
  *
  * @param comm A pointer identifying the global communication resource.
  * @param rankNum A integer identifying the rank size of the sub communication.
- * @param rankIds A array identifying the identifies for the ranks in the sub communication.
+ * @param rankIds An array identifying the identifies for the ranks in the sub communication.
  * @param subCommId A integer identifying the identify of sub communication in global communication.
  * @param subCommRankId A array identifying the identify for the rank in the sub communication.
  * @param config A pointer identifying config params about the current comm.
@@ -421,6 +421,8 @@ inline void HcclCommConfigInit(HcclCommConfig *config)
     config->hcclOpExpansionMode = HCCL_COMM_DEFAULT_OP_EXPANSION_MODE;
     config->hcclRdmaTrafficClass = HCCL_COMM_TRAFFIC_CLASS_CONFIG_NOT_SET;
     config->hcclRdmaServiceLevel = HCCL_COMM_SERVICE_LEVEL_CONFIG_NOT_SET;
+    config->hcclWorldRankID = 0;
+    config->hcclJobID = 0;
 }
 
 /**
@@ -470,6 +472,14 @@ extern HcclResult HcclCommActivateCommMemory(HcclComm comm, void *virPtr, size_t
  */
 extern HcclResult HcclCommDeactivateCommMemory(HcclComm comm, void *virPtr);
 
+/**
+ * @brief Set device working nic.
+ * @param comm A pointer identifying the communication resource based on.
+ * @param ranks An array identifying the ranks in comm which need to switch.
+ * @param useBackup An array identifying whether the target nic of the rank in ranks is backup nic.
+ * @param nRanks A integer identifying the rank size of the ranks need switch.
+ */
+extern HcclResult HcclCommWorkingDevNicSet(HcclComm comm, uint32_t *ranks, bool *useBackup, uint32_t nRanks);
 #ifdef __cplusplus
 }
 #endif // __cplusplus

@@ -15,6 +15,7 @@
 #include "hccl_one_sided_conn.h"
 #include "hccl_common.h"
 #include "externalinput_pub.h"
+#include "hccl_mem.h"
 
 using HcclBatchData = struct HcclBatchDataDef {
     HcclComm comm;
@@ -26,20 +27,29 @@ using HcclBatchData = struct HcclBatchDataDef {
 };
 
 namespace hccl {
+constexpr size_t HCCL_MEM_DESC_STR_LEN = HCCL_MEM_DESC_LENGTH + 1 - (sizeof(u32) * 2);
+
 class HcclOneSidedService : public IHcclOneSidedService {
 public:
     using RankId = u32;
+    using ProcessInfo = HcclOneSidedConn::ProcessInfo;
+
+    struct HcclMemDescData {
+        u32 localRankId;
+        u32 remoteRankId;
+        char memDesc[HCCL_MEM_DESC_STR_LEN];
+    };
 
     HcclOneSidedService(std::unique_ptr<HcclSocketManager> &socketManager,
         std::unique_ptr<NotifyPool> &notifyPool);
 
     // 父类Config()等已经完成必要参数的配置
     HcclOneSidedService() = default;
-    ~HcclOneSidedService() override = default;
+    ~HcclOneSidedService() override;
 
+    HcclResult ReMapMem(HcclMem *memInfoArray, u64 arraySize);
     HcclResult RegMem(void* addr, u64 size, HcclMemType type, RankId remoteRankId, HcclMemDesc &localMemDesc);
     HcclResult DeregMem(const HcclMemDesc &localMemDesc);
-
     // 可能返回超时
     HcclResult ExchangeMemDesc(RankId remoteRankId, const HcclMemDescs &localMemDescs,
         HcclMemDescs &remoteMemDescs, u32 &actualNumOfRemote, const std::string &commIdentifier, s32 timeoutSec);
@@ -59,9 +69,13 @@ private:
     HcclResult SetupRemoteRankInfo(RankId remoteRankId, HcclRankLinkInfo &remoteRankInfo);
     HcclResult CreateConnection(RankId remoteRankId, const HcclRankLinkInfo &remoteRankInfo,
         std::shared_ptr<HcclOneSidedConn> &tempConn);
+    HcclResult Grant(const HcclMemDesc &localMemDesc, const ProcessInfo &remoteProcess);
+    HcclBuf *GetHcclBufByDesc(std::string &descStr, bool useRdma);
 
     std::unordered_map<RankId, std::shared_ptr<HcclOneSidedConn>> oneSidedConns_{};
     std::unordered_map<RankId, bool> isUsedRdmaMap_;
+    std::unordered_map<std::string, HcclBuf> desc2HcclBufMapIpc_{};
+    std::unordered_map<std::string, HcclBuf> desc2HcclBufMapRoce_{};
 };
 }
 

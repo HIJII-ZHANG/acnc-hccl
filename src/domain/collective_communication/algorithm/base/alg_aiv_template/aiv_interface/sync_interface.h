@@ -15,6 +15,7 @@
 using namespace AscendC;
 
 constexpr uint64_t UB_FLAG_PAD_COUNT = 8;
+constexpr uint64_t UB_ADDRESS_PAD_COUNT = 4;
 
 template<HardEvent event>
 __aicore__ inline void SyncFunc() {
@@ -90,6 +91,23 @@ __aicore__ inline int32_t GetSignalValue(__gm__ int32_t *gmSignalAddr, LocalTens
     SyncFunc<HardEvent::MTE2_S>();
     int32_t ret = localTensor.GetValue(0);
     return ret;
+}
+
+__aicore__ inline void SetFlagBatchValue(__gm__ int32_t *ctrlFlagGM, TQue<QuePosition::VECOUT, 1> &batchQue, int32_t setValue, int32_t count)
+{
+    GlobalTensor<int32_t> globalBatchSet;
+    globalBatchSet.SetGlobalBuffer(ctrlFlagGM, UB_FLAG_PAD_COUNT * count);
+    LocalTensor<int32_t> localBatchSet = batchQue.AllocTensor<int32_t>();
+
+    for (uint32_t i = 0; i < count; i++) {
+        localBatchSet.SetValue(i * UB_FLAG_PAD_COUNT, setValue);
+    }
+
+    SyncFunc<HardEvent::S_MTE3>();
+
+    DataCopy(globalBatchSet, localBatchSet, UB_FLAG_PAD_COUNT * count);
+
+    batchQue.FreeTensor(localBatchSet);
 }
 
 // 算法分析器无法对GetSignalValue进行打桩，需使用如下函数进行替换

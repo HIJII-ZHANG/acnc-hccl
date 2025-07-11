@@ -92,7 +92,8 @@ bool CollAllReduceMeshOpbasePipelineExecutor::IsSmallData(const u64 totalSize, c
 
 HcclResult CollAllReduceMeshOpbasePipelineExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollAllReduceMeshOpbasePipelineExecutor][Run]CollAllReduceMeshOpbasePipelineExecutor begins.");
+    HCCL_CONFIG_INFO(HCCL_ALG,
+        "[CollAllReduceMeshOpbasePipelineExecutor][Run]CollAllReduceMeshOpbasePipelineExecutor begins.");
 
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
     SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
@@ -116,7 +117,33 @@ HcclResult CollAllReduceMeshOpbasePipelineExecutor::KernelRun(const OpParam &par
     CHK_RET(tempAlg->RunAsync());
     return HCCL_SUCCESS;
 }
+HcclResult CollAllReduceMeshOpbasePipelineExecutor::Getlevel1CommRank(SubCommInfo& level1CommInfo)
+{
+    if (CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1) != HCCL_SUCCESS) {
+        return HCCL_E_UNAVAIL;
+    }
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    u32 ringNum = (topoType_ == TopoType::TOPO_TYPE_8P_RING) ? LEVEL0_PLANE_NUM_IN_8PRING :
+        LEVEL0_PLANE_NUM_IN_NPRING_SINGLE;
+    u32 commIndex = (ringNum == LEVEL0_PLANE_NUM_IN_8PRING) ? topoAttr_.devicePhyId : level0CommInfo.localRank;
 
+    if (CheckCommSize(COMM_LEVEL1, commIndex + 1) != HCCL_SUCCESS) {
+        return HCCL_E_UNAVAIL;
+    }
+    level1CommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
+
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollAllReduceMeshOpbasePipelineExecutor::SelectTempAlg(std::unique_ptr<AlgTemplateBase> &level1TempAlg, u32 level1RankSize)
+{
+    if (level1RankSize > 1) {
+        level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_OPBASE_PIPELINE, dispatcher_);
+        CHK_SMART_PTR_NULL(level1TempAlg);
+        return HCCL_SUCCESS;
+    }
+    return HCCL_E_UNAVAIL;
+}
 REGISTER_EXEC("AllReduceMeshOpbasePipelineExecutor",
     AllReduceMeshOpbasePipeline, CollAllReduceMeshOpbasePipelineExecutor);
 

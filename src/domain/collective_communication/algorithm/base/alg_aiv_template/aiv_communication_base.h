@@ -36,6 +36,19 @@ struct ExtraArgsV2 {
     uint64_t recvDispls[MAX_RANK_SIZE_A3] = {};
 };
 
+using AivSuperKernelArgs = struct AivSuperKernelArgsDef {
+    GM_ADDR buffersIn[MAX_RANK_SIZE] = {}; // 注册的CCLIN地址，所有卡可访问
+    GM_ADDR buffersOut[MAX_RANK_SIZE] = {}; // 注册的CCLOUT地址，所有卡可访问
+    uint64_t rank;
+    uint64_t rankSize;
+    uint64_t len;
+    uint64_t dataType;
+    uint64_t reduceOp;
+    int64_t blockdim;
+    int64_t tag; // 第几次调用，定时重置成1
+    int64_t clearEnable;
+};
+
 #define KERNEL_ARGS_DEF \
 GM_ADDR buffIn0, GM_ADDR buffIn1, GM_ADDR buffIn2, GM_ADDR buffIn3, \
 GM_ADDR buffIn4, GM_ADDR buffIn5, GM_ADDR buffIn6, GM_ADDR buffIn7, \
@@ -48,7 +61,7 @@ GM_ADDR buffOut12, GM_ADDR buffOut13, GM_ADDR buffOut14, GM_ADDR buffOut15, \
 GM_ADDR input, GM_ADDR output, uint32_t rank, uint32_t rankSize, uint64_t len, \
 uint32_t dataType, uint32_t reduceOp, uint32_t root, int32_t tag, bool isOpBase, uint64_t bufferSize, \
 int32_t aivRdmaStep, bool useAivRdmaSmall, int32_t serverNum, uint32_t devType, GM_ADDR headCountMem, \
-GM_ADDR tailCountMem, GM_ADDR addOneMem, uint32_t counterMemSize, bool isEnableCounter
+GM_ADDR tailCountMem, GM_ADDR addOneMem, uint32_t counterMemSize, bool isEnableCounter, uint32_t deterministic
 
 #define KERNEL_ARGS_CALL \
 buffIn0, buffIn1, buffIn2, buffIn3, buffIn4, buffIn5, buffIn6, buffIn7, \
@@ -56,7 +69,7 @@ buffIn8, buffIn9, buffIn10, buffIn11, buffIn12, buffIn13, buffIn14, buffIn15, \
 buffOut0, buffOut1, buffOut2, buffOut3, buffOut4, buffOut5, buffOut6, buffOut7, \
 buffOut8, buffOut9, buffOut10, buffOut11, buffOut12, buffOut13, buffOut14, buffOut15, \
 input, output, rank, rankSize, len, dataType, reduceOp, root, tag, isOpBase, bufferSize, aivRdmaStep, useAivRdmaSmall, \
-serverNum, devType, headCountMem, tailCountMem, addOneMem, counterMemSize, isEnableCounter
+serverNum, devType, headCountMem, tailCountMem, addOneMem, counterMemSize, isEnableCounter, deterministic
 
 #define KERNEL_CLASS_INIT \
 buffIn0, buffIn1, buffIn2, buffIn3, buffIn4, buffIn5, buffIn6, buffIn7, \
@@ -74,7 +87,19 @@ KERNEL_ARGS_DEF, ExtraArgsV2 extraArgs
 #define EXTERN_KERNEL_ARGS_CALL \
 KERNEL_ARGS_CALL, extraArgs
 
+#define SUPERKERNEL_ARGS_DEF \
+GM_ADDR hiddenInput, GM_ADDR input, GM_ADDR output
+ 
+#define SUPERKERNEL_ARGS_CALL \
+hiddenInput, input, output
+ 
+#define SUPERKERNEL_CLASS_INIT \
+hiddenInput
+
 constexpr uint64_t AIV_FLAG_BUFFER_SIZE = 3 * 1024 * 1024; // aiv算子的flag区域大小
+constexpr uint64_t CLEAR_BUFFER_OFFSET = 1024 * 1024; // 用于清空的aiv buffer的偏移
+constexpr uint64_t SYNC_BUFFER_OFFSET = 2 * 1024 * 1024; // 用于sync的aiv buffer的偏移
+constexpr uint64_t BUFFER_AREA = 1024 * 1024; // aiv算子的单独功能flag区域大小
 constexpr uint64_t COMM_INFO_OFFSET = 32 * 1024; // 通信域内所有对端共享内存地址的信息距离aiv buffer末尾的偏移
 constexpr uint64_t GM_TMP_ARGS_OFFSET = 64 * 1024;
 
@@ -93,9 +118,20 @@ constexpr uint64_t AIV_A3_ALL_REDUCE_GRAPH_GUIYI_SIZE = 190 * 1024;
 constexpr uint64_t AIV_A3_REDUCE_SCATTER_GRAPH_GUIYI_SIZE = 760 * 1024;
 constexpr uint64_t AIV_A3_ALL_GATHER_GRAPH_GUIYI_SIZE = 760 * 1024;
 constexpr uint64_t AIV_A3_ALL_TO_ALL_GRAPH_GUIYI_SIZE = 760 * 1024;
+constexpr uint64_t AIV_ALL_REDUCE_DETER_MID_SIZE = 1 * 1024 * 1024;
+constexpr uint64_t AIV_REDUCE_SCATTER_DETER_SMALL_SIZE = 1 * 1024 * 1024;
+constexpr uint32_t AIV_A3_CROSSNODE_TINY_SIZE = 28 * 1024;
+constexpr uint32_t AIV_A3_CROSSNODE_SMALL_SIZE = 112 * 1024;
+constexpr uint32_t AIV_A3_CROSSNODE_MID_SIZE = 448 * 1024;
+
 constexpr uint32_t BLOCK_DIM_THREE_PER_RANK_A3 = 3;
 constexpr uint32_t BLOCK_DIM_FOUR_PER_RANK_A3 = 4;
 constexpr uint32_t MAX_BLOCK_DIM = 48;
+constexpr uint32_t HALF_MAX_BLOCK_DIM = 24;
+constexpr uint32_t ONE_THIRD_MAX_BLOCK_DIM = 16;
+constexpr uint32_t ONE_FOURTH_MAX_BLOCK_DIM = 12;
+constexpr uint32_t ONE_SIXTH_MAX_BLOCK_DIM = 8;
+constexpr uint32_t ONE_EIGHTH_MAX_BLOCK_DIM = 6;
 
 constexpr uint32_t TAG_MOVE_LEFT_BITS = 12;
 
@@ -131,6 +167,8 @@ constexpr uint64_t IDX_14 = 14;
 constexpr uint64_t IDX_15 = 15;
 
 constexpr uint64_t DOUBLE = 2;
+constexpr uint64_t DETERMINISTIC_RANKSIZE = 4;
+
 constexpr uint64_t FLAG_BUF_NUM = 3;
 
 // 当前每个kernel最多使用4组同步标记，这里预留6组
@@ -155,12 +193,8 @@ constexpr uint32_t MAX_FLAG_SIZE_PER_KERNEL = 6 * MAX_RANK_SIZE * FLAG_SIZE;
 #define AIV_ALL_REDUCE_910B_SMALLDATA_GRAPH 15
 #define AIV_ALL_REDUCE_910B_SMALLDATA 16
 #define AIV_ALL_TO_ALL_91093_BASE 17
-#define AIV_ALL_TO_ALL_91093_GRAPH 18
-#define AIV_ALL_TO_ALL_91093 19
 #define AIV_ALL_TO_ALL_910B_SMALLDATA 20
 #define AIV_ALL_TO_ALL_RDMA_910B 21
-#define AIV_ALL_TO_ALL_V_91093_GRAPH 22
-#define AIV_ALL_TO_ALL_V_91093 23
 #define AIV_ALL_TO_ALL_V_91093_SINGLE 24
 #define AIV_ALL_TO_ALL_V_910B_GRAPH 25
 #define AIV_ALL_TO_ALL_V_910B 26
@@ -191,6 +225,26 @@ constexpr uint32_t MAX_FLAG_SIZE_PER_KERNEL = 6 * MAX_RANK_SIZE * FLAG_SIZE;
 #define AIV_ALL_TO_ALL_VC_91093_SINGLE_GRAPH 51
 #define AIV_ALL_REDUCE_91093_SMALLDATA 52
 #define AIV_ALL_REDUCE_91093_BIGDATA_GRAPH 53
+#define AIV_ALL_REDUCE_DETER_910B_SMALLDATA 54
+#define AIV_ALL_REDUCE_DETER_910B_MIDDATA 55
+#define AIV_ALL_REDUCE_DETER_910B_BIGDATA 56
+#define AIV_ALL_REDUCE_DETER_910B_PRE 57
+#define AIV_ALL_REDUCE_DETER_910B_POST 58
+#define AIV_REDUCE_SCATTER_DETER_910B_SMALLDATA 59
+#define AIV_REDUCE_SCATTER_DETER_910B_MIDDATA 60
+#define AIV_REDUCE_SCATTER_DETER_910B_BIGDATA 61
+#define AIV_REDUCE_SCATTER_DETER_910B_PRE 62
+#define AIV_REDUCE_SCATTER_DETER_910B_POST 63
+
+// 91093 超节点内���机
+#define AIV_ALL_TO_ALL_V_91093 0
+#define AIV_ALL_TO_ALL_V_91093_GRAPH 2
+#define AIV_ALL_TO_ALL_91093 4
+#define AIV_ALL_TO_ALL_91093_GRAPH 6
+#define AIV_ALL_GATHER_CROSSNODE_91093 8
+#define AIV_ALL_GATHER_CROSSNODE_91093_GRAPH 11
+#define AIV_REDUCE_SCATTER_CROSSNODE_91093 13
+#define AIV_REDUCE_SCATTER_CROSSNODE_91093_GRAPH 16
 
 #define BASE_FLAG_OFFSET (MAX_FLAG_SIZE_PER_KERNEL)
 
@@ -226,6 +280,7 @@ public:
         reduceOp_ = reduceOp;
 
         useDoubleBuffer_ = useDoubleBuffer;
+        blockdim_ = block_num;
 
         pipe.InitBuffer(localFlagBuf, UB_FLAG_SIZE_4);
         localSetTensor = localFlagBuf.GetWithOffset<int32_t>(UB_FLAG_PAD_COUNT, FLAG_ONE_OFFSET);
@@ -244,6 +299,39 @@ public:
 
         pipe.InitBuffer(flagInQue, AIV_PING_PONG_FACTOR_TWO, UB_FLAG_SIZE);
         InitOpCounter(headCountMem, tailCountMem, addOneMem, counterMemSize, isEnableCounter);
+    }
+
+    __aicore__ inline void Init(GM_ADDR hiddenInput, uint64_t threshold)
+    {
+        __gm__ AivSuperKernelArgs* args = reinterpret_cast<__gm__ AivSuperKernelArgs*>(hiddenInput);
+        
+        for (int32_t i = 0; i < MAX_RANK_SIZE; i++) {
+           GM_IN[i] = args->buffersIn[i];
+           GM_OUT[i] = args->buffersOut[i];
+        }
+        rank_ = args->rank;
+        rankSize_ = args->rankSize;
+        reduceOp_ = args->reduceOp;
+        len_ = args->len;
+        tag_ = args->tag;
+        dataType_ = args->dataType;
+        blockdim_ = args->blockdim;
+ 
+        pipe.InitBuffer(localFlagBuf, UB_FLAG_SIZE_4);
+        localSetTensor = localFlagBuf.GetWithOffset<int32_t>(UB_FLAG_PAD_COUNT, FLAG_ONE_OFFSET);
+        localCheckTensor = localFlagBuf.GetWithOffset<int32_t>(UB_FLAG_PAD_COUNT, FLAG_TWO_OFFSET);
+        localCheckGETensor = localFlagBuf.GetWithOffset<int32_t>(UB_FLAG_PAD_COUNT, FLAG_THREE_OFFSET);
+        localGetTensor = localFlagBuf.GetWithOffset<int32_t>(UB_FLAG_PAD_COUNT, FLAG_FOUR_OFFSET);
+ 
+        if (len_ * sizeof(dataType_) > threshold) {
+            pipe.InitBuffer(inOutQue, DOUBLE, UB_DB_DATA_BATCH_SIZE); // double buffer
+        } else {
+            pipe.InitBuffer(inOutQue, 1, UB_MAX_DATA_SIZE);
+        }
+ 
+        if (args->clearEnable == 1) {
+            ClearSyncBuf();
+        }
     }
 
     __aicore__ inline void InitBuffArray(GM_ADDR buffIn0, GM_ADDR buffIn1, GM_ADDR buffIn2, GM_ADDR buffIn3, GM_ADDR buffIn4,
@@ -320,15 +408,13 @@ public:
     __aicore__ inline void CpGM2GMWithFlagWrap(__gm__ T *outputGM, __gm__ T *inputGM, uint64_t count,
         __gm__ int32_t* ctrlFlagGM, uint64_t flushFrequency = 8, int32_t tag = 0);
 
-    __aicore__ inline void SetFlagNew(__gm__ int32_t *ctrlFlagGM, int32_t setValue, bool atomic = false);
-
-    __aicore__ inline void SetFlagBatch(__gm__ int32_t *ctrlFlagGM, int32_t setValue, int32_t count);
-
-    __aicore__ inline void CheckFlagNew(__gm__ int32_t *ctrlFlagGM, int32_t checkValue);
-
-    __aicore__ inline int32_t GetFlagNew(__gm__ int32_t *ctrlFlagGM);
-
-    __aicore__ inline void CheckFlagGE(__gm__ int32_t *ctrlFlagGM, int32_t checkValue);
+    __aicore__ inline void Barrier(uint32_t step);
+ 
+    __aicore__ inline void ClearFlag();
+ 
+    __aicore__ inline void BlockSync();
+ 
+    __aicore__ inline void ClearSyncBuf();
 
     __aicore__ inline void InitOpCounter(GM_ADDR headCountMem, GM_ADDR tailCountMem, GM_ADDR addOneMem, uint32_t counterMemSize,
         bool isEnableCounter)
@@ -355,13 +441,18 @@ public:
                 HcclReduceOp::HCCL_REDUCE_SUM);
         }
     }
-protected:
+//protected:
     GM_ADDR GM_IN[MAX_RANK_SIZE];
     GM_ADDR GM_OUT[MAX_RANK_SIZE];
 
     uint32_t rank_;
     uint32_t rankSize_;
     uint32_t reduceOp_;
+    uint32_t dataType_;
+ 
+    uint64_t len_;
+    int32_t tag_;
+    int32_t blockdim_;
 
     bool useDoubleBuffer_;
 
@@ -385,6 +476,69 @@ protected:
     uint32_t counterMemSize_;
     bool isEnableCounter_;
 };
+
+__aicore__ inline void AivCommBase::Barrier(uint32_t step)
+{
+    // 用10个flag
+    uint32_t flagOffset = 2 * 1024 * 1024 + (step % 2) * FLAG_SIZE * rankSize_;
+    __gm__ int32_t *ctrlFlagsGM;
+    if (GetBlockIdx() == 0) {
+        pipe_barrier(PIPE_ALL);
+        for (int i = 1; i < rankSize_; i++) {
+            uint32_t targetRank = (rank_ + i) % rankSize_; 
+            ctrlFlagsGM = (__gm__ int32_t *)(GM_OUT[targetRank] + flagOffset + rank_ * FLAG_SIZE);
+            SetSignalValue(ctrlFlagsGM, localSetTensor, 1);
+        }
+        pipe_barrier(PIPE_ALL);
+        for (int i = 1; i < rankSize_; i++) {
+            uint32_t targetRank = (rank_ + i) % rankSize_; 
+            ctrlFlagsGM = (__gm__ int32_t *)(GM_OUT[rank_] + flagOffset + targetRank * FLAG_SIZE);
+            WaitSignalValue(ctrlFlagsGM, localCheckTensor, 1);
+        }
+        pipe_barrier(PIPE_ALL);
+        for (int i = 1; i < rankSize_; i++) {
+            uint32_t targetRank = (rank_ + i) % rankSize_; 
+            ctrlFlagsGM = (__gm__ int32_t *)(GM_OUT[rank_] + flagOffset + targetRank * FLAG_SIZE);
+            SetSignalValue(ctrlFlagsGM, localSetTensor, 0);
+        }
+    }
+}
+ 
+__aicore__ inline void AivCommBase::ClearFlag()
+{
+    // 用10个flag
+    __gm__ int32_t *ctrlFlagsGM = (__gm__ int32_t *)(GM_OUT[rank_]);
+    __gm__ int32_t *emtpyGM = (__gm__ int32_t *)(GM_OUT[rank_] + CLEAR_BUFFER_OFFSET);
+    CpGM2GM(ctrlFlagsGM, emtpyGM, BUFFER_AREA / sizeof(int32_t));
+}
+ 
+__aicore__ inline void AivCommBase::BlockSync()
+{
+    uint32_t flagOffset = SYNC_BUFFER_OFFSET + 2 * FLAG_SIZE * blockdim_;
+    __gm__ int32_t *ctrlFlagsGM = (__gm__ int32_t *)(GM_OUT[rank_] + flagOffset);
+    if (GetBlockIdx() == 0) {
+        //通知其他核
+        pipe_barrier(PIPE_ALL);
+        for (int i = 1; i < blockdim_; i++) {
+            SetSignalValue(ctrlFlagsGM + i * FLAG_SIZE, localSetTensor, 1);
+        }
+        pipe_barrier(PIPE_ALL);
+    } else {
+        //接收通知并清零
+        WaitSignalValue(ctrlFlagsGM + GetBlockIdx() * FLAG_SIZE, localCheckTensor, 1);
+        SetSignalValue(ctrlFlagsGM +  GetBlockIdx() * FLAG_SIZE, localSetTensor, 0);
+        pipe_barrier(PIPE_ALL);
+    }
+}
+ 
+__aicore__ inline void AivCommBase::ClearSyncBuf()
+{
+    // 用10个flag
+    Barrier(1);
+    ClearFlag();
+    Barrier(DOUBLE);
+    BlockSync();
+}
 
 __aicore__ inline uint64_t AivCommBase::CeilDiv(uint64_t a, uint64_t b)
 {
@@ -533,90 +687,6 @@ __aicore__ inline void AivCommBase::CpGM2GMWithFlagWrap(__gm__ T *outputGM, __gm
         if (curBatchCount % flushFrequency == 0 || count == 0) {
             SyncFunc<HardEvent::MTE3_S>();
             SetSignalValue(ctrlFlagGM, localSetTensor, curBatchCount + tag);
-        }
-    }
-}
-
-__aicore__ inline void AivCommBase::SetFlagNew(__gm__ int32_t *ctrlFlagGM, int32_t setValue, bool atomic)
-{
-    GlobalTensor<int32_t> globalSet;
-    globalSet.SetGlobalBuffer(ctrlFlagGM, UB_FLAG_PAD_COUNT);
-
-    if (atomic) {
-        Duplicate<int32_t>(localSetTensor, setValue, UB_FLAG_PAD_COUNT);
-
-        SetAtomicAdd<int32_t>();
-        PipeBarrier<PIPE_ALL>();
-    } else {
-        localSetTensor.SetValue(0, setValue);
-
-        SyncFunc<HardEvent::S_MTE3>();
-    }
-
-    DataCopy(globalSet, localSetTensor, UB_FLAG_PAD_COUNT);
-
-    if (atomic) {
-        SetAtomicNone();
-    }
-}
-
-__aicore__ inline void AivCommBase::SetFlagBatch(__gm__ int32_t *ctrlFlagGM, int32_t setValue, int32_t count)
-{
-    GlobalTensor<int32_t> globalBatchSet;
-    globalBatchSet.SetGlobalBuffer(ctrlFlagGM, UB_FLAG_PAD_COUNT * count);
-    LocalTensor<int32_t> localBatchSet = flagBatchSetQue.AllocTensor<int32_t>();
-
-    for (uint32_t i = 0; i < count; i++) {
-        localBatchSet.SetValue(i * UB_FLAG_PAD_COUNT, setValue);
-    }
-
-    SyncFunc<HardEvent::S_MTE3>();
-
-    DataCopy(globalBatchSet, localBatchSet, UB_FLAG_PAD_COUNT * count);
-
-    flagBatchSetQue.FreeTensor(localBatchSet);
-}
-
-__aicore__ inline void AivCommBase::CheckFlagNew(__gm__ int32_t *ctrlFlagGM, int32_t checkValue)
-{
-    GlobalTensor<int32_t> globalCheck;
-    globalCheck.SetGlobalBuffer(ctrlFlagGM, UB_FLAG_PAD_COUNT);
-
-    while (true) {
-        DataCopy(localCheckTensor, globalCheck, UB_FLAG_PAD_COUNT);
-        SyncFunc<HardEvent::MTE2_S>();
-
-        if (localCheckTensor.GetValue(0) == checkValue) {
-            break;
-        }
-    }
-}
-
-__aicore__ inline int32_t AivCommBase::GetFlagNew(__gm__ int32_t *ctrlFlagGM)
-{
-    GlobalTensor<int32_t> globalGet;
-    globalGet.SetGlobalBuffer(ctrlFlagGM, UB_FLAG_PAD_COUNT);
-
-    DataCopy(localGetTensor, globalGet, UB_FLAG_PAD_COUNT);
-    SyncFunc<HardEvent::MTE2_S>();
-
-    int32_t val = localGetTensor.GetValue(0);
-
-    return val + 1;
-}
-
-__aicore__ inline void AivCommBase::CheckFlagGE(__gm__ int32_t *ctrlFlagGM, int32_t checkValue)
-{
-    GlobalTensor<int32_t> globalCheck;
-    globalCheck.SetGlobalBuffer(ctrlFlagGM, UB_FLAG_PAD_COUNT);
-
-    while (true) {
-        DataCopy(localCheckGETensor, globalCheck, UB_FLAG_PAD_COUNT);
-        SyncFunc<HardEvent::MTE2_S>();
-
-        int32_t flagValue = localCheckGETensor.GetValue(0);
-        if (flagValue >= checkValue) {
-            break;
         }
     }
 }

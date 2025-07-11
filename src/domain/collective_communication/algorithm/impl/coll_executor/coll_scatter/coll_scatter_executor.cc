@@ -237,6 +237,7 @@ HcclResult CollScatterExecutor::KernelRunLevel1(DeviceMem& inputMem, u64 count, 
         PROF_STAGE_0, HCCL_EXEC_STEP_NOT_SET, stream));
 
     CHK_RET(RunTemplate(level1TempAlg, subCommInfo));
+
     return HCCL_SUCCESS;
 }
 

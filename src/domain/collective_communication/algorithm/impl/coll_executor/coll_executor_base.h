@@ -16,6 +16,7 @@
 #include "coll_alg_param.h"
 #include "executor_impl.h"
 #include "coll_alg_utils.h"
+#include "hccl_aiv.h"
 
 namespace hccl {
 
@@ -34,6 +35,10 @@ public:
 
     virtual HcclResult CalcResRequest(const OpParam& param, AlgResourceRequest &resourceRequest) = 0;
     virtual HcclResult Orchestrate(OpParam& param, AlgResourceResponse& algRes) = 0;
+    virtual HcclResult GetAivExecParam(const OpParam& param, AlgResourceResponse& algRes, AivSuperKernelArgs &args);
+    virtual HcclResult GetAdjInfo(AlgResourceResponse& algRes, AdjInfo& adjInfo);
+    // AIV拷贝通信域信息到device上
+    virtual HcclResult PrepareCommInfoToDevice(AlgResourceResponse& algResource);
 
     // batchsendrecv需要增量建链
     virtual HcclResult CalcIncreLinkRequest(const OpParam& param, AlgResourceRequest &resourceRequest);
@@ -46,6 +51,8 @@ public:
     virtual u32 CalBlockDim(u32 rankSize, u64 dataSize = 0, HcclCMDType cmdType = HcclCMDType::HCCL_CMD_INVALID);
     HcclResult GetBlockDim(u32& blockDim);
     HcclResult SetOpCounter(const OpCounterInfo& opCounter);
+
+    inline AlgDesc GetAlgDesc() {return desc_;}
 protected:
     const HcclDispatcher dispatcher_;
     u64 inCCLbufferSize_{0}; // CCLIN大小，用于计算scratch
@@ -56,6 +63,7 @@ protected:
     bool aivClearEnable_ = false;
     u32 blockDim_ = 0;
     OpCounterInfo opCounter_;
+    AlgDesc desc_;
 };
 }
 #endif

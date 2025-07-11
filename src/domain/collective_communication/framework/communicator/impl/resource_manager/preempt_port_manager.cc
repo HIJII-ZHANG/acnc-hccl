@@ -167,7 +167,7 @@ HcclResult PreemptPortManager::ReleasePreempt(IpPortRef& portRef, const std::sha
     CHK_PRT_RET(count > 0,
         HCCL_INFO("[PreemptPortManager][ReleasePreempt] release a socket on ip[%s], port[%u], ref[%u].",
         ipAddr.c_str(), port, count), HCCL_SUCCESS);
-
+        
     // 如果端口的计数归零，则不再抢占该端口
     portRef.erase(ipAddr);
     HCCL_INFO("[PreemptPortManager][ReleasePreempt] release preemption of socket on ip[%s], port[%u].",

@@ -38,7 +38,8 @@ private:
     HcclResult KernelRunLevel1(const OpParam &param, ExecMem &execMem, Stream& stream);
     HcclResult KernelRunLevel0(const OpParam &param, ExecMem &execMem, Stream& stream);
     HcclResult KernelRun(const OpParam &param, ExecMem &execMem) override;
-
+    HcclResult Getlevel1CommRank(SubCommInfo& level1CommInfo) override;
+    HcclResult SelectTempAlg(std::unique_ptr<AlgTemplateBase> &level1TempAlg, u32 level1RankSize) override;
     /* *************** 算法参数 *************** */
     u32 subRoot_ = 0;
     u32 commIndex_ = 0;

@@ -60,7 +60,7 @@ HcclResult CollReduceCommExecutor::CalcCombinedCommInfo(TransportMemType inputTy
 
 HcclResult CollReduceCommExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollReduceCommExecutor][KernelRun]ReduceCommExecutor starts.");
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollReduceCommExecutor][KernelRun]ReduceCommExecutor starts.");
     CommPlane commPlane = COMM_COMBINE;
     if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
         commPlane = COMM_COMBINE_ORDER;

@@ -64,6 +64,11 @@ HcclResult CollReduceScatterVExecutor::Orchestrate(OpParam& param, AlgResourceRe
     return HCCL_SUCCESS;
 }
 
+HcclResult CollReduceScatterVExecutor::GetAdjInfo(AlgResourceResponse& algRes, AdjInfo& adjInfo)
+{
+    return HCCL_SUCCESS;
+}
+
 u64 CollReduceScatterVExecutor::CalcLoopMaxCount(const u32 unitSize)
 {
     // 中转内存单次最多能够接受的output count，这里不除以RankSize，因为每次循环可能会减少需要参与通信的Rank
@@ -191,9 +196,9 @@ HcclResult CollReduceScatterVExecutor::RunLoopInner(OpParam &param, const Reduce
         /* 设置子图复用标志 */
         auto autoSelectedAlgTypeLevel1 = static_cast<u32>(algType_.algoLevel1);
         bool hugeData = IsHugeData(curSize);
-        bool isDeterministic = topoMatcher_->GetExternalInputHcclDeterministic();
+        u8 deterministic = topoMatcher_->GetExternalInputHcclDeterministic();
         auto opMeta = HcclOpMetaInfo::GetOneForReduceScatterV(autoSelectedAlgTypeLevel1,
-            dataType, reduceType, hugeData, false, CopyPattern::BCOPY, false, isDeterministic);
+            dataType, reduceType, hugeData, false, CopyPattern::BCOPY, false, deterministic);
 
         CHK_RET(InitTask(dispatcher_, param.stream, opMeta.isEnableCache, opMeta.GetCacheKey()));
     }

@@ -67,6 +67,10 @@ HcclResult CollAllGatherVExecutor::Orchestrate(OpParam& param, AlgResourceRespon
     return HCCL_SUCCESS;
 }
 
+HcclResult CollAllGatherVExecutor::GetAdjInfo(AlgResourceResponse& algRes, AdjInfo& adjInfo)
+{
+    return HCCL_SUCCESS;
+}
 
 u64 CollAllGatherVExecutor::CalcLoopMaxCount(const u64 cclBuffSize, const u32 unitSize)
 {

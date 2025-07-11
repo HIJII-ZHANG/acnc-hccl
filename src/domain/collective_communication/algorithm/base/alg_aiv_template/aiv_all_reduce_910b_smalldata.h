@@ -52,7 +52,7 @@ __aicore__ inline void AivAllReduceSmall910B::Process(GM_ADDR input, GM_ADDR out
         PipeBarrier<PIPE_MTE3>();
 
         // 卡间同步
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetOut), tag);
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetOut), localSetTensor, tag);
 
         DataCopyUB2GM(outputGT, localOut, count);
         inOutQue.FreeTensor(localOut);
@@ -60,7 +60,7 @@ __aicore__ inline void AivAllReduceSmall910B::Process(GM_ADDR input, GM_ADDR out
         PipeBarrier<PIPE_MTE3>();
         
         // 卡内同步
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetIn), tag);
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetIn), localSetTensor, tag);
     } else {
         __gm__ T *cclGMOther = (__gm__ T *)(GM_IN[block_idx] + dataOffset);
         __gm__ T *outputGM = (__gm__ T *)output;
@@ -71,7 +71,7 @@ __aicore__ inline void AivAllReduceSmall910B::Process(GM_ADDR input, GM_ADDR out
         outputGT.SetGlobalBuffer(outputGM, count);
 
         // 卡间同步
-        CheckFlagNew((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffsetOut), tag);
+        WaitSignalValue((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffsetOut), localCheckTensor, tag);
         PipeBarrier<PIPE_ALL>();
 
         LocalTensor<T> localIn = inOutQue.AllocTensor<T>();
@@ -80,7 +80,7 @@ __aicore__ inline void AivAllReduceSmall910B::Process(GM_ADDR input, GM_ADDR out
         LocalTensor<T> localOut = inOutQue.DeQue<T>();
 
         // 卡内同步
-        CheckFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetIn), tag);
+        WaitSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetIn), localCheckTensor, tag);
         PipeBarrier<PIPE_ALL>();
 
         SetAtomicOp<T>(reduceOp_);

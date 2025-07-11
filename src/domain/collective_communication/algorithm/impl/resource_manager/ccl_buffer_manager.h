@@ -22,6 +22,7 @@ enum class MemAttr {
 
 constexpr s64 AIV_FLAG_SIZE = 3 * 1024 * 1024; // aiv算子需要的flag区域大小
 constexpr s64 AIV_DATA_SIZE = 35 * 1024 * 1024; // aiv算子需要的data区域大小
+constexpr s64 AIV_FLAG_CLEAR_SIZE = 2 * 1024 * 1024 + 512 * 1024; // aiv算子在快恢时需要clear的区域大小
 constexpr u64 EXP_BUFFER_SIZE = 1 * 1024 *1024; // 拓展内存, 供MC2使用
 
 class CCLBufferManager {

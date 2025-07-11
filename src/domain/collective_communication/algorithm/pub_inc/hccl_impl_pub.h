@@ -22,9 +22,6 @@ constexpr u32 PROF_STAGE_0 = 0;
 constexpr u32 PROF_STAGE_1 = 1;
 constexpr u32 PROF_STAGE_2 = 2;
 
-constexpr u8 DETERMINISTIC_CONFIG_DISABLE = 0;  // 不开启确定性计算
-constexpr u8 DETERMINISTIC_CONFIG_ENABLE = 1;   // 开启确定性计算
-
 using level1StreamInfo_t = struct Level1StreamInfo {
     u32 ringNum; /* 至少有1个ring */
     std::vector<std::shared_ptr<LocalNotify>> ringSignal;

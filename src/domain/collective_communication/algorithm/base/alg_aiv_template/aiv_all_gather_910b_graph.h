@@ -46,19 +46,19 @@ __aicore__ inline void AivAllGatherBigGraph910B::Process(GM_ADDR input, GM_ADDR 
         __gm__ int32_t *ctrlFlagsGMX = (__gm__ int32_t *)(GM_OUT[targetRank] + flagOffsetStart + rank_ * FLAG_SIZE);
         __gm__ int32_t *ctrlFlagsGM = (__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetStart + block_idx * FLAG_SIZE);
         //确定可以从对端拉数据
-        SetFlagNew((__gm__ int32_t *)(ctrlFlagsGMX), tag);
-        CheckFlagNew((__gm__ int32_t *)(ctrlFlagsGM), tag);
+        SetSignalValue((__gm__ int32_t *)(ctrlFlagsGMX), localSetTensor, tag);
+        WaitSignalValue((__gm__ int32_t *)(ctrlFlagsGM), localCheckTensor, tag);
         pipe_barrier(PIPE_ALL);
-        SetFlagNew((__gm__ int32_t *)(ctrlFlagsGM), 0);
+        SetSignalValue((__gm__ int32_t *)(ctrlFlagsGM), localSetTensor, 0);
         //拉数据
         pipe_barrier(PIPE_ALL);
         CpGM2GM(outputGm + targetRank * avgLengthPerSlice, cclGmOther, avgLengthPerSlice);
         pipe_barrier(PIPE_ALL);
         // 通知对端数据已经拉走(写对端add)
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[targetRank] + flagOffsetEnd + rank_ * FLAG_SIZE), tag);
-        CheckFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetEnd + block_idx * FLAG_SIZE), tag);
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[targetRank] + flagOffsetEnd + rank_ * FLAG_SIZE), localSetTensor, tag);
+        WaitSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetEnd + block_idx * FLAG_SIZE), localCheckTensor, tag);
         pipe_barrier(PIPE_ALL);
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetEnd + block_idx * FLAG_SIZE), 0);
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetEnd + block_idx * FLAG_SIZE), localSetTensor, 0);
     }            
     return;
 }

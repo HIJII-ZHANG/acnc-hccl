@@ -26,7 +26,7 @@ void CollAllReduceMixExecutor::ParseParam(const OpParam& param)
     bool isInlineReduce = IsSupportSDMAReduce(param.inputPtr, param.outputPtr,
         param.DataDes.dataType, param.reduceType);
     meshSinglePlane_ = (topoAttr_.deviceType == DevType::DEV_TYPE_910B) &&
-        !topoMatcher_->GetExternalInputHcclDeterministic() &&
+        topoMatcher_->GetExternalInputHcclDeterministic() == DETERMINISTIC_DISABLE &&
         isInlineReduce && (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
 }
 
@@ -116,7 +116,7 @@ bool CollAllReduceMixExecutor::IsHugeData(const u64 curSize)
 
 HcclResult CollAllReduceMixExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollAllReduceMixExecutor][Run]The CollAllReduceMixExecutor starts.");
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollAllReduceMixExecutor][Run]The CollAllReduceMixExecutor starts.");
     u32 perDataSize = 0;
     CHK_RET(SalGetDataTypeSize(param.DataDes.dataType, perDataSize));
 
@@ -159,7 +159,8 @@ HcclResult CollAllReduceMixExecutor::KernelRun(const OpParam &param, ExecMem &ex
             param.DataDes.dataType, param.reduceType, multRingsSliceZero, param.stream,
             PROF_STAGE_0, 0, reduceScatterOpInfoPtr, multRingsUserMemSliceDefault));
     } else if (topoAttr_.deviceType == DevType::DEV_TYPE_910B) {
-        if (!topoMatcher_->GetExternalInputHcclDeterministic() && (param.DataDes.dataType != HCCL_DATA_TYPE_INT64) &&
+        if (topoMatcher_->GetExternalInputHcclDeterministic() == DETERMINISTIC_DISABLE &&
+            (param.DataDes.dataType != HCCL_DATA_TYPE_INT64) &&
             (topoAttr_.deviceType == DevType::DEV_TYPE_910B && param.reduceType != HCCL_REDUCE_PROD)) {
             CHK_RET(MultiStreamReduceScatterMeshAtomic(param.tag, execMem.inputMem, execMem.outputMem, execMem.count,
                 param.DataDes.dataType, param.reduceType, dataSegsSlice, const_cast<Stream&>(param.stream), COMM_LEVEL0));

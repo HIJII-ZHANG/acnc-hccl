@@ -41,6 +41,7 @@ HcclResult CollBroadcastPlusBroadcast::CalcLevel0CommInfo(TransportMemType input
 
 HcclResult CollBroadcastPlusBroadcast::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollBroadcastPlusBroadcast]310p userRank[%u] starts.", topoAttr_.userRank);
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
     SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
 

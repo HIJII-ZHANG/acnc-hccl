@@ -44,7 +44,6 @@ public:
     // 尝试在给定范围内抢占一个端口
     HcclResult ListenPreempt(const std::shared_ptr<HcclSocket> &listenSocket,
         const std::vector<HcclSocketPortRange> &portRange, u32 &usePort);
-
     // 释放一个已抢占的端口
     HcclResult Release(const std::shared_ptr<HcclSocket> &listenSocket);
 

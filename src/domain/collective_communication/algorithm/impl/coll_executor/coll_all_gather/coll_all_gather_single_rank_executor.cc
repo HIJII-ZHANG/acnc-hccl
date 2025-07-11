@@ -19,6 +19,7 @@ CollAllGatherSingleRankExecutor::CollAllGatherSingleRankExecutor(const HcclDispa
 
 HcclResult CollAllGatherSingleRankExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollAllGatherSingleRankExecutor][KernelRun]allgather single rank");
     u32 unitSize = SIZE_TABLE[param.DataDes.dataType];
     auto originalAlgTypeLevel1 = static_cast<u32>(algType_.algoLevel1);
     bool hugeData = (execMem.count * unitSize) > SDMA_SEND_MAX_SIZE;

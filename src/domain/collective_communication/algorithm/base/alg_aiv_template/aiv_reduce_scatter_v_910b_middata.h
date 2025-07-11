@@ -36,17 +36,17 @@ __aicore__ inline void AivReduceScatterVMid910B::Process(GM_ADDR input, GM_ADDR 
         CpGM2GM(cclGmSelf + extraArgs.sendDispls[block_idx], inputGm + extraArgs.sendDispls[block_idx],
             extraArgs.sendCounts[block_idx]);
         // 卡内同步
-        CheckFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffset + rank_ * FLAG_SIZE), tag);
+        WaitSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffset + rank_ * FLAG_SIZE), localCheckTensor, tag);
         pipe_barrier(PIPE_ALL);
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffset + block_idx * FLAG_SIZE), tag);
-        CheckFlagNew((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffset + rank_ * FLAG_SIZE), tag);
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffset + block_idx * FLAG_SIZE), localSetTensor, tag);
+        WaitSignalValue((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffset + rank_ * FLAG_SIZE), localCheckTensor, tag);
         pipe_barrier(PIPE_ALL);
         CpGM2GM(outputGm, cclGmOther + extraArgs.sendDispls[rank_], extraArgs.sendCounts[rank_], true, reduceOp_);
     } else {
-        CpGM2GM(outputGm, inputGm +  extraArgs.sendDispls[rank_], extraArgs.sendCounts[rank_]);
+        CpGM2GM(outputGm, inputGm + extraArgs.sendDispls[rank_], extraArgs.sendCounts[rank_]);
         // 卡内同步
         pipe_barrier(PIPE_ALL);
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffset + rank_ * FLAG_SIZE), tag);
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffset + rank_ * FLAG_SIZE), localSetTensor, tag);
     }
 }
 

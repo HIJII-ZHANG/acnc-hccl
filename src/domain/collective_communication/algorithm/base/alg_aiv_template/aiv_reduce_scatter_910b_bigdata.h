@@ -40,10 +40,10 @@ __aicore__ inline void AivReduceScatterBig910B::ClearFlag(uint32_t flagOffsetBas
     __gm__ int32_t *ctrlFlagsGM = (__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetCount + targetRank * FLAG_SIZE);
     if (block_idx < rankSize_) {
         if (targetRank != rank_) {
-            SetFlagNew(ctrlFlagsGM, 0);
+            SetSignalValue(ctrlFlagsGM, localSetTensor, 0);
         }
     } else if (targetRank == rank_) {
-       SetFlagNew(ctrlFlagsGM, 0);
+       SetSignalValue(ctrlFlagsGM, localSetTensor, 0);
     }
 }
 
@@ -56,10 +56,10 @@ __aicore__ inline void AivReduceScatterBig910B::EndSync(int32_t tag, uint32_t fl
     if (block_idx < rankSize_) {
         if (targetRank != rank_) {
             pipe_barrier(PIPE_ALL);
-            SetFlagNew((__gm__ int32_t *)(GM_OUT[targetRank ] + flagOffset + rank_  * FLAG_SIZE), tag);
-            CheckFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffset + targetRank  * FLAG_SIZE), tag);
+            SetSignalValue((__gm__ int32_t *)(GM_OUT[targetRank ] + flagOffset + rank_  * FLAG_SIZE), localSetTensor, tag);
+            WaitSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffset + targetRank  * FLAG_SIZE), localCheckTensor, tag);
             pipe_barrier(PIPE_ALL);
-            SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffset + targetRank  * FLAG_SIZE), 0);
+            SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffset + targetRank  * FLAG_SIZE), localSetTensor, 0);
         }
     }
 }
@@ -150,9 +150,9 @@ __aicore__ inline void AivReduceScatterBig910B::Process(GM_ADDR input, GM_ADDR o
             CpGM2GMWithFlagWrap(cclGmSelf + cclGmSelfOffset, inputGm + inputOffset, avgLengthPerSlice, ctrlFlagsGM, 8, tag);
             //确定对端已经拉走数据
             pipe_barrier(PIPE_ALL);
-            CheckFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetEnd + targetRank  * FLAG_SIZE), tag);
+            WaitSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetEnd + targetRank  * FLAG_SIZE), localCheckTensor, tag);
             pipe_barrier(PIPE_ALL);
-            SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetEnd + targetRank  * FLAG_SIZE), 0);
+            SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetEnd + targetRank  * FLAG_SIZE), localSetTensor, 0);
         }
     } else if (targetRank != rank_) {
         __gm__ int32_t *ctrlFlagsGM = (__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetCount + rank_* FLAG_SIZE);
@@ -164,19 +164,19 @@ __aicore__ inline void AivReduceScatterBig910B::Process(GM_ADDR input, GM_ADDR o
 
         pipe_barrier(PIPE_ALL);
         // 通知对端已把数据拉走
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[targetRank] + flagOffsetEnd + rank_ * FLAG_SIZE), tag);
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[targetRank] + flagOffsetEnd + rank_ * FLAG_SIZE), localSetTensor, tag);
         pipe_barrier(PIPE_ALL);
         // 通知本端已相加
-        SetFlagNew(flagLocal, tag, true);
+        AddSignalValue(flagLocal, localSetTensor, tag);
     } else {
         __gm__ int32_t *ctrlFlagsGM = (__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetCount + rank_ * FLAG_SIZE);
         uint64_t inputOffset = rank_ * totallen;
 
         CpGM2GMWithFlagWrap(outputGm, inputGm + inputOffset, avgLengthPerSlice, ctrlFlagsGM, 8, tag);
         // 确认已加完
-        CheckFlagNew(flagLocal, (rankSize_ - 1) * tag);
+        WaitSignalValue(flagLocal, localCheckTensor, (rankSize_ - 1) * tag);
         pipe_barrier(PIPE_ALL);
-        SetFlagNew(flagLocal, 0);
+        SetSignalValue(flagLocal, localSetTensor, 0);
     }
 
     return;

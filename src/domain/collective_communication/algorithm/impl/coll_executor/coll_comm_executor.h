@@ -60,7 +60,7 @@ public:
         std::vector<Slice> &dataSegsSlice,u32 segmentIdx, u32 commIndex, u64 hdSize, u32 syncTrans);
 
     HcclResult UpdateOffsetBasedOnStrideCount(const OpParam &param,
-        std::vector<std::vector<Slice>> &multRingsUserMemSlice);
+        std::vector<std::vector<Slice>> &multRingsUserMemSlice) const;
 
     HcclResult MultiRingAllGather(const std::string &tag, DeviceMem inputMem, DeviceMem outputMem, const u64 count,
         const HcclDataType dataType,
@@ -133,6 +133,8 @@ public:
                                           const SubCommInfo &commInfo,
                                           const std::vector<std::vector<Slice> > &multRingsSliceZero,
                                           const std::string &tag);
+    HcclResult GetAdjInfo(AlgResourceResponse& algRes, AdjInfo& adjInfo) override;
+
 protected:
     HcclResult GetSubStreamInfoOnOneRing(const u32 ringIndex,
                                          std::vector<Stream>                       &subStreamsInOneRing,
@@ -147,6 +149,21 @@ protected:
     HcclResult SetRingNics(const std::string &tag, const std::vector<std::vector<u32>> &ringNics);
     HcclResult GetRingNics(const std::string &tag, std::vector<std::vector<u32>> &ringNics);
     HcclResult SetNicSendSize(const std::string &tag, std::vector<u64> &sizeList);
+
+    // 用于ZerocopyExecutor
+    HcclResult CalcIntraServerDataSlicesDiscontinuous(const OpParam &param, const ExecMem &execMem,
+        u32 level0RankSize, u32 level1RankSize, u32 level2RankSize, std::vector<Slice> &dataSegsSlice);
+    HcclResult CalcIntraServerDataSlicesContinuous(const OpParam &param, const ExecMem &execMem,
+        u32 level0RankSize, u32 level1RankSize, u32 level2RankSize, std::vector<Slice> &dataSegsSlice);
+    void CalcLevel1DataSlices(u64 sliceSize, u32 level1RankSize, u32 level2RankSize, std::vector<Slice> &level1DataSegsSlice);
+    HcclResult GetCommRankInfoNormal(u32 &level0Rank, u32 &level0RankSize,
+        u32 &level1Rank, u32 &level1RankSize, u32 &level2Rank, u32 &level2RankSize, bool isAHCAlgo = false);
+
+    // 用于ExchangeExecutor
+    HcclResult CalExchangeRemoteRankForReduceScatter(u32 &remoteRankSend, u32 &remoteRankRecv);
+    HcclResult GetTransportForExchange(u32 remoteUserRank, LINK &targetLink);
+    bool IsLevel0Neighbor(u32 remoteRank, u32 level0RankSize);
+
     std::mutex ringNicListLock_;
     std::map<std::string, std::vector<std::vector<u32>>> ringNicList_;
     std::mutex nicSendSizeListLock_;

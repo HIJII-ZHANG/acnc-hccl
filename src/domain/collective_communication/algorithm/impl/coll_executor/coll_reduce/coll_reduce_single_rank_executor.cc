@@ -20,6 +20,7 @@ CollReduceSingleRankExecutor::CollReduceSingleRankExecutor(const HcclDispatcher 
 
 HcclResult CollReduceSingleRankExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollReduceSingleRankExecutor][KernelRun] userRank[%u] starts.", topoAttr_.userRank);
     u64 totalSize = execMem.count * SIZE_TABLE[param.DataDes.dataType];
     ReduceType reduceType =
         ((param.reduceType != HCCL_REDUCE_PROD) && (param.DataDes.dataType != HCCL_DATA_TYPE_INT64)) ?
@@ -28,10 +29,10 @@ HcclResult CollReduceSingleRankExecutor::KernelRun(const OpParam &param, ExecMem
     auto autoSelectedAlgTypeLevel1 = static_cast<u32>(algType_.algoLevel1);
     bool isRootRank = param.root == topoAttr_.realUserRank ? true : false;
     bool hugeData = IsHugeData(totalSize); // override
-    bool isDeterministic = topoMatcher_->GetExternalInputHcclDeterministic();
+    u8 deterministic = topoMatcher_->GetExternalInputHcclDeterministic();
 
     auto opMeta = HcclOpMetaInfo::GetOneForReduce(isRootRank, param.root, autoSelectedAlgTypeLevel1,
-        param.DataDes.dataType, reduceType, hugeData, isDeterministic);
+        param.DataDes.dataType, reduceType, hugeData, deterministic);
     CHK_RET(InitTask(dispatcher_, const_cast<Stream&>(param.stream), opMeta.isEnableCache, opMeta.GetCacheKey()));
 
     DeviceMem srcMem(execMem.inputPtr, totalSize);

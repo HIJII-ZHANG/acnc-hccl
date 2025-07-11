@@ -37,17 +37,17 @@ __aicore__ inline void AivReduceScatterMid910B::Process(GM_ADDR input, GM_ADDR o
     if (block_idx != rank_) {
         CpGM2GM(cclGmSelf + block_idx * count, inputGm + block_idx * count, count);
         // 卡内同步
-        CheckFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffset + rank_ * FLAG_SIZE), tag);
+        WaitSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffset + rank_ * FLAG_SIZE), localCheckTensor, tag);
         pipe_barrier(PIPE_ALL);
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffset + block_idx * FLAG_SIZE), tag);
-        CheckFlagNew((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffset + rank_ * FLAG_SIZE), tag);
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffset + block_idx * FLAG_SIZE), localSetTensor, tag);
+        WaitSignalValue((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffset + rank_ * FLAG_SIZE), localCheckTensor, tag);
         pipe_barrier(PIPE_ALL);
         CpGM2GM(outputGm, cclGmOther + rank_ * count, count, true, reduceOp_);
     } else {
         CpGM2GM(outputGm, inputGm + rank_ * count, count);
         // 卡内同步
         pipe_barrier(PIPE_ALL);
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffset + rank_ * FLAG_SIZE), tag);
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffset + rank_ * FLAG_SIZE), localSetTensor, tag);
     }
 }
 

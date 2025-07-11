@@ -218,8 +218,15 @@ HcclResult ScatterDoubleRingDirect::RunAllStreams(const u32 rank, const u32 step
     // 主流唤醒所有流做跨片拷贝和片内拷贝
     CHK_RET(MainRecordSub());
 
-    CHK_RET(RxAsyncMemcpy(mainRxMem, mainStream, mainPreLink));
-    CHK_RET(RxAsyncMemcpy(subRxMem, subStream, subPreLink));
+    // 小数据量减少冗余通信，
+    const u64 SMALL_DATASIZE = 4 * 1024 * 1024;
+    bool isLargeCount = opInfo_->count * SIZE_TABLE[opInfo_->dataType] > SMALL_DATASIZE;
+    if (isLargeCount || (step + 1 >= (root_ + rankSize - rank) % rankSize)) {
+        CHK_RET(RxAsyncMemcpy(mainRxMem, mainStream, mainPreLink));
+    }
+    if (isLargeCount || (step + 1 >= (rank + rankSize - root_) % rankSize)) {
+        CHK_RET(RxAsyncMemcpy(subRxMem, subStream, subPreLink));
+    }
 
     // 本地拷贝
     if (rank == root_ && GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB) {
@@ -282,8 +289,7 @@ HcclResult ScatterDoubleRingDirect::PrepareDeviceMems(const u32 rank, const u32 
         // root节点参与通信，避免片内拷贝带宽过高过分抢占HBM带宽导致其他节点读取数据时性能下降
         u32 rxSliceIdxForRoot = (rxSliceIdx + DMA_REDUCE_TWO_OFFSET) % rankSize;
         Slice rxSliceForRoot = multiRingSlices_[ringIndex][rxSliceIdxForRoot];
-        if ((rankSize < RANK_SIZE_THREE && step == 0) ||
-            GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB) rxSliceForRoot.size = 0;
+        if ((rankSize < RANK_SIZE_THREE && step == 0) || (inputMem_.ptr() == opInfo_->inputAddr)) rxSliceForRoot.size = 0;
         dst = inputMem_.range(rxSliceForRoot.offset, rxSliceForRoot.size);
         rxMem = RxMemoryInfo{UserMemType::INPUT_MEM, rxSliceForRoot.offset + baseOffset_, dst.ptr(),
             rxSliceForRoot.size};

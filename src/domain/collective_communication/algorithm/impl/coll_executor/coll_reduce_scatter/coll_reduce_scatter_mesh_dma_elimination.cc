@@ -93,6 +93,8 @@ bool CollReduceScatterMeshDmaEliminationExecutor::IsSmallData(const u64 totalSiz
 
 HcclResult CollReduceScatterMeshDmaEliminationExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG,
+        "[CollReduceScatterMeshDmaEliminationExecutor][KernelRun] userRank[%u] starts.", topoAttr_.userRank);
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
     SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
 
@@ -115,7 +117,7 @@ HcclResult CollReduceScatterMeshDmaEliminationExecutor::KernelRun(const OpParam 
         opInfoPtr = &opInfo;
     }
 
-    if (topoMatcher_->GetExternalInputHcclDeterministic() == DETERMINISTIC_CONFIG_DISABLE &&
+    if (topoMatcher_->GetExternalInputHcclDeterministic() == DETERMINISTIC_DISABLE &&
         (param.DataDes.dataType != HCCL_DATA_TYPE_INT64) &&
         (topoAttr_.deviceType == DevType::DEV_TYPE_910B && param.reduceType != HCCL_REDUCE_PROD)) {
         CHK_RET(MultiStreamReduceScatterMeshAtomic(param.tag, execMem.inputMem, execMem.scratchMem,

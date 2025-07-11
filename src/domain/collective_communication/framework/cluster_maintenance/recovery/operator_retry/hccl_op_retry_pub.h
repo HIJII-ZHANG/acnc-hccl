@@ -23,6 +23,9 @@
 namespace hccl {
 
 constexpr u32 OPRETRY_DFX_IPINFO_LENGTH = 256;
+constexpr u32 CONNECT_REMOTE_DEFAULT = 1;
+constexpr u32 CONNECT_REMOTE_BACKUP = 2;
+constexpr u32 ACTIVE_SWITCH_TIMES = 2;
 
 typedef enum {
     // server状态
@@ -51,7 +54,8 @@ typedef enum {
     RETRY_STATE_CMD_CAN_RETRY,
     RETRY_STATE_WAIT_CAN_RETRY,
     RETRY_STATE_SERVER_RETRY_FAIL,
-
+    RETRY_STATE_CMD_PLAN_SWITCH_NIC,
+    RETRY_STATE_SERVER_WAIT_RESUME,
     // agent状态
     RETRY_STATE_AGENT_RUNNING,
     RETRY_STATE_RESP_AICPU_ERR,
@@ -82,6 +86,9 @@ typedef enum {
     RETRY_STATE_RESP_RUNNING_ERR,
     RETRY_STATE_WAIT_CMD_RETRY_FAIL,
     RETRY_STATE_AGENT_RETRY_FAIL,
+    RETRY_STATE_SEND_SWITCH_INFO,
+    RETRY_STATE_WAIT_CMD_SEND_AICPU,
+    RETRY_STATE_AGENT_WAIT_RESUME,
 
     RETRY_STATE_RESERVED,
 } RetryState;
@@ -114,7 +121,9 @@ const std::map<RetryState, std::string> RETRY_STATE_STR_MAP {
     {RETRY_STATE_CMD_CAN_RETRY, "RETRY_STATE_CMD_CAN_RETRY"},
     {RETRY_STATE_WAIT_CAN_RETRY, "RETRY_STATE_WAIT_CAN_RETRY"},
     {RETRY_STATE_SERVER_RETRY_FAIL, "RETRY_STATE_SERVER_RETRY_FAIL"},
-
+    {RETRY_STATE_CMD_PLAN_SWITCH_NIC, "RETRY_STATE_CMD_PLAN_SWITCH_NIC"},
+    {RETRY_STATE_SERVER_WAIT_RESUME, "RETRY_STATE_SERVER_WAIT_RESUME"},
+    
     // agent状态
     {RETRY_STATE_AGENT_RUNNING, "RETRY_STATE_AGENT_RUNNING"},
     {RETRY_STATE_RESP_AICPU_ERR, "RETRY_STATE_RESP_AICPU_ERR"},
@@ -144,7 +153,9 @@ const std::map<RetryState, std::string> RETRY_STATE_STR_MAP {
     {RETRY_STATE_RESP_RUNNING_ERR, "RETRY_STATE_RESP_RUNNING_ERR"},
     {RETRY_STATE_WAIT_CMD_RETRY_FAIL, "RETRY_STATE_WAIT_CMD_RETRY_FAIL"},
     {RETRY_STATE_AGENT_RETRY_FAIL, "RETRY_STATE_AGENT_RETRY_FAIL"},
-
+    {RETRY_STATE_SEND_SWITCH_INFO, "RETRY_STATE_SEND_SWITCH_INFO"},
+    {RETRY_STATE_WAIT_CMD_SEND_AICPU, "RETRY_STATE_WAIT_CMD_SEND_AICPU"},
+    {RETRY_STATE_AGENT_WAIT_RESUME, "RETRY_STATE_AGENT_WAIT_RESUME"},
     {RETRY_STATE_RESERVED, "RETRY_STATE_RESERVED"}
 };
 
@@ -160,7 +171,10 @@ typedef enum {
     RETRY_CMD_CHECK_OPNAME,
     RETRY_CMD_CAN_RETRY,
     RETRY_CMD_RETRY_FAIL,
+    RETRY_CMD_NOTIFY_SWITCH_SUC,
+    RETRY_CMD_NOTIFY_SWITCH_FAIL,
     RETRY_CMD_RESERVED,
+    RETRY_CMD_RETRY_CONSTRAINT_FAIL, // 当前需要上报故障的重执行约束：inplace约束、算子不一致
 } RetryCommand;
 
 const std::map<RetryCommand, std::string> RETRY_COMMAND_STR_MAP {
@@ -175,7 +189,10 @@ const std::map<RetryCommand, std::string> RETRY_COMMAND_STR_MAP {
     {RETRY_CMD_CHECK_OPNAME, "RETRY_CMD_CHECK_OPNAME"},
     {RETRY_CMD_CAN_RETRY, "RETRY_CMD_CAN_RETRY"},
     {RETRY_CMD_RETRY_FAIL, "RETRY_CMD_RETRY_FAIL"},
+    {RETRY_CMD_NOTIFY_SWITCH_SUC, "RETRY_CMD_NOTIFY_SWITCH_SUC"},
+    {RETRY_CMD_NOTIFY_SWITCH_FAIL, "RETRY_CMD_NOTIFY_SWITCH_FAIL"},
     {RETRY_CMD_RESERVED, "RETRY_CMD_RESERVED"},
+    {RETRY_CMD_RETRY_CONSTRAINT_FAIL, "RETRY_CMD_RETRY_CONSTRAINT_FAIL"},
 };
 
 // server状态机 WaitResp状态对应的agent状态
@@ -211,6 +228,7 @@ struct RetryInfo {
     KfcExecStatus opInfo;
     bool isChangeLinkFlag = false;  // 当前是否为借轨
     char dfxIpInfo[OPRETRY_DFX_IPINFO_LENGTH] = {0};  // 重执行状态机维测信息（deviceIP + hostIP）
+    bool isNeedReportOpRetryErr = false; // 针对重执行算子不一致和inplace场景，上报故障
 };
 struct RetryCommandInfo{
     RetryCommand command;
@@ -220,8 +238,9 @@ struct RetryCommandInfo{
 /* 重执行agent状态机使用 */
 using HcclOpStreamRes = std::map<std::string, std::vector<Stream> >;
 using OpRetryResetNotifyCallback = std::function<HcclResult(bool, s64)>;
-using OpRetrySetTransprotStatusCallback = std::function<HcclResult(const HcclOpIdentifier &, bool,
+using OpRetrySetTransportStatusCallback = std::function<HcclResult(const HcclOpIdentifier &, bool,
     const std::map<u32, bool> &, const std::map<u32, bool> &, bool)>;
+using OpRetryGetSwitchRanksCallback = std::function<HcclResult(u32 *, bool*, u32 &, u8 *, u32 &, bool &, bool &)>;
 
 }
 #endif

@@ -192,7 +192,6 @@ HcclResult ReduceScatterRecursiveHalvingDoubling::ReduceScatterInBlock(u32 rank,
         HCCL_ERROR("[ReduceScatterRecursiveHalvingDoubling][ReduceScatterInBlock]rank[%u] "\
             "build sub links failed", rank), HCCL_E_PARA);
     CHK_RET(executor->RunAsync(rankInBlock, blockSize_, subLinks));
-
     return HCCL_SUCCESS;
 }
 
@@ -250,6 +249,122 @@ HcclResult ReduceScatterRecursiveHalvingDoubling::ScatterInPartOne(u32 rank, u32
         }
     }
 
+    return HCCL_SUCCESS;
+}
+
+HcclResult ReduceScatterRecursiveHalvingDoubling::GetNslbAdjInfo(const u32 rank, const u32 rankSize,
+                                                                 const std::vector<LINK> &links,
+                                                                 AdjInfo& nslbAdjInfo)
+{
+    u32 nslbRound = 0;
+    u32 base = 1;
+    const u32 minExponent = 1;
+    while ((base << nslbRound) <= rankSize) {
+        nslbRound++;
+    }
+    if (nslbRound >= minExponent) {
+        nslbRound = nslbRound - minExponent;
+    }
+    u32 nslbBlockSize = base << nslbRound;
+    // 获取第一部分：rank数减block数乘2
+    u32 nslbPart1Size = (rankSize - nslbBlockSize) * 2;
+    // 2的次幂场景下处理流程
+    if (nslbPart1Size == 0) {
+        u32 stepNum = 0;
+        while ((rankSize >> (stepNum + 1)) != 0) {
+            stepNum++;
+        }
+        for (u32 step = 0; step < stepNum; step++) {
+            u32 peerRankBitmask = 1 << (stepNum - step - 1);
+            u32 peerRank = rank ^ peerRankBitmask;
+            NslbDpAdjInfo adjInfoStep = {0};
+            u32 remoteuserRank = links[peerRank]->GetRemoteRank();
+            adjInfoStep.dstLocalRankId = remoteuserRank;
+            adjInfoStep.phaseId = step + 1;
+            adjInfoStep.rev = 0;
+            nslbAdjInfo.nsAdjInfo.push_back(adjInfoStep);
+        }
+        nslbAdjInfo.dstRankNum = stepNum;
+        return HCCL_SUCCESS;
+    }
+    // 非2的次幂场景下，被合并部分的奇数rank处理流程
+    if (rank < nslbPart1Size && rank % NSLBDP_REDUCE_SCATTER_MOLD2 == 1) {
+        u32 peerRank = rank - 1;
+        if (peerRank < links.size()) {
+            NslbDpAdjInfo adjInfoStep = {0};
+            adjInfoStep.dstLocalRankId = links[peerRank]->GetRemoteRank();
+            adjInfoStep.phaseId = 1;
+            adjInfoStep.rev = 0;
+            HCCL_INFO("AllGatherHDR-nslb: peerRank[%u]", peerRank);
+            nslbAdjInfo.nsAdjInfo.push_back(adjInfoStep);
+            nslbAdjInfo.dstRankNum = 1;
+        }
+        return HCCL_SUCCESS;
+    }
+    // 针对合并后映射成2的次幂场景处理
+    u32 rankInBlock = 0;
+    if (rank < nslbPart1Size && (rank % NSLBDP_REDUCE_SCATTER_MOLD2) == 0) {
+        rankInBlock = rank / NSLBDP_REDUCE_SCATTER_MOLD2; // 直接除以2即为本rank的在block内的排序
+    } else {
+        rankInBlock = rank - nslbPart1Size / NSLBDP_REDUCE_SCATTER_MOLD2; // 通过rank减去part1除2的大小即不处于第一部分的block内rank号
+    }
+    std::vector<LINK> subLinks;
+    std::vector<LINK>::const_iterator iter = links.begin();
+    subLinks.resize(nslbBlockSize);
+    for (u32 i = 0; i < rankSize; i++) {
+        if (i < nslbPart1Size && (i % NSLBDP_REDUCE_SCATTER_MOLD2) == 1) {   // 模2余1代表当前rank在part1的奇数位置上，不参与block内的建链
+            continue;
+        } else if (i < nslbPart1Size && (i % NSLBDP_REDUCE_SCATTER_MOLD2) == 0) {  // 模2余0代表当前rank在part1的偶数位置上
+            std::vector<LINK>::const_iterator niter = std::next(iter, i);
+            if (niter != links.end()) {
+                subLinks[i / NSLBDP_REDUCE_SCATTER_MOLD2] = *niter;
+            }
+        } else {
+            std::vector<LINK>::const_iterator niter = std::next(iter, i);
+            if (niter != links.end()) {
+                subLinks[i - nslbPart1Size / NSLBDP_REDUCE_SCATTER_MOLD2] = *niter; 
+            }
+        }
+    }
+    u32 stepNum = 0;
+    while ((rankSize >> (stepNum + 1)) != 0) {
+        stepNum++;
+    }
+    // 映射完成后针对以新的通信域进行邻接表获取
+    u32 begin = 1;
+    for (u32 step = 0; step < stepNum; step++) {
+        u32 peerRankBitmask = 1 << (stepNum - step - 1);
+        u32 peerRank = rankInBlock ^ peerRankBitmask;
+        if (subLinks[peerRank] == nullptr) {
+            continue;
+        }
+        NslbDpAdjInfo adjInfoStep = {0};
+        u32 remoteuserRank = subLinks[peerRank]->GetRemoteRank();
+        adjInfoStep.dstLocalRankId = remoteuserRank;
+        adjInfoStep.phaseId = step + begin + 1;
+        adjInfoStep.rev = 0;
+        nslbAdjInfo.nsAdjInfo.push_back(adjInfoStep);
+    }
+    nslbAdjInfo.dstRankNum = nslbAdjInfo.nsAdjInfo.size();
+
+    if(nslbAdjInfo.nsAdjInfo.size() == 0) {
+        return HCCL_SUCCESS;
+    }
+    // 上面处理完成后，紧接着处理合并部分的偶数rank同步到奇数rank增加phaseId
+    if (rank < nslbPart1Size && rank % NSLBDP_REDUCE_SCATTER_MOLD2 == 0) {
+        u32 peerRank = rank + 1;
+        uint16_t phaseSize = nslbAdjInfo.nsAdjInfo.size();
+        if (peerRank < links.size()) {
+                NslbDpAdjInfo adjInfoStep = {0};
+                adjInfoStep.dstLocalRankId = links[peerRank]->GetRemoteRank();
+                adjInfoStep.phaseId = nslbAdjInfo.nsAdjInfo[phaseSize - 1].phaseId + 1;
+                adjInfoStep.rev = 0;
+                HCCL_INFO("Scatter-nslb: peerRank[%u]", peerRank);
+                nslbAdjInfo.nsAdjInfo.push_back(adjInfoStep);
+                nslbAdjInfo.dstRankNum = nslbAdjInfo.nsAdjInfo.size();
+        }
+        return HCCL_SUCCESS;
+    }
     return HCCL_SUCCESS;
 }
 REGISTER_TEMPLATE(TemplateType::TEMPLATE_REDUCESCATTER_RECURSIVE_HD, ReduceScatterRecursiveHalvingDoubling);

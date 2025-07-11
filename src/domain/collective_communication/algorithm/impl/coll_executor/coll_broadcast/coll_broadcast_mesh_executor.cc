@@ -58,6 +58,7 @@ HcclResult CollBroadcastMeshExecutor::CalcLevel0CommInfo(TransportMemType inputT
 
 HcclResult CollBroadcastMeshExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollBroadcastMeshExecutor][KernelRun] userRank[%u] starts.", topoAttr_.userRank);
     u32 perDataSize = SIZE_TABLE[param.DataDes.dataType];
 
     bool isUsedRegister = false;
@@ -212,7 +213,40 @@ HcclResult CollBroadcastMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
     HCCL_INFO("[BroadCastOperator][BroadCastMeshExecutor] stage2 run success");
     return HCCL_SUCCESS;
 }
+HcclResult CollBroadcastMeshExecutor::Getlevel1CommRank(SubCommInfo& level1CommInfo)
+{
+    CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
 
+    u32 commIndex = level0CommInfo.localRank; // 找到rank所在的节点间平面
+    CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
+
+    level1CommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollBroadcastMeshExecutor::SelectTempAlg(std::unique_ptr<AlgTemplateBase> &level1TempAlg, u32 level1RankSize)
+{
+    if (level1RankSize > 1) {
+        if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_NHR, dispatcher_);
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_BROADCAST_NHR_V1,
+                dispatcher_);
+            HCCL_INFO("broadcast mesh: using nhr_v1 algo inter-server.");
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_NB, dispatcher_);
+            HCCL_INFO("broadcast mesh: using nonuniform-bruck algo inter-server.");
+        } else {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_RECURSIVE_HD, dispatcher_);
+            HCCL_INFO("broadcast mesh: using Recursive halving-doubling algo inter-server.");
+        }
+    }
+    return HCCL_SUCCESS;
+}
 REGISTER_EXEC("BroadCastMeshExecutor", BroadcastMesh, CollBroadcastMeshExecutor);
 
  } // namespace hccl

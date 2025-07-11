@@ -22,7 +22,6 @@ public:
 private:
     void ParseParam(const OpParam& param) override;
     /* *************** 资源计算 *************** */
-    std::set<u32> commTargetUserRankSet_;
     HcclResult CalcScratchMemSize(u64& scratchMemSize) override;
     HcclResult CalcStreamNum(u32& streamNum) override;
     HcclResult CalcCommInfo(std::vector<LevelNSubCommTransport>& opTransport) override;
@@ -45,28 +44,18 @@ private:
         const std::vector<std::vector<Slice>> &multRingsUserMemSlice = std::vector<std::vector<Slice>>(0),
         const bool disableDMAReduce = false);
     HcclResult KernelRun(const OpParam &param, ExecMem &execMem) override;
-    HcclResult KernelRunInterServer(const OpParam &param, ExecMem &execMem) override;
-    HcclResult KernelRunIntraServer(const OpParam &param, ExecMem &execMem) override;
+    HcclResult Getlevel1CommRank(SubCommInfo& level1CommInfo) override;
+    HcclResult SelectTempAlg(std::unique_ptr<AlgTemplateBase> &level1TempAlg, u32 level1RankSize) override;
     /* **************** 数据准备*************** */
     void FillMultiRingSlice(const ExecMem &execMem, const std::vector<std::vector<Slice>> &multiStreamSlice,
         u32 sliceNum, u32 level1RankSize, u32 level2RankSize,
         const u32 ringIndex, std::vector<Slice> &dataSlice);
-    void FillMultiRingSliceContinuous(const std::vector<std::vector<Slice>> &multiStreamSlice,
-        u32 level0RankSize, const u32 ringIndex, std::vector<Slice> &dataSlice);
     void CalLevel0DataSegsSlice(const ExecMem &execMem, const std::vector<std::vector<Slice>> &multiStreamSlice,
         u32 sliceNum, u32 level1RankSize, u32 level2RankSize,
         std::vector<std::vector<Slice>> &level0DataSegsSlice);
-    void CalLevel0DataSegsSliceContinuous(const std::vector<std::vector<Slice>> &multiStreamSlice,
-        u32 sliceNum, std::vector<std::vector<Slice>> &level0DataSegsSlice);
     HcclResult CalLevel1DataSegsSlice(const ExecMem &execMem, CommPlane commPlaneLevel, const u32 &commIndex,
         u32 sliceNum, u32 level1RankSize, u32 level2RankSize,
         std::vector<Slice> &level1DataSegsSlice);
-    HcclResult ExchangeData(Stream &stream, const ExecMem &execMem, void *userInBase);
-    HcclResult CalExchangeRemoteRank(u32 &remoteRankSend, u32 &remoteRankRecv);
-    HcclResult CalcExchangeCommInfo(std::vector<LevelNSubCommTransport>& opTransport);
-    HcclResult GetTransport(u32 commIndex, u32 remoteUserRank, LINK &targetLink);
-    HcclResult ExecuteBarrier(const std::shared_ptr<Transport> &preLink, const std::shared_ptr<Transport> &aftLink, Stream &stream);
-    bool IsLevel0Neighbor(u32 remoteRank, u32 userRank);
 };
 
 } // namespace hccl

@@ -36,6 +36,8 @@ private:
     bool IsHugeData(const u64 curSize) override;
     bool IsSmallData(const u64 totalSize, const u64 curSize) override;
     HcclResult KernelRun(const OpParam &param, ExecMem &execMem) override;
+    HcclResult Getlevel1CommRank(SubCommInfo& level1CommInfo) override;
+    HcclResult SelectTempAlg(std::unique_ptr<AlgTemplateBase> &level1TempAlg, u32 level1RankSize) override;
 };
 
 } // namespace hccl

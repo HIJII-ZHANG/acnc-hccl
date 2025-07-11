@@ -16,26 +16,30 @@
 #include "hccl_communicator_attrs.h"
 #include "hccl/base.h"
 #include "hccl_impl_pub.h"
+#include "coll_alg_operator.h"
+#include "hccl_alg.h"
+#include <set>
 namespace hccl {
+#if (!defined(HCCD)) && (!defined(CCL_KERNEL_AICPU))
 class ZeroCopyAclGraph {
 public:
     ZeroCopyAclGraph();
     ~ZeroCopyAclGraph();
-    bool SetAclGraphZeroCopyMode(
-        DevType deviceType, HcclCMDType opType, OpParam &opParam, u64 bufferSize, u32 userRankSize);
-    bool SetAclGraphZeroCopyModeAllocAlgResource(DevType deviceType, const OpParam &opParam,
-        AlgResourceResponse &algResResponse, DeviceMem &outputBuffer, std::vector<DeviceMem> &deviceResOrigMem,
-        u32 userRankSize);
+    bool SetAclGraphZeroCopyMode(DevType deviceType, HcclCMDType opType, OpParam &opParam,
+        HcclAlg* impl, u64 bufferSize);
+    std::string GetTagPrefix();
+    void SetRetryEnable(bool retryEnable);
 
 private:
-    bool IsAlgoSupportAclGraphZeroCopyMode(HcclCMDType opType, OpParam &opParam, u64 bufferSize, u32 userRankSize);
-    bool IsReduceScatterSupportAclGraphZeroCopyMode(const OpParam &opParam, u64 bufferSize, u32 userRankSize);
-    bool SetGraphMode(HcclCMDType opType, OpParam &opParam, u64 bufferSize, u32 userRankSize);
-    bool ReduceScatterAllocAlgResource(const OpParam &opParam, AlgResourceResponse &algResResponse,
-        DeviceMem &outputBuffer, std::vector<DeviceMem> &deviceResOrigMem, u32 userRankSize);
-
+    bool IsAlgoSupportAclGraphZeroCopyMode(HcclCMDType opType, OpParam &opParam, HcclAlg* impl, u64 bufferSize);
+    bool IsScratchMemorySupportAclGraphZeroCopyMode(const OpParam &opParam, u64 bufferSize, u64 scratchMemSize);
+    bool SetGraphMode(HcclCMDType opType, OpParam &opParam, HcclAlg* impl, u64 bufferSize);
+    bool AlgoCheck(OpParam &opParam, std::unique_ptr<CollAlgOperator> &algo, u64 bufferSize);
 private:
     std::atomic<u32> tagResourceIndex_;
+    std::set<HcclCMDType> algoSet_;
+    bool retryEnable_;
 };
-}
-#endif //end of ZERO_COPY_ACL_GRAPH_H
+#endif  // end of HCCD CCL_KERNEL
+}  // namespace hccl
+#endif  // end of ZERO_COPY_ACL_GRAPH_H

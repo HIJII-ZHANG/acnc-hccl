@@ -50,7 +50,7 @@ using HcomInfo = struct HcomInfoTag {
     std::shared_ptr<hccl::HcclCommBase> pCommBase;
     void *psComm;
     hccl::HcclCommParams params;
-    std::map<std::string, HcclGroupParams> hcomGroupMap;  // 每个group的信息(kname为服务器的server_id,按照服务器区分)
+    std::unordered_map<std::string, HcclGroupParams> hcomGroupMap;  // 每个group的信息(kname为服务器的server_id,按照服务器区分)
     std::mutex groupParamsLock;
     hccl::RankTable_t rankTable;
     s32 devId;

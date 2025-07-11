@@ -79,6 +79,8 @@ bool CollAllReduceReducePlusBcastExecutor::IsSmallData(const u64 totalSize, cons
 
 HcclResult CollAllReduceReducePlusBcastExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG,
+        "[CollAllReduceReducePlusBcastExecutor][KernelRun] userRank[%u] starts.", topoAttr_.userRank);
     u64 reduceAttr = GetReduceAttr(execMem.inputMem, execMem.outputMem, param.DataDes.dataType, param.reduceType);
 
     std::unique_ptr<AlgTemplateBase> reduceTempAlg;

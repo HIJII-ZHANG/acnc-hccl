@@ -77,7 +77,9 @@ public:
     ~TopoInfoExchangeDispather();
  
     HcclResult BroadcastRankTable(const std::map<std::string, std::shared_ptr<HcclSocket>> connectSockets,
-        const RankTable_t &clusterInfo);
+        const RankTable_t &clusterInfo, const std::string &failedAgentIdList);
+    HcclResult BroadcastGroupLeaderInfo(const std::map<std::string, std::shared_ptr<HcclSocket>> connectSockets,
+        const GroupLeader_t &leaderInfo);
  
 private:
     void InitWorkerThread();
@@ -86,7 +88,9 @@ private:
     void RunWorkerThread(int workId);
     bool GetTask(WorkerTask &workTask);
     HcclResult PrepareResource(const std::map<std::string, std::shared_ptr<HcclSocket>> connectSockets,
-        const RankTable_t &clusterInfo);
+        const RankTable_t &clusterInfo, const std::string &failedAgentIdList);
+    HcclResult PrepareLeaderResource(const std::map<std::string, std::shared_ptr<HcclSocket>> connectSockets,
+        const GroupLeader_t &leaderInfo);
     HcclResult SendOnce();
     HcclResult ProcessOneSendEvent(int epollFd, FdHandle &fdHandle);
     HcclResult ProcessSend();

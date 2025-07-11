@@ -41,6 +41,9 @@ HcclResult CollAllReduceFor310PDoublingDirectExecutor::KernelRun(const OpParam &
 {
     bool isInlineReduce = IsSupportSDMAReduce(execMem.inputMem.ptr(), execMem.outputMem.ptr(),
         param.DataDes.dataType, param.reduceType);
+    HCCL_CONFIG_INFO(HCCL_ALG,
+        "[CollAllReduceFor310PDoublingDirectExecutor][KernelRun] userRank[%u] starts with isInlineReduce[%d]",
+        topoAttr_.userRank, isInlineReduce);
     u64 reduceAttr = 0;
     if (isInlineReduce) {
         SalSetBitOne(reduceAttr, ATTR_POS_INLINE_REDUCE);

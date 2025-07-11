@@ -62,27 +62,31 @@ HcclResult CollBroadcastExecutor::Orchestrate(OpParam& param, AlgResourceRespons
     } else if (topoAttr_.userRankSize == 1) { // 单卡
         HCCL_DEBUG("[CollBroadcastExecutor][Orchestrate]1 rank broadcast");
         return HCCL_SUCCESS;
-    } else if (param.isZeroCopy) {
-        // l0通信域在UserIn上做scatter
+    } else if (desc_.isZeroCopy) {
         execMem.inputMem = algRes.paramInputMem;
         execMem.outputMem = algRes.paramOutputMem;
-        ret = KernelRunPreIntraServer(param, execMem);
-        CHK_RET(LaunchTaskExtend(dispatcher_, param.stream, algResResp_->slaveStreams));
+        ret = KernelRunIntraServerPre(param, execMem);
         CHK_PRT_RET(ret != HCCL_SUCCESS,
-        HCCL_ERROR("[CollBroadcastExecutor][Orchestrate]errNo[0x%016llx]broadcast excutor KernelRunPreIntraServer run failed",
-            HCCL_ERROR_CODE(ret)), ret);
-        ret = RunLoop(param, algRes);
-        CHK_PRT_RET(ret != HCCL_SUCCESS,
-        HCCL_ERROR("[CollBroadcastExecutor][Orchestrate]errNo[0x%016llx]broadcast excutor RunLoop run failed",
-            HCCL_ERROR_CODE(ret)), ret);
-        // l0通信域在UserIn上做allgather
-        execMem.inputMem = algRes.paramInputMem;
-        execMem.outputMem = algRes.paramOutputMem;
-        ret = KernelRunAftIntraServer(param, execMem);
-        CHK_RET(LaunchTaskExtend(dispatcher_, param.stream, algResResp_->slaveStreams));
-        CHK_PRT_RET(ret != HCCL_SUCCESS,
-        HCCL_ERROR("[CollBroadcastExecutor][Orchestrate]errNo[0x%016llx]broadcast excutor KernelRunAftIntraServer run failed",
-            HCCL_ERROR_CODE(ret)), ret);
+            HCCL_ERROR("[CollBroadcastExecutor][Orchestrate]errNo[0x%016llx]all reudce excutor level0 reducescatter failed",
+                HCCL_ERROR_CODE(ret)), ret);
+
+        // 在Level1和Level2执行RunLoop
+        if (topoAttr_.serverNum > 1) {
+            ret = RunLoop(param, algRes);
+            CHK_PRT_RET(ret != HCCL_SUCCESS,
+                HCCL_ERROR("[CollBroadcastExecutor][Orchestrate]errNo[0x%016llx]all reduce executor runloop failed. RunLoop",
+                    HCCL_ERROR_CODE(ret)), ret);
+        } else {        // 单机场景，数据直接从UserInput搬到UserOutput
+            std::vector<Slice> level0Datalices;
+            CHK_RET(AlgTemplateBase::PrepareSliceData(param.DataDes.count, SIZE_TABLE[param.DataDes.dataType], topoAttr_.deviceNumPerAggregation, 0, level0Datalices));
+            u32 level0Rank = topoAttr_.userRank % topoAttr_.deviceNumPerAggregation;
+            const Slice &slice = level0Datalices[level0Rank];
+            DeviceMem dstMem = DeviceMem::create(static_cast<u8 *>(algRes.paramOutputMem.ptr()) + slice.offset, slice.size);
+            DeviceMem srcMem = DeviceMem::create(static_cast<u8 *>(algRes.paramInputMem.ptr()) + slice.offset, slice.size);
+            CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dstMem, srcMem, param.stream));
+        }
+
+        ret = KernelRunIntraServerPost(param, execMem);
     } else {
         ret = RunLoop(param, algRes);
     }
@@ -110,23 +114,19 @@ HcclResult CollBroadcastExecutor::RunLoop(OpParam &param, AlgResourceResponse &a
     CHK_PTR_NULL(curInputPtr);
     CHK_PTR_NULL(curOutputPtr);
     u64 maxCountPerLoop = CalcLoopMaxCount(algRes.cclInputMem.size(), unitSize);
-    u64 totalCount = param.DataDes.count;
-    u32 l0UserRankSize = 0;
-
-    if (param.isZeroCopy) {
-        SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
-        l0UserRankSize = level0CommInfo.localRankSize;
-        // l0通信域scatter了数据，需要移动input位置以正确的将数据拷贝到CCL buffer in
-        u32 l0UserRank = level0CommInfo.localRank;
-        u64 startOffset = l0SliceList_[l0UserRank].offset;
-        curInputPtr += startOffset;
-        // 由于循环需要移动l0通信域的指针，同是l0可能slice存在不均分的情况，根据rank0切片大小移动
-        totalCount = l0SliceList_[COMM_INDEX_0].size / unitSize;
-        maxCountPerLoop = algRes.cclInputMem.size() / unitSize / HCCL_MIN_SLICE_ALIGN * HCCL_MIN_SLICE_ALIGN;
-    }
 
     HCCL_DEBUG("[CollBroadcastExecutor][RunLoop]tag[%s], userRankSize is [%u], maxCountPerLoop is [%llu].",
         param.tag.c_str(), topoAttr_.userRankSize, maxCountPerLoop);
+
+    u64 totalCount;
+    if (desc_.isZeroCopy) {     // 对零拷贝场景而言，只在Server间通信切循环
+        std::vector<Slice> level0Datalices;
+        CHK_RET(AlgTemplateBase::PrepareSliceData(param.DataDes.count, unitSize, topoAttr_.deviceNumPerAggregation, 0, level0Datalices));
+        u32 level0Rank = topoAttr_.userRank % topoAttr_.deviceNumPerAggregation;
+        totalCount = level0Datalices[level0Rank].size / unitSize;
+    } else {
+        totalCount = param.DataDes.count;
+    }
 
     for (u64 countLeft = totalCount, curCount = 0, inputOffset = 0;
             countLeft > 0; countLeft -= curCount) {
@@ -136,12 +136,7 @@ HcclResult CollBroadcastExecutor::RunLoop(OpParam &param, AlgResourceResponse &a
         u64 curSize = curCount * unitSize; // 单位：字节
 
         ExecMem execMem;
-        if (param.isZeroCopy) {
-            // 用满cclbuffer
-            execMem.count = curCount * l0UserRankSize;
-        } else {
-            execMem.count = curCount;
-        }
+        execMem.count = curCount;
         execMem.inputMem = algRes.cclInputMem;
         execMem.outputMem = algRes.cclInputMem; // broadcast只用一块CCL buffer
         // 使用当前Loop偏移到的地址作为当前的inputPtr
@@ -197,7 +192,7 @@ HcclResult CollBroadcastExecutor::RunLoopInner(OpParam &param, ExecMem &execMem)
 
     // isDMAreduceOn91093场景
     if (isDMAreduceOn91093) {
-        if (param.isZeroCopy) {
+        if (desc_.isZeroCopy) {
             ret = KernelRunInterServer(param, execMem);
         } else {
             ret = KernelRun(param, execMem);
@@ -348,8 +343,4 @@ HcclResult CollBroadcastExecutor::GetRankSliceSize(HcclDataType dataType, const 
 
     return HCCL_SUCCESS;
 }
-
-HcclResult CollBroadcastExecutor::KernelRunPreIntraServer(const OpParam &param, ExecMem &execMem) { return HCCL_SUCCESS; }
-
-HcclResult CollBroadcastExecutor::KernelRunAftIntraServer(const OpParam &param, ExecMem &execMem) { return HCCL_SUCCESS; }
 } // namespace hccl

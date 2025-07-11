@@ -14,7 +14,7 @@
 #include "search_path.h"
 #include "comm_base_pub.h"
 #include "hccl_impl_pub.h"
-#include "transport_common.h"
+#include "coll_alg_param.h"
 
 
 namespace hccl {

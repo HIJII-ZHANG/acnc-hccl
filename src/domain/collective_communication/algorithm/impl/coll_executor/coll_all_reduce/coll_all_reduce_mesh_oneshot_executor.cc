@@ -83,6 +83,8 @@ bool CollAllReduceMeshOneshotExecutor::IsSmallData(const u64 totalSize, const u6
 
 HcclResult CollAllReduceMeshOneshotExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG,
+        "[CollAllReduceMeshOneshotExecutor][KernelRun] userRank[%u] starts.", topoAttr_.userRank);
     std::vector<Slice> dataSegsSlice; // 数据分成ranksize份，每份的起始偏移和大小
 
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));

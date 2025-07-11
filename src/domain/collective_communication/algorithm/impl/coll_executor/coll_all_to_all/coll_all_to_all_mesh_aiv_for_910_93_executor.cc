@@ -9,7 +9,6 @@
  */
 
 #include "coll_all_to_all_mesh_aiv_for_910_93_executor.h"
-#include "alg_profiling.h"
 
 namespace hccl {
 
@@ -17,6 +16,7 @@ CollAlltoAllMeshAivFor91093Executor::CollAlltoAllMeshAivFor91093Executor(const H
                                                          std::unique_ptr<TopoMatcher> &topoMatcher)
     : CollAlltoAllExecutor(dispatcher, topoMatcher)
 {
+    desc_.isAivMode = true;
 }
 
 HcclResult CollAlltoAllMeshAivFor91093Executor::GetIfNeedAivBuffer(bool &needAivBuffer)
@@ -79,6 +79,13 @@ u32 CollAlltoAllMeshAivFor91093Executor::CalBlockDim(u32 rankSize, u64 dataSize,
     return blockDim;
 }
 
+HcclResult CollAlltoAllMeshAivFor91093Executor::PrepareCommInfoToDevice(AlgResourceResponse& algResource)
+{
+    HCCL_INFO("[CollAlltoAllMeshAivFor91093Executor][PrepareCommInfoToDevice]alltoall aiv copy comm info to device.");
+    CHK_RET(CopyAivCommInfoToDevice(COMM_COMBINE_ORDER, COMM_INDEX_0, algResource));
+    return HCCL_SUCCESS;
+}
+
 HcclResult CollAlltoAllMeshAivFor91093Executor::Orchestrate(OpParam& param, AlgResourceResponse& algRes)
 {
     HcclUs startut = TIME_NOW();
@@ -106,7 +113,7 @@ HcclResult CollAlltoAllMeshAivFor91093Executor::Orchestrate(OpParam& param, AlgR
 
 HcclResult CollAlltoAllMeshAivFor91093Executor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollAlltoAllMeshAivFor91093Executor][KernelRun]alltoall aiv enter.");
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollAlltoAllMeshAivFor91093Executor][KernelRun]alltoall aiv enter.");
 
     CHK_RET(CheckCommSize(COMM_COMBINE_ORDER, COMM_INDEX_0 + 1));
     SubCommInfo level0CommInfo = GetSubCommInfo(COMM_COMBINE_ORDER, COMM_INDEX_0);
@@ -126,13 +133,13 @@ HcclResult CollAlltoAllMeshAivFor91093Executor::KernelRun(const OpParam &param, 
     AivTopoArgs topoArgs { localRank, localRankSize, MAX_RANK_SIZE, 0, topoAttr_.serverNum, topoAttr_.deviceType };
     blockDim_ = CalBlockDim(localRankSize);
     AivResourceArgs resourceArgs {
-        param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size(), blockDim_
+        param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size(), blockDim_, param.aivTag
     };
     AivAlgArgs algArgs {};
     AivProfilingInfo aivProfilingInfo;
     aivProfilingInfo.counter = opCounter_;
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
-        HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
+        HCCL_PROFILER_ADD_TAG_AIV(param.tag, algoAttr_.identifier, workflowMode_);
         HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
     }
 
@@ -141,7 +148,7 @@ HcclResult CollAlltoAllMeshAivFor91093Executor::KernelRun(const OpParam &param, 
             HcclCMDType::HCCL_CMD_ALLTOALL, execMem.inputPtr, execMem.outputPtr, param.All2AllDataDes.sendCount,
             param.All2AllDataDes.sendType, HCCL_REDUCE_RESERVED, 0, isOpbase
         };
-        ret = ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, aivProfilingInfo);
+        ret = ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, aivProfilingInfo);       
     } else {
         ExtraArgsV2 extraArgs;
         if (param.opType == HcclCMDType::HCCL_CMD_ALLTOALLVC) {

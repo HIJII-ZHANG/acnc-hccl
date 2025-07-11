@@ -228,7 +228,6 @@ HcclResult ScatterRing::RunAsync(const u32 rank, const u32 rankSize,
         // 执行barrier，保证数据收发完成
         CHK_RET(ExecuteBarrier(linkLeft_, linkRight_));
     }
-
     HCCL_INFO("ScatterRing finished: rank:[%u] end", interRank_);
 
     return HCCL_SUCCESS;
@@ -422,5 +421,24 @@ HcclResult ScatterRing::ScatterSlicesPrep(u32 rankSize, u32 nicSize)
     }
     return HCCL_SUCCESS;
 }
+HcclResult ScatterRing::GetNslbAdjInfo(const u32 rank, const u32 rankSize,
+                                       const std::vector<LINK> &links, AdjInfo& nslbAdjInfo)
+{
+    if (rankSize == 1) {
+        return HCCL_E_NOT_SUPPORT;
+    }
+    u32 ringNextRank = (rank + 1) % rankSize;
+    LINK nslbNext = links[ringNextRank];
+
+    NslbDpAdjInfo adjInfoStep = {0};
+    nslbAdjInfo.dstRankNum = 1;
+    adjInfoStep.dstLocalRankId = nslbNext->GetRemoteRank();
+    adjInfoStep.phaseId = 1;
+    adjInfoStep.rev = 0;
+    nslbAdjInfo.nsAdjInfo.push_back(adjInfoStep);
+
+    return HCCL_SUCCESS;
+}
+
 REGISTER_TEMPLATE(TemplateType::TEMPLATE_SCATTER_RING, ScatterRing);
 }  // namespace hccl

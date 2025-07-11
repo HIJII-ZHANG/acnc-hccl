@@ -48,10 +48,10 @@ __aicore__ inline void AivAllReduceBigGraph91093::Process(GM_ADDR input, GM_ADDR
     __gm__ T *cclGmOther = (__gm__ T *)(GM_IN[dstRank]);
 
     // 本卡已进入算子，通知其他卡可以搬运，使用第1个flag
-    SetFlagNew((__gm__ int32_t *)(flagAddrOther + 2 * blockNumPerGroup * FLAG_SIZE + flagSetOffset), tag);
+    SetSignalValue((__gm__ int32_t *)(flagAddrOther + 2 * blockNumPerGroup * FLAG_SIZE + flagSetOffset), localSetTensor, tag);
 
     // 确认对端已经将对应的数据拉走
-    CheckFlagNew((__gm__ int32_t *)(flagAddrSelf + 2 * blockNumPerGroup * FLAG_SIZE + flagCheckOffset), tag);
+    WaitSignalValue((__gm__ int32_t *)(flagAddrSelf + 2 * blockNumPerGroup * FLAG_SIZE + flagCheckOffset), localCheckTensor, tag);
 
     PipeBarrier<PIPE_ALL>();
     
@@ -67,27 +67,27 @@ __aicore__ inline void AivAllReduceBigGraph91093::Process(GM_ADDR input, GM_ADDR
         PipeBarrier<PIPE_MTE3>();
 
         // 本aiv reduce完成，使用第2个flag
-        SetFlagNew((__gm__ int32_t*)(flagAddrSelf + blockIdxInGroup * FLAG_SIZE), tag, true);
+        AddSignalValue((__gm__ int32_t*)(flagAddrSelf + blockIdxInGroup * FLAG_SIZE), localSetTensor, tag);
     }
     
     // 全卡同步
     PipeBarrier<PIPE_ALL>();
     if (dstRank == rank_) {
         // check 本端aiv 所有reduce结果是否完成
-        CheckFlagNew((__gm__ int32_t *)(flagAddrSelf + blockIdxInGroup * FLAG_SIZE), (rankSize_ - 1) * tag);
+        WaitSignalValue((__gm__ int32_t *)(flagAddrSelf + blockIdxInGroup * FLAG_SIZE), localCheckTensor, (rankSize_ - 1) * tag);
         PipeBarrier<PIPE_ALL>();
-        SetFlagNew((__gm__ int32_t *)(flagAddrSelf + blockIdxInGroup * FLAG_SIZE), 0);
+        SetSignalValue((__gm__ int32_t *)(flagAddrSelf + blockIdxInGroup * FLAG_SIZE), localSetTensor, 0);
 
         SyncFunc<HardEvent::MTE3_S>();
 
         // 告诉别人自己已经加完所有卡了，使用第3个flag
-        SetFlagNew((__gm__ int32_t *)(flagAddrSelf + blockNumPerGroup * FLAG_SIZE + blockIdxInGroup * FLAG_SIZE), tag);
+        SetSignalValue((__gm__ int32_t *)(flagAddrSelf + blockNumPerGroup * FLAG_SIZE + blockIdxInGroup * FLAG_SIZE), localSetTensor, tag);
 
         SyncFunc<HardEvent::MTE3_MTE2>();
     }
 
     // 每个aiv读相应对端的flag
-    CheckFlagNew((__gm__ int32_t *)(flagAddrOther + blockNumPerGroup * FLAG_SIZE + blockIdxInGroup * FLAG_SIZE), tag);
+    WaitSignalValue((__gm__ int32_t *)(flagAddrOther + blockNumPerGroup * FLAG_SIZE + blockIdxInGroup * FLAG_SIZE), localCheckTensor, tag);
     PipeBarrier<PIPE_ALL>();
 
     // AllGather
@@ -98,9 +98,9 @@ __aicore__ inline void AivAllReduceBigGraph91093::Process(GM_ADDR input, GM_ADDR
 
     PipeBarrier<PIPE_ALL>();
     // 通知对端，自己已经把对端的那片数据拉回来了
-    SetFlagNew((__gm__ int32_t *)(flagAddrOther + 2 * blockNumPerGroup * FLAG_SIZE + block_num * FLAG_SIZE + flagSetOffset), tag);
+    SetSignalValue((__gm__ int32_t *)(flagAddrOther + 2 * blockNumPerGroup * FLAG_SIZE + block_num * FLAG_SIZE + flagSetOffset), localSetTensor, tag);
     // 确认对端已经将对应的数据拉走
-    CheckFlagNew((__gm__ int32_t *)(flagAddrSelf + 2 * blockNumPerGroup * FLAG_SIZE + block_num * FLAG_SIZE + flagCheckOffset), tag);
+    WaitSignalValue((__gm__ int32_t *)(flagAddrSelf + 2 * blockNumPerGroup * FLAG_SIZE + block_num * FLAG_SIZE + flagCheckOffset), localCheckTensor, tag);
     return;
 }
 

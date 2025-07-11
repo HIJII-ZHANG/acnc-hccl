@@ -43,6 +43,11 @@ HcclResult CollReceiveExecutor::Orchestrate(OpParam& param, AlgResourceResponse&
     return HCCL_SUCCESS;
 }
 
+HcclResult CollReceiveExecutor::GetAdjInfo(AlgResourceResponse& algRes, AdjInfo& adjInfo)
+{
+    return HCCL_SUCCESS;
+}
+
 HcclResult CollReceiveExecutor::CalcTransportMemType(TransportMemType &inputType, TransportMemType &outputType)
 {
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {

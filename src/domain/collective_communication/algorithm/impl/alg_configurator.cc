@@ -23,7 +23,7 @@ constexpr u32 DEVICE_ONE = 1;
 
 AlgConfigurator::AlgConfigurator(HcclAlgoAttr &algoAttr, HcclTopoAttr &topoAttr)
     : algoAttr_(algoAttr), topoAttr_(topoAttr),
-        deterministic_(static_cast<u8>(GetExternalInputHcclDeterministic()))
+        deterministic_(GetExternalInputHcclDeterministicV2())
 { }
 
 AlgConfigurator::~AlgConfigurator() {}
@@ -86,6 +86,22 @@ HcclResult AlgConfigurator::SelectCurrOpAlgType(
             }
         }
         HCCL_INFO("[AlgConfigurator][SelectCurrOpAlgType] multiModuleDiffDeviceNumMode is true, set ahc.");
+    } else if (!topoAttr_.multiModuleDiffDeviceNumMode && topoAttr_.multiSuperPodDiffServerNumMode
+                && deviceType == DevType::DEV_TYPE_910_93 && (opType == HcclCMDType::HCCL_CMD_ALLTOALL
+                || opType == HcclCMDType::HCCL_CMD_ALLTOALLV || opType == HcclCMDType::HCCL_CMD_ALLTOALLVC)) {
+        // A3 ALLTOALL非对称拓扑
+        CHK_RET(SetAlgoLevel0(GetExternalInputHcclAlgoConfig(opType)[HCCL_ALGO_LEVEL_0], algType0));
+        CHK_RET(SetAlgoLevel1(GetExternalInputHcclAlgoConfig(opType)[HCCL_ALGO_LEVEL_1], moduleNum, algType1, opType));
+        CHK_RET(SetAlgoLevel2(GetExternalInputHcclAlgoConfig(opType)[HCCL_ALGO_LEVEL_2], algType2));
+        algType[opType].algoLevel0 = algType0;
+        algType[opType].algoLevel1 = algType1;
+        algType[opType].algoLevel2 = algType2;
+        if (GetExternalInputHcclAlgoConfig(opType)[HCCL_ALGO_LEVEL_0] == HcclAlgoType::HCCL_ALGO_TYPE_DEFAULT &&
+            GetExternalInputHcclAlgoConfig(opType)[HCCL_ALGO_LEVEL_1] == HcclAlgoType::HCCL_ALGO_TYPE_DEFAULT) {
+            algType[opType].algoLevel0 = AlgTypeLevel0::ALG_LEVEL0_WHOLE_RING;
+            algType[opType].algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_WHOLE_RING;
+            isAlgoLevel1Default_[opType] = false;
+        }
     } else if ((topoAttr_.multiModuleDiffDeviceNumMode ||
                (topoAttr_.multiSuperPodDiffServerNumMode &&
                !((opType == HcclCMDType::HCCL_CMD_ALLGATHER || opType == HcclCMDType::HCCL_CMD_ALLREDUCE ||
@@ -213,7 +229,8 @@ HcclResult AlgConfigurator::SetAlgoLevel1(HcclAlgoType algoConfig, u32 moduleNum
 
     HCCL_DEBUG("[AlgConfigurator][SetAlgoLevel1] algType[%u], deviceType_[%u], workflowmode[%u]", algType,
         topoAttr_.deviceType, GetWorkflowMode());
-    if (algType == AlgTypeLevel1::ALG_LEVEL1_PIPELINE && (topoAttr_.deviceType != DevType::DEV_TYPE_910B ||
+    if (algType == AlgTypeLevel1::ALG_LEVEL1_PIPELINE && ((topoAttr_.deviceType != DevType::DEV_TYPE_910B 
+            && topoAttr_.deviceType != DevType::DEV_TYPE_910_93) ||
             GetWorkflowMode() != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE)) {
         algoConfigShadow = HcclAlgoType::HCCL_ALGO_TYPE_DEFAULT;
         HCCL_WARNING("hccl algorithm: there are %u server in level1, config pipeline algo failed.", moduleNum);
@@ -264,16 +281,8 @@ HcclResult AlgConfigurator::SetAlgoLevel2(HcclAlgoType algoConfig, AlgTypeLevel2
             algType = AlgTypeLevel2::ALG_LEVEL2_NB;
             break;
         default: {
-            if (superPodNum >=  HCCL_INTER_SERVER_RING_ALGO_MAX_SUPPORT_SERVER_NUM) {
-                // server 数为 8 以上：使用 HD 算法
-                algType = AlgTypeLevel2::ALG_LEVEL2_HD;
-            } else {
-                // server 数为 2 的非整数次幂：使用 RING 算法
-                // server 数为 2 的整数次幂：使用 HD 算法
-                algType = (((superPodNum & (superPodNum - 1)) != 0) || (superPodNum == 1)) ?
-                    AlgTypeLevel2::ALG_LEVEL2_RING :
-                    AlgTypeLevel2::ALG_LEVEL2_HD;
-            }
+            // Level2默认选择NHR算法
+            algType = AlgTypeLevel2::ALG_LEVEL2_NHR;
             break;
         }
     }
@@ -475,7 +484,7 @@ bool AlgConfigurator::SupportDeterministicOptim() const
     bool support = topoAttr_.isSingleMeshAggregation &&
                    topoAttr_.deviceNumPerAggregation > DEVICE_TWO &&
                    topoAttr_.deviceType == DevType::DEV_TYPE_910B &&
-                   deterministic_ == DETERMINISTIC_CONFIG_ENABLE;
+                   deterministic_ != DETERMINISTIC_DISABLE;
     return support;
 }
 

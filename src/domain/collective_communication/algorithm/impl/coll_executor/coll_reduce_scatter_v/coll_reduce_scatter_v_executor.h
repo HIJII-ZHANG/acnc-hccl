@@ -21,6 +21,7 @@ public:
     ~CollReduceScatterVExecutor() = default;
 
     HcclResult Orchestrate(OpParam& param, AlgResourceResponse& algRes) override;
+    HcclResult GetAdjInfo(AlgResourceResponse& algRes, AdjInfo& adjInfo) override;
 protected:
     // ReduceScatter Loop Executor公共接口
     virtual u64 CalcLoopMaxCount(const u32 unitSize);

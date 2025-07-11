@@ -27,7 +27,7 @@ using HcclOpInfoCtx = struct HcclInfoTag {
     bool cloudFlag;  // cloudFlag为0即实验室场景,cloudFlag为1则为云场景
     bool isUsed;
     std::mutex opGroupMapMutex;
-    std::map<std::string, std::shared_ptr<hccl::hcclComm>> opGroup2CommMap;
+    std::unordered_map<std::string, std::shared_ptr<hccl::hcclComm>> opGroup2CommMap;
     std::map<std::string, std::shared_ptr<hccl::TopoInfoDetect>> hcclCommTopoInfoDetectServer;
     std::map<std::string, std::shared_ptr<hccl::TopoInfoDetect>> hcclCommTopoInfoDetectAgent;
     HcclInfoTag() :isUsed(false) {}
@@ -39,6 +39,8 @@ using HcclOpInfoCtx = struct HcclInfoTag {
         hcclCommTopoInfoDetectAgent.clear();
     }
 };
+
+HcclOpInfoCtx &GetHcclExistDeviceOpInfoCtx(void);
 
 HcclOpInfoCtx &GetHcclOpInfoCtx(void);
 
@@ -76,7 +78,7 @@ HcclResult SetOverFlowAddr(hccl::hcclComm *hcclComm);
 
 HcclResult HcclGetCommHandle(const char *commName, std::shared_ptr<hccl::hcclComm> &comm);
 
-HcclResult CheckScatterInputPara(uint64_t recvCount, HcclComm comm, void *recvBuf);
+HcclResult CheckScatterInputPara(HcclComm comm, void *recvBuf);
 
 HcclResult HcclMc2ComResourceByTiling(HcclComm comm, uint32_t *pVersion, void *mc2Tiling, rtStream_t &aicpuStream);
 

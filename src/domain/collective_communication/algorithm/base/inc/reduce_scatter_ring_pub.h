@@ -23,6 +23,8 @@ public:
 
     HcclResult Prepare(u64 reduceAttrBitMap, HcomCollOpInfo *opInfo = nullptr) override;
     HcclResult RunAsync(const u32 rank, const u32 rankSize, const std::vector<LINK> &links) override;
+    HcclResult GetNslbAdjInfo(const u32 rank, const u32 rankSize,
+                              const std::vector<LINK> &links, AdjInfo& nslbAdjInfo) override;
 
 protected:
 private:

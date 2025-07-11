@@ -19,8 +19,6 @@ public:
 
 private:
     /* *************** 资源计算 *************** */
-    std::set<u32> commTargetUserRankSet_;
-    bool isZeroCopy_= false;
     HcclResult CalcStreamNum(u32& streamNum) override;
     HcclResult CalcCommInfo(std::vector<LevelNSubCommTransport>& opTransport) override;
     HcclResult CalcLevel0CommInfo(TransportMemType inputType, TransportMemType outputType,
@@ -28,25 +26,32 @@ private:
     HcclResult CalcLevel2CommInfo(TransportMemType inputType, TransportMemType outputType,
         std::vector<LevelNSubCommTransport>& opTransport) override;
     HcclResult CalcTransportMemType(TransportMemType &inputType, TransportMemType &outputType);
-    void ParseParam(const OpParam& param) override;
 
     /* *************** 算法编排 *************** */
     u64 CalcLoopMaxCount(const u64 cclBuffSize, const u32 unitSize) override;
     bool IsDataSplitForRdmaSdmaConcurrent(const u64 curSize) override;
+
+    virtual u64 CalcDstMemOffset(const OpParam &param, u32 perDataSize, u64 inputMemSize) const;
+    virtual HcomCollOpInfo GetHcomCollOpInfo(const OpParam &param, const ExecMem &execMem) const;
+    virtual std::vector<Slice> PrepareSlicesL2(const OpParam &param, const SubCommInfo &level2CommInfo,
+        const SubCommInfo &level1CommInfo, const SubCommInfo &level0CommInfo, u32 perDataSize, u64 inputMemSize) const;
+    virtual std::vector<Slice> PrepareSlicesL1(const OpParam &param, const SubCommInfo &level2CommInfo,
+        const SubCommInfo &level1CommInfo, const SubCommInfo &level0CommInfo, u32 perDataSize, u64 inputMemSize) const;
+    virtual HcclResult PrepareSlicesL0(std::vector<std::vector<Slice>> &multRingsSlice, const OpParam &param,
+        const SubCommInfo &level2CommInfo, const SubCommInfo &level1CommInfo, const SubCommInfo &level0CommInfo,
+        u32 perDataSize, u64 inputMemSize);
+    virtual HcclResult PrepareUserMemSlices(std::vector<std::vector<Slice>> &userMemSlices,
+        const std::vector<std::vector<Slice>> &multRingsSlice, const OpParam &param, const SubCommInfo &level2CommInfo,
+        const SubCommInfo &level1CommInfo, const SubCommInfo &level0CommInfo, u32 perDataSize, u64 inputMemSize);
+
     virtual HcclResult RunIntraSeverAllGather(const std::string &tag, DeviceMem &inputMem, DeviceMem &outputMem,
         const u64 count, const HcclDataType &dataType,
         const std::vector<std::vector<Slice>> &multRingsSliceZero, const Stream &stream,
         s32 profStage, const u64 baseOffset = 0, const HcomCollOpInfo *opInfo = nullptr,
         const std::vector<std::vector<Slice>> &multRingsUserMemSlice = std::vector<std::vector<Slice>> (0));
     HcclResult KernelRun(const OpParam &param, ExecMem &execMem) override;
-    HcclResult KernelRunInterServer(const OpParam &param, ExecMem &execMem) override;
-    HcclResult KernelRunIntraServer(const OpParam &param, ExecMem &execMem) override;
-    HcclResult CalExchangeRemoteRank(u32 &remoteRankSend, u32 &remoteRankRecv);
-    HcclResult ExchangeData(Stream &stream, const ExecMem &execMem, void *userInBase);
-    HcclResult CalcExchangeCommInfo(std::vector<LevelNSubCommTransport>& opTransport);
-    HcclResult GetTransport(u32 commIndex, u32 remoteUserRank, LINK &targetLink);
-    HcclResult ExecuteBarrier(const std::shared_ptr<Transport> &preLink, const std::shared_ptr<Transport> &aftLink, Stream &stream);
-    bool IsLevel0Neighbor(u32 remoteRank, u32 userRank);
+    HcclResult Getlevel1CommRank(SubCommInfo& level1CommInfo) override;
+    HcclResult SelectTempAlg(std::unique_ptr<AlgTemplateBase> &level1TempAlg, u32 level1RankSize) override;
 };
 
 } // namespace hccl

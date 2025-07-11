@@ -9,7 +9,6 @@
  */
 
 #include "coll_reduce_scatter_aiv_rdma_executor.h"
-#include "alg_profiling.h"
 #include "alg_template_register.h"
 
 namespace hccl {
@@ -20,6 +19,7 @@ CollReduceScatterAivRdmaExecutor::CollReduceScatterAivRdmaExecutor(const HcclDis
     : CollReduceScatterExecutor(dispatcher, topoMatcher)
 {
     DMAReduceFlag_ = false;
+    desc_.isAivMode = true;
 }
 
 void CollReduceScatterAivRdmaExecutor::ParseParam(const OpParam& param)
@@ -38,7 +38,7 @@ HcclResult CollReduceScatterAivRdmaExecutor::CalcScratchMemSize(u64& scratchMemS
     } else {
         scratchMemSize = totalSize_;
     }
-    HCCL_INFO("[CollReduceScatterMeshExecutor][CalcScratchMemSize] tag[%s] scratchMemSize[%llu]",
+    HCCL_INFO("[CollReduceScatterAivRdmaExecutor][CalcScratchMemSize] tag[%s] scratchMemSize[%llu]",
         tag_.c_str(), scratchMemSize);
     return HCCL_SUCCESS;
 }
@@ -129,7 +129,7 @@ HcclResult CollReduceScatterAivRdmaExecutor::Orchestrate(OpParam& param, AlgReso
 
 HcclResult CollReduceScatterAivRdmaExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollReduceScatterAivRdmaExecutor][KernelRun]ReduceScatter aiv enter");
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollReduceScatterAivRdmaExecutor][KernelRun]ReduceScatter aiv enter");
 
     HcclWorkflowMode workflow = workflowMode_;
     bool isOpbase = (workflow == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
@@ -156,10 +156,6 @@ HcclResult CollReduceScatterAivRdmaExecutor::KernelRun(const OpParam &param, Exe
     CHK_RET(PrepareAivBuffers(intraRankSize, intraRankId, 0, execMem.inputMem, execMem.inputMem, intraLinks,
         dataBuffers, flagBuffers, UserMemType::INPUT_MEM, UserMemType::INPUT_MEM, 0, HCCL_MID_COUNT_32_MB));
 
-    if (aivClearEnable_) {
-        ClearAivSyncBuf(flagBuffers, intraRankId, intraRankSize, param.stream.ptr());
-    }
-
     u32 serverNum = innerCommInfo.localRankSize;
     // 先做本地拷贝到AIVIN再跨片拷贝；output统一为reduceScatterInput的位置，即buffer中原位
     AivOpArgs opArgs {
@@ -172,21 +168,21 @@ HcclResult CollReduceScatterAivRdmaExecutor::KernelRun(const OpParam &param, Exe
     };
     blockDim_ = CalBlockDim(intraRankSize);
     AivResourceArgs resourceArgs {
-        param.tag, param.stream.ptr(), dataBuffers, flagBuffers, execMem.inputMem.size(), blockDim_
+        param.tag, param.stream.ptr(), dataBuffers, flagBuffers, execMem.inputMem.size(), blockDim_, param.aivTag
     };
     AivAlgArgs algArgs {0};
     struct AivProfilingInfo aivProfilingInfo;
     aivProfilingInfo.counter = opCounter_;
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
-        HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
+        HCCL_PROFILER_ADD_TAG_AIV(param.tag, algoAttr_.identifier, workflowMode_);
         HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
     }
 
-    CHK_RET(ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, aivProfilingInfo));
+    if (aivClearEnable_) {
+        ClearAivSyncBuf(flagBuffers, param.stream.ptr(), topoArgs);
+    }
 
-    TaskAivProfiler(opArgs.cmdType, aivProfilingInfo.tag, opArgs.count * sizeof(opArgs.dataType),
-        aivProfilingInfo.blockDim, topoArgs.rankSize, resourceArgs.buffersOut[topoArgs.rank], resourceArgs.stream, 
-        algArgs.step, aivProfilingInfo.beginTime);
+    CHK_RET(ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, aivProfilingInfo));
     
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){ 
         HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());
@@ -198,7 +194,7 @@ HcclResult CollReduceScatterAivRdmaExecutor::KernelRun(const OpParam &param, Exe
         (param.DataDes.dataType != HCCL_DATA_TYPE_INT64)) ?
         ReduceType::INLINE_REDUCE : ReduceType::TBE_REDUCE;
     auto opMeta = HcclOpMetaInfo::GetOneForReduceScatter(autoSelectedAlgTypeLevel1,
-        param.DataDes.dataType, reduceType, false, false, CopyPattern::BCOPY, false, false, true);
+        param.DataDes.dataType, reduceType, false, false, CopyPattern::BCOPY, false, 0, true);
     CHK_RET(InitTask(dispatcher_, const_cast<Stream&>(param.stream), opMeta.isEnableCache, opMeta.GetCacheKey()));
 
     u32 innerRankSize = innerCommInfo.localRankSize;

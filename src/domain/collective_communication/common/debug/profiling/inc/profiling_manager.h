@@ -243,7 +243,9 @@ public:
     }
     void SetFftsDispatcherMode();
     void ReSetFftsDispatcherMode();
-    void SetCaptureStatus(bool isCapture);
+    static void SetThreadCaptureStatus(s32 threadID, bool isCapture);
+    static bool GetThreadCaptureStatus();
+    static void DeleteThreadCaptureStatus(s32 threadID);
 private:
     MsprofReporterCallback reporterCallback_;
     HcclResult isHostApiSubscribe_ = HCCL_E_NOT_SUPPORT;
@@ -260,7 +262,8 @@ private:
     static std::array<std::queue<MsprofAdditionalInfo>, MAX_MODULE_DEVICE_NUM> storageAdditionInfoFftsCapture_;
     static std::array<std::mutex, MAX_MODULE_DEVICE_NUM> reportAddInfoFftsCaptureMutex_;
     std::atomic<bool> isFftsDispatcher_{false};
-    thread_local static bool isCapture_;
+    static std::unordered_map<s32, bool> captureStatusThreadIDMap_;
+    static std::mutex captureStatusMapMutex_;
 };
 } // namespace hccl
 #endif // COMMON_PROFILING_PROFILING_MANAGER_H

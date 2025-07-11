@@ -83,6 +83,7 @@ HcclResult CollReduceScatterHccsSioExecutor::CalcLevel0CommInfo(TransportMemType
 
 HcclResult CollReduceScatterHccsSioExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollReduceScatterHccsSioExecutor][KernelRun] userRank[%u] starts.", topoAttr_.userRank);
     HcclDataType dataType = param.DataDes.dataType;
 
     CHK_RET(CheckCommSize(COMM_COMBINE_ORDER, COMM_INDEX_0 + 1));

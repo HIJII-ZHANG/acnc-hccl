@@ -11,7 +11,9 @@
 #ifndef TASK_PROFILING_PUB_H
 #define TASK_PROFILING_PUB_H
 
+#ifndef HCCD
 #include "runtime/rt.h"
+#endif
 #include <chrono>
 #include <memory>
 #include <mutex>
@@ -249,6 +251,7 @@ const std::map<HcclCMDType, std::string> PROF_OP_NAME = {{HcclCMDType::HCCL_CMD_
     {HcclCMDType::HCCL_CMD_RECEIVE, "hcom_receive_"}, {HcclCMDType::HCCL_CMD_ALLGATHER, "hcom_allGather_"},
     {HcclCMDType::HCCL_CMD_REDUCE_SCATTER, "hcom_reduceScatter_"}, {HcclCMDType::HCCL_CMD_SCATTER, "hcom_scatter_"},
     {HcclCMDType::HCCL_CMD_ALLTOALL, "hcom_alltoall_"}, {HcclCMDType::HCCL_CMD_ALLTOALLV, "hcom_alltoallv_"},
+    {HcclCMDType::HCCL_CMD_ALLGATHER_V, "hcom_allGatherv_"}, {HcclCMDType::HCCL_CMD_REDUCE_SCATTER_V, "hcom_reduceScatterv_"},
     {HcclCMDType::HCCL_CMD_ALLTOALLVC, "hcom_alltoallvc_"},
     {HcclCMDType::HCCL_CMD_BATCH_SEND_RECV, "hcom_batchSendRecv_"},
     {HcclCMDType::HCCL_CMD_BATCH_PUT, "hccl_batchPut_"}, {HcclCMDType::HCCL_CMD_BATCH_GET, "hccl_batchGet_"}};

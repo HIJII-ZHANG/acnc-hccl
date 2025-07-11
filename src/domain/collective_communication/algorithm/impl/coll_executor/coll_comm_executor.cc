@@ -140,12 +140,13 @@ HcclResult CollCommExecutor::MultiRingAllReduce(const std::string &tag, DeviceMe
             }
         }
     }
+    // 添加空task,保证执行时不乱序
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     return HCCL_SUCCESS;
 }
 
 HcclResult CollCommExecutor::UpdateOffsetBasedOnStrideCount(const OpParam &param,
-    std::vector<std::vector<Slice>> &multRingsUserMemSlice)
+    std::vector<std::vector<Slice>> &multRingsUserMemSlice) const
 {
     u32 perDataSize = 0;
     CHK_RET(SalGetDataTypeSize(param.DataDes.dataType, perDataSize));
@@ -185,6 +186,7 @@ HcclResult CollCommExecutor::MultiRingAllGather(const std::string &tag, DeviceMe
     std::vector<std::vector<u32>> multiRingsOrder =
         GetRingsOrderByTopoType(level0ZeroCommInfo.localRankSize, topoType_, nicList);
 
+    // 空拷贝用于后续操作附着
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     for (u32 ringIndex = 0; ringIndex < ringNum; ringIndex++) {
         std::vector<Slice> singleRingSliceZero = multRingsSliceZero[ringIndex];
@@ -326,6 +328,7 @@ HcclResult CollCommExecutor::MultiRingAllGather(const std::string &tag, DeviceMe
             }
         }
     }
+    // 添加空task,保证执行时不乱序
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     return HCCL_SUCCESS;
 }
@@ -352,6 +355,7 @@ HcclResult CollCommExecutor::MultiRingAllGatherConcurrent(const std::string &tag
     std::vector<std::vector<u32>> multiRingsOrder =
         GetRingsOrderForAnyPath(level0ZeroCommInfo.localRankSize, topoType_, nicList);
 
+    // 空拷贝用于后续操作附着
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     for (u32 ringIndex = 0; ringIndex < ringNum; ringIndex++) {
         std::vector<Slice> singleRingSliceZero = multRingsSliceZero[ringIndex].second; // 取出sdma/rdma的数据块
@@ -498,6 +502,7 @@ HcclResult CollCommExecutor::MultiRingAllGatherConcurrent(const std::string &tag
             }
         }
     }
+    // 添加空task,保证执行时不乱序
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     return HCCL_SUCCESS;
 }
@@ -605,6 +610,7 @@ HcclResult CollCommExecutor::CollectMultiRingsUserMemSlices(u32 ringNum, const H
     const std::vector<std::vector<Slice>> &multRingsUserMemSlice,
     std::vector<std::vector<Slice>> &userMemSlicesOfMultiRings)
 {
+    CHK_PTR_NULL(opInfo);
     CHK_PRT_RET(0 < opInfo->strideCount && opInfo->strideCount < opInfo->count,
         HCCL_ERROR("[CollCommExecutor][CollectMultiRingsUserMemSlices]strideCount[%llu] is smaller than opCount[%llu]",
         opInfo->strideCount, opInfo->count),
@@ -660,6 +666,7 @@ HcclResult CollCommExecutor::MultiRingReduceScatter(const std::string &tag, Devi
 
     u64 reduceAttr = GetReduceAttr(inputMem, outputMem, dataType, reductionOp);
 
+    // 空拷贝用于后续操作附着
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     for (u32 ringIndex = 0; ringIndex < ringNum; ringIndex++) {
         std::vector<Slice> singleRingSliceZero = multRingsSliceZero[ringIndex];
@@ -939,6 +946,7 @@ HcclResult CollCommExecutor::MultiRingReduceScatterConcurrent(const std::string 
 
     u64 reduceAttr = GetReduceAttr(inputMem, outputMem, dataType, reductionOp);
 
+    // 空拷贝用于后续操作附着
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     for (u32 ringIndex = 0; ringIndex < ringNum; ringIndex++) {
         std::vector<Slice> singleRingSliceZero = multRingsSliceZero[ringIndex].second;
@@ -1972,6 +1980,7 @@ HcclResult CollCommExecutor::MultiRingScatter(const std::string &tag, DeviceMem 
     auto nicList = topoAttr_.nicList;
     std::vector<std::vector<u32>> multiRingsOrder = GetRingsOrderByTopoType(level0CommInfo.localRankSize, topoType_, nicList);
 
+    // 空拷贝用于后续操作附着
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     for (u32 ringIndex = 0; ringIndex < ringNum; ringIndex++) {
         std::vector<Slice> singleRingSliceZero = multRingsSliceZero[ringIndex];
@@ -2172,6 +2181,199 @@ HcclResult CollCommExecutor::PrepareLevel1CommInfo(u32 &segmentIdx, u32 &commInd
         commIndex = segmentIdx;
     } else {
         return HCCL_E_PARA;
+    }
+    return HCCL_SUCCESS;
+}
+
+/* ↓↓ ====================== 用于ZerocopyExecutor ====================== ↓↓ */
+HcclResult CollCommExecutor::CalcIntraServerDataSlicesDiscontinuous(const OpParam &param, const ExecMem &execMem,
+    u32 level0RankSize, u32 level1RankSize, u32 level2RankSize, std::vector<Slice> &dataSegsSlice)
+{
+    u32 perDataSize = 0;
+    CHK_RET(SalGetDataTypeSize(param.DataDes.dataType, perDataSize));
+
+    u64 level0Count = execMem.count * level0RankSize;
+    u64 level0StrideCount = param.DataDes.strideCount * level0RankSize;
+    u64 sliceSize = perDataSize * execMem.count;
+    u64 strideSize = perDataSize * ((level0StrideCount != 0) ? level0StrideCount : level0Count);
+    dataSegsSlice.resize(topoAttr_.userRankSize);
+    for (u32 i = 0; i < level0RankSize; i++) {
+        for (u32 j = 0; j < level1RankSize * level2RankSize; j++) {
+            u32 index = i * level1RankSize * level2RankSize + j;
+            dataSegsSlice[index].size = sliceSize;
+            dataSegsSlice[index].offset = j * strideSize + i * sliceSize;
+        }
+    }
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollCommExecutor::CalcIntraServerDataSlicesContinuous(const OpParam &param, const ExecMem &execMem,
+    u32 level0RankSize, u32 level1RankSize, u32 level2RankSize, std::vector<Slice> &dataSegsSlice)
+{
+    u32 perDataSize = 0;
+    CHK_RET(SalGetDataTypeSize(param.DataDes.dataType, perDataSize));
+
+    u64 level0Count = execMem.count * level1RankSize * level2RankSize;
+    u64 level0StrideCount = param.DataDes.strideCount * level1RankSize * level1RankSize;
+    u64 sliceSize = perDataSize * level0Count;
+    u64 strideSize = perDataSize * ((level0StrideCount != 0) ? level0StrideCount : level0Count);
+    dataSegsSlice.resize(level0RankSize);
+    for (u32 i = 0; i < level0RankSize; i++) {
+        dataSegsSlice[i].size = sliceSize;
+        dataSegsSlice[i].offset = (i * strideSize);
+    }
+    return HCCL_SUCCESS;
+}
+
+void CollCommExecutor::CalcLevel1DataSlices(u64 sliceSize, u32 level1RankSize, u32 level2RankSize,
+    std::vector<Slice> &level1DataSegsSlice)
+{
+    level1DataSegsSlice.resize(level1RankSize);
+    u64 level1SliceSize = sliceSize * level2RankSize;
+    for (u32 i = 0; i < level1RankSize; i++) {
+        level1DataSegsSlice[i].size = level1SliceSize;
+        level1DataSegsSlice[i].offset = i * level1SliceSize;
+    }
+}
+
+HcclResult CollCommExecutor::GetCommRankInfoNormal(u32 &level0Rank, u32 &level0RankSize,
+    u32 &level1Rank, u32 &level1RankSize, u32 &level2Rank, u32 &level2RankSize, bool isAHCAlgo)
+{
+    // 获取通信域信息
+    // ==> Level0
+    CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    level0Rank = level0CommInfo.localRank;
+    level0RankSize = level0CommInfo.localRankSize;
+    // ==> Level1
+    CommPlane commPlaneLevel1 = isAHCAlgo ? COMM_LEVEL1_AHC : COMM_LEVEL1;
+    CHK_RET(CheckCommSize(commPlaneLevel1, level0Rank + 1));
+    SubCommInfo level1CommInfo = GetSubCommInfo(commPlaneLevel1, level0Rank);
+    level1Rank = level1CommInfo.localRank;
+    level1RankSize = level1CommInfo.localRankSize;
+    // ==> Level2
+    if (isAHCAlgo) {        // bypass level2
+        level2Rank = 0;
+        level2RankSize = 1;
+    } else {
+        CHK_RET(CheckCommSize(COMM_LEVEL2, COMM_INDEX_0 + 1));
+        SubCommInfo level2CommInfo = GetSubCommInfo(COMM_LEVEL2, COMM_INDEX_0);
+        level2Rank = level2CommInfo.localRank;
+        level2RankSize = level2CommInfo.localRankSize;
+    }
+    return HCCL_SUCCESS;
+}
+/* ↑↑ ====================== 用于ZerocopyExecutor ======================= ↑↑ */
+
+/* ↓↓ ====================== 用于ExchangeExecutor ====================== ↓↓ */
+HcclResult CollCommExecutor::CalExchangeRemoteRankForReduceScatter(u32 &remoteRankSend, u32 &remoteRankRecv)
+{
+    u32 userRank = topoAttr_.userRank;
+    u32 userRankSize = topoAttr_.userRankSize;
+    u32 l2Size = topoAttr_.superPodNum;
+    CHK_PRT_RET(l2Size == 0,
+            HCCL_ERROR("[CollReduceScatterRingZerocopyExchangeExecutor][CalExchangeRemoteRank] invalid rank size, level2RankSize is 0"),
+            HCCL_E_PARA);
+    u32 l1Size = topoAttr_.serverNum / l2Size;
+    CHK_PRT_RET(l1Size == 0,
+            HCCL_ERROR("[CollReduceScatterRingZerocopyExchangeExecutor][CalExchangeRemoteRank] invalid rank size, level1RankSize is 0"),
+            HCCL_E_PARA);
+    u32 l0Size = userRankSize / l1Size / l2Size;
+    u32 l0Index = userRank % l0Size;
+    u32 l1ServerIndex = userRank % (l0Size * l1Size) / l0Size;
+    u32 l2ServerIndex = userRank / l0Size / l1Size;
+
+    // 计算本端将要发送数据的目标rank
+    remoteRankSend = l0Index * l2Size * l1Size + l1ServerIndex * l2Size + l2ServerIndex;
+
+    // 计算本端将要接收数据的目标rank
+    u32 r0 = userRank / (l1Size * l2Size);
+    u32 r1 = userRank % (l1Size * l2Size) / l2Size;
+    u32 r2 = userRank % (l1Size * l2Size) % l2Size;
+    remoteRankRecv = r2 * l1Size * l0Size + r1 * l0Size + r0;
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollCommExecutor::GetTransportForExchange(u32 remoteUserRank, LINK &targetLink)
+{
+    CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    u32 level0RankSize = level0CommInfo.localRankSize;
+    CommPlane commPlane = IsLevel0Neighbor(remoteUserRank, level0RankSize) ? COMM_LEVEL0 : COMM_COMBINE_ORDER;
+
+    CHK_PRT_RET(COMM_INDEX_0 >= algResResp_->opTransportResponse[commPlane].size(),
+        HCCL_ERROR("[%s] commIndex[%u] is larger than opTransportResponse size[%zu]",
+            __func__, COMM_INDEX_0, algResResp_->opTransportResponse[commPlane].size()), HCCL_E_PARA);
+    SingleSubCommTransport &commCombined = algResResp_->opTransportResponse[commPlane][COMM_INDEX_0];
+
+    CHK_PRT_RET(commCombined.userRank2subCommRank.count(remoteUserRank) == 0,
+        HCCL_ERROR("[%s] remoteUserRank[%u] not found in userRank2subCommRank map.",
+            __func__, remoteUserRank), HCCL_E_PARA);
+
+    u32 remoteRank = commCombined.userRank2subCommRank[remoteUserRank];
+    CHK_PRT_RET(remoteRank >= commCombined.links.size(),
+        HCCL_ERROR("[%s] remoteUserRank[%u], get remoteRank[%u], the size of combinedComm links is [%zu]",
+            __func__, remoteUserRank, remoteRank, commCombined.links.size()), HCCL_E_PARA);
+    targetLink = commCombined.links[remoteRank];
+    CHK_PTR_NULL(targetLink);
+
+    return HCCL_SUCCESS;
+}
+
+bool CollCommExecutor::IsLevel0Neighbor(u32 remoteRank, u32 level0RankSize)
+{
+    CHK_PRT_RET(level0RankSize == 0,
+        HCCL_ERROR("[%s] invalid rank size, Level0RankSize is 0", __func__), HCCL_E_PARA);
+    bool isSameServer = remoteRank / level0RankSize == topoAttr_.userRank / level0RankSize;
+    bool isLeftNeighbor = (topoAttr_.userRank + 1) % level0RankSize == remoteRank % level0RankSize;
+    bool isRightNeighbor = (topoAttr_.userRank + level0RankSize - 1) % level0RankSize == remoteRank % level0RankSize;
+    return isSameServer && (isLeftNeighbor || isRightNeighbor);
+}
+/* ↑↑ ====================== 用于ExchangeExecutor ======================= ↑↑ */
+
+HcclResult CollCommExecutor::GetAdjInfo(AlgResourceResponse& algRes, AdjInfo& adjInfo)
+{
+    HCCL_INFO("[nslbdp] Entry GetAdjInfo.");
+    algResResp_ = &algRes;
+    SubCommInfo level1CommInfo = {0};
+    AdjInfo nslbAdjInfo = {0};
+    if (Getlevel1CommRank(level1CommInfo) != HCCL_SUCCESS) {
+        HCCL_INFO("[nslbdp-GetAdjInfo] Getlevel1CommRank is NULL.");
+        return HCCL_SUCCESS;
+    }
+    u32 localRank= level1CommInfo.localRank;
+    u32 localRankSize = level1CommInfo.localRankSize;
+    HCCL_INFO("[nslbdp-GetAdjInfo] level1CommInfo.localRank = [%u] localRankSize = [%u].",localRank, localRankSize);
+
+    if(localRankSize == 1) {
+        return HCCL_SUCCESS;
+    }
+
+    if(level1CommInfo.links.size() < localRankSize) {
+        return HCCL_SUCCESS;
+    }
+
+    std::unique_ptr<AlgTemplateBase> nslbdp_levelTempAlg;
+    if (SelectTempAlg(nslbdp_levelTempAlg, localRankSize) != HCCL_SUCCESS) {
+        HCCL_INFO("[nslbdp-GetAdjInfo] SelectTempAlg falied.");
+        return HCCL_SUCCESS;
+    }
+    if(nslbdp_levelTempAlg == nullptr) {
+        return HCCL_SUCCESS;
+    }
+    CHK_RET(nslbdp_levelTempAlg->GetNslbAdjInfo(localRank, localRankSize, level1CommInfo.links, nslbAdjInfo));
+
+    adjInfo.dstRankNum = nslbAdjInfo.dstRankNum;
+    HCCL_INFO("[nslbdp-GetAdjInfo] adjInfo.dstRankNum[%u].", adjInfo.dstRankNum);
+    
+    for (size_t i = 0; i < nslbAdjInfo.nsAdjInfo.size(); i++) {
+        NslbDpAdjInfo dpAdjInfo = {0};
+        dpAdjInfo.dstLocalRankId = nslbAdjInfo.nsAdjInfo[i].dstLocalRankId;
+        dpAdjInfo.phaseId = nslbAdjInfo.nsAdjInfo[i].phaseId;
+        dpAdjInfo.rev = 0;
+        adjInfo.nsAdjInfo.push_back(dpAdjInfo); 
+        HCCL_INFO("[nslbdp]GetAdjInfo dstLocalRankId[%u], phaseId[%u].",
+                   nslbAdjInfo.nsAdjInfo[i].dstLocalRankId, nslbAdjInfo.nsAdjInfo[i].phaseId);
     }
     return HCCL_SUCCESS;
 }

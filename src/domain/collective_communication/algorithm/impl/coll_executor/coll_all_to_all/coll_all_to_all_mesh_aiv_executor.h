@@ -21,6 +21,8 @@ public:
     ~CollAlltoAllMeshAivExecutor() = default;
 
     HcclResult Orchestrate(OpParam& param, AlgResourceResponse& algRes) override;
+    HcclResult GetAivExecParam(const OpParam& param, AlgResourceResponse& algRes, AivSuperKernelArgs &args) override;
+    HcclResult GetAdjInfo(AlgResourceResponse& algRes, AdjInfo& adjInfo) override;
 private:
     /* *************** 资源计算 *************** */
     HcclResult CalcStreamNum(u32& streamNum) override;

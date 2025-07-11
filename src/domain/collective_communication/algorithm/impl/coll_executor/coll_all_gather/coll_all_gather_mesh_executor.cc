@@ -56,7 +56,8 @@ HcclResult CollAllGatherMeshExecutor::CalcLevel0CommInfo(TransportMemType inputT
 {
     CommParaInfo commParaLevel0(COMM_LEVEL0, CommType::COMM_TAG_MESH);
     commParaLevel0.meshSinglePlane = (topoAttr_.deviceType == DevType::DEV_TYPE_910B) &&
-        !topoMatcher_->GetExternalInputHcclDeterministic() && (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
+        topoMatcher_->GetExternalInputHcclDeterministic() == DETERMINISTIC_DISABLE &&
+        (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
     CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel0, opTransport[COMM_LEVEL0], inputType, outputType));
     return HCCL_SUCCESS;
 }
@@ -70,6 +71,7 @@ u64 CollAllGatherMeshExecutor::CalcLoopMaxCount(const u64 cclBuffSize, const u32
 
 HcclResult CollAllGatherMeshExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollAllGatherMeshExecutor][KernelRun]allgather mesh start");
     u32 perDataSize = SIZE_TABLE[param.DataDes.dataType];
 
     // 获取子通信域信息
@@ -166,10 +168,55 @@ HcclResult CollAllGatherMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
         PROF_STAGE_2, HCCL_EXEC_STEP_NOT_SET, param.stream));
 
     CHK_RET(RunTemplate(level1TempAlg, level1CommInfo));
-
     HCCL_INFO("all gather mesh HD level1 run success");
     return HCCL_SUCCESS;
 }
+HcclResult CollAllGatherMeshExecutor::Getlevel1CommRank(SubCommInfo& level1CommInfo)
+{
+    if (CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1) != HCCL_SUCCESS) {
+        return HCCL_E_UNAVAIL;
+    }
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    u32 ringNum = (topoType_ == TopoType::TOPO_TYPE_8P_RING) ? LEVEL0_PLANE_NUM_IN_8PRING :
+        LEVEL0_PLANE_NUM_IN_NPRING_SINGLE;
+    u32 commIndex = (ringNum == LEVEL0_PLANE_NUM_IN_8PRING) ? topoAttr_.devicePhyId : level0CommInfo.localRank;
 
+    if (CheckCommSize(COMM_LEVEL1, commIndex + 1) != HCCL_SUCCESS) {
+        return HCCL_E_UNAVAIL;
+    }
+    level1CommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
+
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollAllGatherMeshExecutor::SelectTempAlg(std::unique_ptr<AlgTemplateBase> &level1TempAlg, u32 level1RankSize)
+{
+    if (level1RankSize > 1) {
+        if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING || (topoAttr_.isDiffDeviceModule && topoAttr_.serverNum == 1)) {
+            // 1-单server-SDMA
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_ALL_GATHER_RING, dispatcher_);
+            HCCL_INFO("allgather mesh: using ring algo inter-server.");
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_ALL_GATHER_NHR, dispatcher_);
+            HCCL_INFO("allgather mesh: using nhr algo inter-server.");
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_ALL_GATHER_NHRV1, dispatcher_);
+            HCCL_INFO("allgather mesh: using nhr_v1 algo inter-server.");
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_ALL_GATHER_NB, dispatcher_);
+            HCCL_INFO("allgather mesh: using nonuniform-bruck algo inter-server.");
+        } else {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                    TemplateType::TEMPLATE_ALL_GATHER_RECURSIVE_HALVING_DOUBLING, dispatcher_);
+            HCCL_INFO("allgather mesh: using halving-doubling algo inter-server.");
+        }
+        return HCCL_SUCCESS;
+    }
+    return HCCL_E_UNAVAIL;
+}
 REGISTER_EXEC("AllGatherMeshExecutor", AllGatherMesh, CollAllGatherMeshExecutor);
 } // namespace hccl

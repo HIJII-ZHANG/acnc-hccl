@@ -230,10 +230,20 @@ public:
     HcclResult CreateIndirectCCLbuf();
     void ReleaseIndirectCCLbuf();
 
+    #if (!defined(HCCD)) && (!defined(CCL_KERNEL_AICPU))
     HcclResult GetOneSidedService(IHcclOneSidedService** service);
     HcclResult InitOneSidedServiceNetDevCtx(u32 remoteRankId);
+    #endif
     HcclResult GetIndirectInCCLbuf(void* &ptr, u64 &size);
     HcclResult GetIndirectOutCCLbuf(void* &ptr, u64 &size);
+    HcclResult HcclSelectAlg(HcclCMDType opType, u64 count, HcclDataType dataType,
+        HcclReduceOp op, bool &ifAiv, std::string &algName, bool isSuperKernel = false);
+    HcclResult HcclCalcBlockDim(HcclCMDType opType, u64 count, HcclDataType dataType,
+        std::string &algName, u32 &blockDim);
+    HcclResult HcclGetAlgExecParam(const std::string &tag, u64 count, void *inputPtr, void *outputPtr,
+        HcclCMDType opType, bool clearEnable, HcclDataType dataType, HcclReduceOp op, 
+        void *&commContext, u64 &len, u32 aivCoreLimit);
+    
     HcclResult GetWorkspaceSubStreamNum(u64 &streamNum, u64 dataSize = 0,
         HcclCMDType optype = HcclCMDType::HCCL_CMD_INVALID) const;
     HcclResult GetWorkspaceMemSize(const std::string &opType, u64 count, HcclDataType dataType,
@@ -284,8 +294,7 @@ public:
     HcclResult ResetDeviceEnable();
     HcclResult CommCheckErrorCqe(HcclResult &result);
     HcclResult SaveTraceInfo(std::string &logInfo);
-    HcclResult AllocComResourceByTiling(const std::string &algConfig, const std::string &tag, 
-        uint32_t opType, uint32_t reduceType, rtStream_t stream);
+    HcclResult AllocComResourceByTiling(const std::string &algConfig, void *param);
     HcclResult CreateCommResource(const std::string &tag, rtStream_t aiCpuStream, bool isOpbaseMode,
         void **commContext);
     bool GetCommResource(const std::string &tag, void **commContext);
@@ -323,6 +332,8 @@ public:
     HcclResult ActivateCommMemory(void *virPtr, size_t size, size_t offset, void* handle, uint64_t flags);
     HcclResult DeactivateCommMemory(void *virPtr);
     HcclResult GetBlockDim(u32& blockDim);
+    HcclResult SwitchNic(uint32_t nRanks, uint32_t *ranks, bool *useBackup);
+    HcclResult InitHccp();
 
 protected:
     /* * 禁止用户对API类的实体做拷贝构造或拷贝赋值的操作，内部有指针成员变量 */

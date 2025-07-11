@@ -14,6 +14,8 @@
 #include <algorithm>
 #include "rank_consistentcy_checker.h"
 #include "env_config.h"
+#include "detect_connect_anomalies.h"
+#include "../../nslbdp/hccl_nslbdp.h"
 
 namespace hccl {
 
@@ -154,7 +156,7 @@ HcclResult TransportManager::GetRemoteRankList(OpCommTransport &opTransportRespo
 }
 
 HcclResult TransportManager::createSubCommLinkThreads(const std::string &tag, const TransportIOMem &transMem,
-    struct SubCommLinkPara &subCommLinkPara, bool isAicpuModeEn, bool isBackup, u32 subCommIndex)
+    struct SubCommLinkPara &subCommLinkPara, bool isAicpuModeEn, bool isBackup, u32 subCommIndex, bool isCapture)
 {
     u32 num = subCommLinkPara.remoteRankIdNum;
     struct SingleSubCommTransport &singleSubCommTransport = subCommLinkPara.singleSubCommTransport;
@@ -202,7 +204,7 @@ HcclResult TransportManager::createSubCommLinkThreads(const std::string &tag, co
                 singleSubCommTransport.enableUseOneDoorbell, threadStr,
                 connectSockets, inputMem, outputMem, transportRequest.isUsedRdma, 
                 std::ref(link), isAicpuModeEn,
-                transportRequest.notifyNum, chooseBackup, expMem, transportRequest.linkType));
+                transportRequest.notifyNum, chooseBackup, isCapture, expMem, transportRequest.linkType));
         CHK_SMART_PTR_NULL(subCommLinkPara.linkThreads[i]); // 异常时其他线程待处理
         singleSubCommTransport.status[index] = TransportStatus::READY; // 建链后 transport设置为ready状态
     }
@@ -248,8 +250,8 @@ HcclResult TransportManager::checkSubCommLinkThreadsStatus(const std::string &ta
         }
 
         if (link == nullptr) {
-            HCCL_ERROR("[Create]errNo[0x%016llx] transport create fail in thread, local rank[%d] remote rank[%d]",
-                HCCL_ERROR_CODE(HCCL_E_NOT_FOUND), userRank_, transportRequest.remoteUserRank);
+            HCCL_ERROR("[Create]errNo[0x%016llx] transport create fail in thread, local rank[%d] remote rank[%d], inputMemType[%d], outputMemType[%d]",
+                HCCL_ERROR_CODE(HCCL_E_NOT_FOUND), userRank_, transportRequest.remoteUserRank, transportRequest.inputMemType, transportRequest.outputMemType);
             SaluSleep(EXCEPTION_DELAY_US_COUNT);
             (void)notifyPool_->UnregisterOp(tag);
             return HCCL_E_NOT_FOUND;
@@ -260,7 +262,7 @@ HcclResult TransportManager::checkSubCommLinkThreadsStatus(const std::string &ta
 }
 
 HcclResult TransportManager::AllocSubCommLinks(const std::string &tag, const TransportIOMem &transMem,
-    struct SingleSubCommTransport &singleSubCommTransport, bool isAicpuModeEn, bool isBackup, u32 subCommIndex)
+    struct SingleSubCommTransport &singleSubCommTransport, bool isAicpuModeEn, bool isBackup, u32 subCommIndex, bool isCapture)
 {
     const u32 offset = 8;
     std::vector<std::pair<u32, u32>> remoteRankMap;
@@ -311,8 +313,8 @@ HcclResult TransportManager::AllocSubCommLinks(const std::string &tag, const Tra
             prevSubCommLinkPara.remoteRankIdNum = (rankNum % (FACTOR_NUM_TWO * offset)) / FACTOR_NUM_TWO;
         }
 
-        CHK_RET(createSubCommLinkThreads(tag, transMem, nextSubCommLinkPara, isAicpuModeEn, isBackup, subCommIndex));
-        CHK_RET(createSubCommLinkThreads(tag, transMem, prevSubCommLinkPara, isAicpuModeEn, isBackup, subCommIndex));
+        CHK_RET(createSubCommLinkThreads(tag, transMem, nextSubCommLinkPara, isAicpuModeEn, isBackup, subCommIndex, isCapture));
+        CHK_RET(createSubCommLinkThreads(tag, transMem, prevSubCommLinkPara, isAicpuModeEn, isBackup, subCommIndex, isCapture));
         CHK_RET(waitSubCommLinkThreadsComplete(nextSubCommLinkPara));
         CHK_RET(waitSubCommLinkThreadsComplete(prevSubCommLinkPara));
         CHK_RET(checkSubCommLinkThreadsStatus(tag, nextSubCommLinkPara, isBackup));
@@ -330,7 +332,7 @@ HcclResult TransportManager::AllocSubCommLinks(const std::string &tag, const Tra
 }
 
 HcclResult TransportManager::Alloc(const std::string &tag, const TransportIOMem &transMem,
-    OpCommTransport &opTransportResponse, bool isAicpuModeEn, bool isBackup, bool isZeroCopy, const HcclCMDType &opType)
+    OpCommTransport &opTransportResponse, bool isAicpuModeEn, bool isBackup, bool isZeroCopy, const HcclCMDType &opType, bool isCapture)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     CHK_RET(notifyPool_->RegisterOp(tag));
@@ -354,7 +356,7 @@ HcclResult TransportManager::Alloc(const std::string &tag, const TransportIOMem 
                         }
                     }
                 }
-                CHK_RET(AllocSubCommLinks(tag, transMem, singleSubCommTransport, isAicpuModeEn, isBackup, subCommIndex));
+                CHK_RET(AllocSubCommLinks(tag, transMem, singleSubCommTransport, isAicpuModeEn, isBackup, subCommIndex, isCapture));
                 continue;
             }
 
@@ -417,7 +419,7 @@ HcclResult TransportManager::Alloc(const std::string &tag, const TransportIOMem 
                             singleSubCommTransport.enableUseOneDoorbell, threadStr, connectSockets,
                             inputMem, outputMem, transportRequest.isUsedRdma,
                             std::ref(singleSubCommTransport.links[linkIdx]), isAicpuModeEn,
-                            transportRequest.notifyNum, chooseBackup, expMem, transportRequest.linkType));
+                            transportRequest.notifyNum, chooseBackup, isCapture, expMem, transportRequest.linkType));
                         CHK_SMART_PTR_NULL(linkThreads[threadsRapplyNum]); // 异常时其他线程待处理
                     singleSubCommTransport.status[linkIdx] = TransportStatus::READY; // 建链后 transport设置为ready状态
                     threadsRapplyNum++;
@@ -464,7 +466,6 @@ HcclResult TransportManager::Alloc(const std::string &tag, const TransportIOMem 
         }
     }
     CHK_RET(notifyPool_->UnregisterOp(tag));
-
     return HCCL_SUCCESS;
 }
 
@@ -484,7 +485,8 @@ HcclResult TransportManager::GetIncreRemoteRankList(OpCommTransport &opTransport
 }
 
 HcclResult TransportManager::IncreAlloc(const std::string &tag, const TransportIOMem &transMem,
-    OpCommTransport &opTransportReq, OpCommTransport &opTransportResponse, bool isAicpuModeEn, bool isBackup)
+    OpCommTransport &opTransportReq, OpCommTransport &opTransportResponse, bool isAicpuModeEn,
+    bool isBackup, bool isCapture)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     CHK_RET(notifyPool_->RegisterOp(tag));
@@ -543,7 +545,7 @@ HcclResult TransportManager::IncreAlloc(const std::string &tag, const TransportI
                             reqSingleSubComm.supportDataReceivedAck, reqSingleSubComm.linkMode,
                             reqSingleSubComm.enableUseOneDoorbell, threadStr, connectSockets, inputMem, outputMem,
                             transportRequest.isUsedRdma, std::ref(respSingleSubComm.links[rankIndex]), isAicpuModeEn,
-                            transportRequest.notifyNum, chooseBackup, expMem, transportRequest.linkType));
+                            transportRequest.notifyNum, chooseBackup, isCapture, expMem, transportRequest.linkType));
                         CHK_SMART_PTR_NULL(linkThreads[threadsRapplyNum]); // 异常时其他线程待处理
                     respSingleSubComm.status[rankIndex] = TransportStatus::READY; // 建链后 transport设置为ready状态
                     threadsRapplyNum++;
@@ -659,6 +661,7 @@ u32 TransportManager::GetHostPort(s32 devicePhyId)
 
 u32 TransportManager::GetRemoteNicPort(s32 devicePhyId, u32 dstUserRank, bool isInterRdma)
 {
+#ifndef CCL_KERNEL_AICPU
     if (nicDeployment_ == NICDeployment::NIC_DEPLOYMENT_HOST) {
         return GetHostPort(devicePhyId);
     }
@@ -667,6 +670,9 @@ u32 TransportManager::GetRemoteNicPort(s32 devicePhyId, u32 dstUserRank, bool is
     bool useVnicPort = devPortSwitchOn_ && !isInterRdma && !Is310PDevice();
     const std::vector<u32> &ranksPorts = useVnicPort ? vnicRanksPort_ : nicRanksPort_;
     return GetNicPort(devicePhyId, ranksPorts, dstUserRank, isUseRankPort_);
+#else
+    return 0;
+#endif
 }
 
 HcclResult TransportManager::CreateDestSockets(const std::string &tag, RankId remoteRank, u64 taskNum,
@@ -731,9 +737,17 @@ HcclResult TransportManager::CreateDestSockets(const std::string &tag, RankId re
             std::vector<u32> WaitP2PEnabledDevices;
             WaitP2PEnabledDevices.push_back(rankInfoList_[remoteRank].devicePhyId);
             HcclResult ret = P2PMgmtPub::WaitP2PEnabled(WaitP2PEnabledDevices, [this]() -> bool { return this->GetStopFlag(); });
-            CHK_PRT_RET(ret != HCCL_SUCCESS,
-                HCCL_ERROR("[Create][DestSockets]Wait Enable P2P Failed, src devicePhyId[%d], dst devicePhyId[%d], ret[%u]",
-                rankInfoList_[userRank_].devicePhyId, rankInfoList_[remoteRank].devicePhyId, ret), ret);
+            if (ret != HCCL_SUCCESS) {
+                if (ret == HCCL_E_DRV) {
+                    RankInfo loaclRankInfo = rankInfoList_[userRank_];
+                    RankInfo remoteRankInfo  = rankInfoList_[remoteRank];
+                    NicType nicType  = NicType::VNIC_TYPE;
+                    DetectConnectionAnomalies::GetInstance(deviceLogicId_).AddIpQueue(loaclRankInfo, remoteRankInfo, nicType);
+                }
+                CHK_PRT_RET(true,
+                    HCCL_ERROR("[Create][DestSockets]Wait Enable P2P Failed, src devicePhyId[%d], dst devicePhyId[%d], ret[%u]",
+                    rankInfoList_[userRank_].devicePhyId, rankInfoList_[remoteRank].devicePhyId, ret), ret);
+            }
         }
         ret = socketManager_->CreateSingleLinkSocket(newTag, netDevCtxMap_[localVnicIp_],
             remoteLinkInfo, connectSockets, false, true);
@@ -770,7 +784,7 @@ HcclResult TransportManager::CreateLink(const std::string &tag, const ErrContext
     const std::vector<std::shared_ptr<HcclSocket> > sockets,
     const DeviceMem inputMem, const DeviceMem outputMem, bool isUsedRdma,
     std::shared_ptr<Transport> &link, bool isAicpuModeEn,
-    u32 notifyNum, bool isBackup, const DeviceMem expMem, TransportLinkType linkType)
+    u32 notifyNum, bool isBackup, bool isCapture, const DeviceMem expMem, TransportLinkType linkType)
 {
     hrtErrMSetErrorContextPub(error_context);
     // 给当前线程添加名字
@@ -781,9 +795,11 @@ HcclResult TransportManager::CreateLink(const std::string &tag, const ErrContext
     SetWorkflowMode(workflowMode_); // 更新本线程的workflow
 
     MachinePara machinePara;
+    RankInfo loaclRankInfo = rankInfoList_[userRank_];
+    RankInfo remoteRankInfo  = rankInfoList_[remoteRank];
     CHK_RET(SetMachinePara(tag, machineType, serverId, remoteRank, supportDataReceivedAck, linkMode, sockets,
-        inputMem, outputMem, expMem, isAicpuModeEn, isBackup, notifyNum, trafficClass_, serviceLevel_, machinePara,
-        linkType));
+        inputMem, outputMem, expMem, isAicpuModeEn, isBackup, isCapture, notifyNum, trafficClass_, serviceLevel_, machinePara,
+        loaclRankInfo, remoteRankInfo, linkType));
     HCCL_DEBUG("inputMem[%p],outputMem[%p], inputMem size[%llu], outputMem size[%llu]", inputMem.ptr(), outputMem.ptr(),
         inputMem.size(), outputMem.size());
     HCCL_INFO("[createLink para]tag[%s], rank[%u]-localUserrank[%u]-localIpAddr[%s], linkMode[%d] "
@@ -804,6 +820,10 @@ HcclResult TransportManager::CreateLink(const std::string &tag, const ErrContext
             RPT_INPUT_ERR(true, "EI0009", std::vector<std::string>({"reason"}), std::vector<std::string>({err_str}));
             HCCL_ERROR("%s", err_str.c_str());
         }
+
+        NicType nicType = sockets[0]->GetSocketType();
+        DetectConnectionAnomalies::GetInstance(deviceLogicId_).AddIpQueue(loaclRankInfo, remoteRankInfo, nicType);
+  
         const std::string  CREATE_LINK_ERR = "[Create][DestLink]Create Dest error! createLink para:rank[" +
             std::to_string(userRank_) + "]-localUserrank[" + std::to_string(rankInfoList_[userRank_].worldRank) +
             "]-localIpAddr[" + rankInfoList_[userRank_].serverId.c_str() + "], dst_rank[" +
@@ -834,10 +854,15 @@ HcclResult TransportManager::SetMachinePara(const std::string &tag, MachineType 
     const bool supportDataReceivedAck, const LinkMode linkMode,
     const std::vector<std::shared_ptr<HcclSocket> > &socketList,
     const DeviceMem &inputMem, const DeviceMem &outputMem, const DeviceMem &expMem, bool isAicpuModeEn, 
-    bool isBackup, u32 notifyNum, u32 trafficClass, u32 serviceLevel, MachinePara &machinePara,
-    TransportLinkType linkType)
+    bool isBackup, bool isCapture, u32 notifyNum, u32 trafficClass, u32 serviceLevel, MachinePara &machinePara,
+    RankInfo &loaclRank, RankInfo &remoteRank, TransportLinkType linkType)
 {
     machinePara.notifyNum = notifyNum;
+
+    std::shared_ptr<hccl::hcclNslbDp> pNslbDp;
+    u32 udpSport = hcclNslbDp::GetInstance().Getl4SPortId();
+    HCCL_INFO("NslbDp-SetMachinePara  udpSport[%u]", udpSport);
+
     machinePara.linkMode = linkMode;
     machinePara.machineType = machineType;
     machinePara.serverId = serverId;
@@ -888,7 +913,7 @@ HcclResult TransportManager::SetMachinePara(const std::string &tag, MachineType 
         std::map<u32, u32> dstRankToUserRank;
         dstRankToUserRank[dstRank] = dstRank;
         CHK_RET(socketManager_->WaitLinksEstablishCompleted(socketList[0]->GetLocalRole(),
-            socketsMap, dstRankToUserRank));
+            socketsMap, dstRankToUserRank, loaclRank, remoteRank));
         machinePara.sockets = socketList;
     }
     machinePara.exchangeInfo.resize(rankConsistentDataLength_);
@@ -910,7 +935,7 @@ HcclResult TransportManager::SetMachinePara(const std::string &tag, MachineType 
         HCCL_DEBUG("[%s]isBackup[%d], machinePara.deviceLogicId[%d].", __func__, isBackup, machinePara.deviceLogicId);
     }
     
-    machinePara.srcPorts = std::vector<u32>(1, 0); /* 默认填充一个元素，0代表默认不配置 */
+    machinePara.srcPorts = std::vector<u32>(1, udpSport); /* 默认填充一个元素，0代表默认不配置 */
     machinePara.isAicpuModeEn = isAicpuModeEn;
     if (linkType == TransportLinkType::RESERVED) {
         // 非910_93 2die sio与hccs并发场景，specifyLink设置为RESERVED_LINK_TYPE，平台层将按实际链路类型建链
@@ -922,6 +947,11 @@ HcclResult TransportManager::SetMachinePara(const std::string &tag, MachineType 
         machinePara.specifyLink =
             (linkType == TransportLinkType::SIO) ? LinkTypeInServer::SIO_TYPE : LinkTypeInServer::HCCS_SW_TYPE;
     }
+
+    if (isCapture) {
+        machinePara.qpMode = QPMode::OFFLOAD;
+    }
+
     return HCCL_SUCCESS;
 }
 

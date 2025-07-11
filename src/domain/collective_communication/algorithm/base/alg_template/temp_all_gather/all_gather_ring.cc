@@ -139,7 +139,6 @@ HcclResult AllGatherRing::RunAsync(const u32 rank, const u32 rankSize, const std
         // 执行barrier，保证数据收发完成
         CHK_RET(ExecuteBarrier(linkLeft_, linkRight_));
     }
-
     HCCL_INFO("AllGatherRing finished: rank[%u] end", rank);
     return HCCL_SUCCESS;
 }
@@ -356,6 +355,22 @@ HcclResult AllGatherRing::AllGatherSlicesPrep(u32 rankSize, u32 nicSize)
         }
         rankSliceLists_.push_back(sliceList);
     }
+    return HCCL_SUCCESS;
+}
+
+HcclResult AllGatherRing::GetNslbAdjInfo(const u32 rank, const u32 rankSize,
+                                         const std::vector<LINK> &links, AdjInfo& nslbAdjInfo)
+{
+    u32 ringNextRank = (rank + 1) % rankSize;
+    LINK nslbNext = links[ringNextRank];
+
+    NslbDpAdjInfo adjInfoStep = {0};
+    nslbAdjInfo.dstRankNum = 1;
+    adjInfoStep.dstLocalRankId = nslbNext->GetRemoteRank();
+    adjInfoStep.phaseId = 1;
+    adjInfoStep.rev = 0;
+    nslbAdjInfo.nsAdjInfo.push_back(adjInfoStep);
+
     return HCCL_SUCCESS;
 }
 REGISTER_TEMPLATE(TemplateType::TEMPLATE_ALL_GATHER_RING, AllGatherRing);

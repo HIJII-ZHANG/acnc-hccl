@@ -71,6 +71,7 @@ HcclResult CollReduceRingPlusHdExecutor::CalcLevel0CommInfo(TransportMemType inp
 
 HcclResult CollReduceRingPlusHdExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollReduceRingPlusHdExecutor][KernelRun] userRank[%u] starts.", topoAttr_.userRank);
     u32 perDataSize = SIZE_TABLE[param.DataDes.dataType];
 
     std::vector<Slice> dataSegsSlice; // 数据分成ranksize份，每份的起始偏移和大小

@@ -113,7 +113,17 @@ static std::string g_kernelNameList[] = {
  "aiv_all_to_all_91093_single_graph.h",
  "aiv_all_to_all_vc_91093_single_graph.h",
  "aiv_all_reduce_91093_smalldata.h",
- "aiv_all_reduce_91093_bigdata_graph.h"
+ "aiv_all_reduce_91093_bigdata_graph.h",
+ "aiv_all_reduce_deter_910b_smalldata.h",
+ "aiv_all_reduce_deter_910b_middata.h",
+ "aiv_all_reduce_deter_910b_bigdata.h",
+ "aiv_all_reduce_deter_910b_bigdata_pre",
+ "aiv_all_reduce_deter_910b_bigdata_post",
+ "aiv_reduce_scatter_deter_910b_smalldata.h",
+ "aiv_reduce_scatter_deter_910b_middata.h",
+ "aiv_reduce_scatter_deter_910b_bigdata.h",
+ "aiv_reduce_scatter_deter_910b_bigdata_pre",
+ "aiv_reduce_scatter_deter_910b_bigdata_post"
 };
 
 std::string GetTaskName(TaskType taskType, bool isAlgInfo = false);
@@ -128,8 +138,22 @@ constexpr u32 TASK_COUNT_UPPER_LIMIT_OP_BASE = 65535; // 单算子模式task数�
 constexpr u32 TASK_CONTEXT_SIZE = 50; // task 执行失败时打印前序task的数量
 constexpr u32 TASK_CONTEXT_INFO_SIZE = LOG_TMPBUF_SIZE - 50; // task 执行失败时打印前序task信息的长度限制
 constexpr u32 PRINT_TASK_AIV_INFO_COUNT = 10;
-constexpr u32 TASK_AIV_KERNEL_NUM = 54;
+constexpr u32 TASK_AIV_KERNEL_NUM = 64; //g_kernelNameList数组长度
 constexpr u32 AIV_KERNEL_FLAG_SIZE_PER_OP = 6;
+
+constexpr u32 MAX_BLOCK_DIM = 48;
+constexpr u32 INTERVAL_1VN = 128;
+constexpr u32 INTERVAL_NV1 = 128;
+constexpr u32 INTERVAL_1V1 = 4;
+constexpr u32 PING_PONG_NUM = 2;
+constexpr u32 PRINT_NV1_NUM = 4;
+constexpr u32 PRINT_1VN_NUM = 4;
+constexpr u32 INTERVAL_COUNT = 4;
+constexpr u32 NOTIFY_NUM = 3;
+constexpr u32 BLOCK_DIM_PER_RANK = 4;
+constexpr u32 CORE_PER_CARDS = 4;
+constexpr u32 NOTIFY_GROUPS_1V1 = 2;
+
 u32 maxStrCount = 0;
 u32 maxTaskCount = 0;
 }
@@ -989,46 +1013,89 @@ void TaskExceptionHandler::PrintTaskContextInfo(const std::shared_ptr<std::deque
     return;
 }
 
+void TaskExceptionHandler::ParseTaskSyncFlag(s32 *flagMem, u32 flagMemSize, u32 rankSize, u32 rank, u32 index)
+{    
+    u32 chips1v1 = rankSize * BLOCK_DIM_PER_RANK * NOTIFY_NUM * INTERVAL_1V1;
+    u32 cores1v1 = MAX_BLOCK_DIM * NOTIFY_GROUPS_1V1 * INTERVAL_1V1;
+    u32 chips1vN = PRINT_1VN_NUM * INTERVAL_1VN;
+    u32 cores1vN = PRINT_1VN_NUM * INTERVAL_1VN;
+    u32 chipsNv1 = PRINT_NV1_NUM * INTERVAL_NV1;
+    u32 coresNv1 = PRINT_NV1_NUM * INTERVAL_NV1;
+    u32 count = rankSize * CORE_PER_CARDS * INTERVAL_COUNT;
+    u32 syncCount = (chips1v1 + cores1v1 + chips1vN + cores1vN + chipsNv1 + coresNv1) * PING_PONG_NUM + count;
+    u32 total = syncCount * sizeof(u32);
+    if (total > flagMemSize) {
+        HCCL_ERROR("rank %u opIndex=%u flag mem size %u is too little total %u.", rank, index, flagMemSize, total);
+        return;
+    }
+
+    s32 *buf = flagMem;
+    u32 offset = 0;
+    
+    const std::string PREFIX[PING_PONG_NUM] = {"ping", "pong"};
+    std::string str;
+    for (u32 i = 0; i < PING_PONG_NUM; ++i) {
+        // print chips1v1
+        str = SerializeSyncFlag(buf + offset, rankSize * BLOCK_DIM_PER_RANK * NOTIFY_NUM, INTERVAL_1V1);
+        offset += chips1v1;
+        HCCL_ERROR("rank %u opIndex %u chips 1v1 sync flag [%s]", rank, index, PREFIX[i].c_str(), str.c_str());
+
+        str = SerializeSyncFlag(buf + offset, MAX_BLOCK_DIM * NOTIFY_GROUPS_1V1, INTERVAL_1V1);
+        offset += cores1v1;
+        HCCL_ERROR("rank %u opIndex %u cores 1v1 sync flag [%s]", rank, index, PREFIX[i].c_str(), str.c_str());
+
+        str = SerializeSyncFlag(buf + offset, PRINT_1VN_NUM, INTERVAL_1VN);
+        offset += chips1vN;
+        HCCL_ERROR("rank %u opIndex %u chips 1vn sync flag [%s]", rank, index, PREFIX[i].c_str(), str.c_str());
+
+        str = SerializeSyncFlag(buf + offset, PRINT_1VN_NUM, INTERVAL_1VN);
+        offset += cores1vN;
+        HCCL_ERROR("rank %u opIndex %u cores 1vn sync flag [%s]", rank, index, PREFIX[i].c_str(), str.c_str());
+
+        str = SerializeSyncFlag(buf + offset, PRINT_NV1_NUM, INTERVAL_NV1);
+        offset += chipsNv1;
+        HCCL_ERROR("rank %u opIndex %u chips nv1 sync flag [%s]", rank, index, PREFIX[i].c_str(), str.c_str());
+
+        str = SerializeSyncFlag(buf + offset, PRINT_NV1_NUM, INTERVAL_NV1);
+        offset += coresNv1;
+        HCCL_ERROR("rank %u opIndex %u cores nv1 sync flag [%s]", rank, index, PREFIX[i].c_str(), str.c_str());
+    }
+    str = SerializeSyncFlag(buf + offset, rankSize * CORE_PER_CARDS, INTERVAL_COUNT);
+    HCCL_ERROR("rank %u opIndex %u sync count [%u]", rank, index, str.c_str());
+}
+
+std::string TaskExceptionHandler::SerializeSyncFlag(s32 *buf, u32 num, u32 interval)
+{
+    std::stringstream ss;
+    s32 *pos = buf;
+    for (u32 i = 0; i < num; i = i + 1) {
+        ss << std::dec << " " << *pos;
+        pos = pos + interval;
+    }
+    return ss.str();
+}
+
 void TaskExceptionHandler::PrintTaskAivBuffer(const std::shared_ptr<std::deque<TaskInfo>> &taskQue)
 {
     if (taskQue->empty()) {
         return;
     }
     // width参考aiv_communication_base.cc的MAX_FLAG_SIZE_PER_KERNEL
-    u32 width = AIV_KERNEL_FLAG_SIZE_PER_OP * 16 * 8;
+    
     u32 flagMemSize = 1024*1024;
     auto& taskInfo = taskQue->back();
-    u32 cnt = taskInfo.taskPara.Aiv.rankSize;
+    u32 realRankSize = taskInfo.taskPara.Aiv.rankSize;
     s32* flagMem = static_cast<s32*>(malloc(flagMemSize));
     hrtMemSyncCopy(flagMem, flagMemSize, reinterpret_cast<u8 *>(taskInfo.taskPara.Aiv.flagMem), flagMemSize, 
                    HcclRtMemcpyKind::HCCL_RT_MEMCPY_KIND_DEVICE_TO_HOST);
 
-    // 目前40个kernel, 后续新增时需要联动修改
-    std::stringstream tmpSS;
-    for (u32 kernel_idx = 0; kernel_idx < TASK_AIV_KERNEL_NUM; ++kernel_idx) {
-        auto mem = flagMem + kernel_idx * width;
-        tmpSS.str("");
-
-        tmpSS << "[name:" << g_kernelNameList[kernel_idx];
-        for (u32 i = 0; i < AIV_KERNEL_FLAG_SIZE_PER_OP; ++i) {
-            tmpSS << " [";
-            for (u32 j = i * cnt; j < (i + 1) * cnt; ++j) {
-                tmpSS << std::dec << " " << mem[j * 8];
-            }
-            tmpSS << "],";
-        }
-        tmpSS << "]\n";
-        HCCL_ERROR("%s ", tmpSS.str().c_str());
-    }
+    ParseTaskSyncFlag(flagMem, flagMemSize, realRankSize, taskInfo.taskPara.Aiv.rank, taskInfo.index);
     free(flagMem);
 }
 
 void TaskExceptionHandler::PrintTaskAivInfo(const std::shared_ptr<std::deque<TaskInfo>> &taskQue)
 {
-    HCCL_ERROR("Task run failed, context sequence before error task is "
-        "[NotifyRecord:NR(rank,id), NotifyWait:NW(rank,id), Memcpy:M(rank), Reduce: R(rank), "
-        "InlineReduce:IR(rank), RDMASend:RS(rank,id)]:");
-    std::string taskContextInfo = "";
+    HCCL_ERROR("[PrintTaskAivInfo] print start:");
     // 从后往前遍历，最多打印PRINT_TASK_AIV_INFO_COUNT个taskAiv
     int cnt = PRINT_TASK_AIV_INFO_COUNT;
     for(auto it = taskQue->end()-1; it >= taskQue->begin(); --it){
@@ -1039,16 +1106,10 @@ void TaskExceptionHandler::PrintTaskAivInfo(const std::shared_ptr<std::deque<Tas
             break;
         }
         auto taskInfo = *it;
-        std::string taskStr = "[AIV]";
-        taskStr += "(" + taskInfo.GetParaAiv() + "),";
-        if (taskContextInfo.size() + taskStr.size() >= TASK_CONTEXT_INFO_SIZE) {
-            HCCL_ERROR("%s ...", taskContextInfo.c_str());
-            taskContextInfo = "";
-        }
-        taskContextInfo += taskStr;
+        HCCL_ERROR("[AIV](%s)", taskInfo.GetParaAiv().c_str());
         cnt--;
     }
-    HCCL_ERROR("%s end.", taskContextInfo.c_str());
+    HCCL_ERROR("[PrintTaskAivInfo] print end");
     return;
 }
 
@@ -1080,6 +1141,7 @@ bool TaskExceptionHandler::DealExceptionTask(rtExceptionInfo *exceptionInfo)
         PrintTaskAivBuffer(queIt);
         PrintTaskAivInfo(queIt);
     }else if(exceptionTaskInfo.taskType == TaskType::TASK_NOTIFY_WAIT) { 
+        queIt->pop_back();
         // 只在出错task为NotifyWait时打印前序task序列
         PrintTaskContextInfo(queIt);
     }
@@ -1185,9 +1247,15 @@ void TaskExceptionHandler::Callback(rtExceptionInfo *exceptionInfo)
         // 如果已经有AICPU上报的task exception, 则host侧无需再次重复上报
         return;
     }
-    CHK_PRT_RET(exceptionInfo->deviceid >= MAX_MODULE_DEVICE_NUM,
-        HCCL_WARNING("deviceID[%u] from exceptionInfo is bigger than MAX_MODULE_DEVICE_NUM[%u]",
-        exceptionInfo->deviceid, MAX_MODULE_DEVICE_NUM),);
+    u32 maxDeviceNum;
+    HcclResult ret = GetMaxDevNum(maxDeviceNum);
+    if (ret != HCCL_SUCCESS) {
+        HCCL_ERROR("[GetMaxDevNum] get maxDeviceNum error");
+        return;
+    }
+    CHK_PRT_RET(exceptionInfo->deviceid >= maxDeviceNum,
+        HCCL_WARNING("deviceID[%u] from exceptionInfo is bigger than maxDeviceNum[%u]",
+        exceptionInfo->deviceid, maxDeviceNum),);
     SaluSleep(ONE_MILLISECOND_OF_USLEEP); // sleep 1ms，等待task被存入数据结构
     HCCL_DEBUG("[TaskExceptionHandler][Callback]Task run failed, ffts+ task type:%d, TaskExceptionSwitch:%u",
         exceptionInfo->expandInfo.type, GetExternalInputTaskExceptionSwitch());
@@ -1250,9 +1318,11 @@ bool IsOneSideTask(u32 streamId)
 
 HcclResult TaskExceptionHandler::Save(u32 captureStreamID, u32 streamID, u32 taskID, TaskType &taskType, const TaskParaNotify &para)
 {
-    CHK_PRT_RET(deviceLogicId_ >= MAX_MODULE_DEVICE_NUM,
-        HCCL_ERROR("[TaskExceptionHandler][Save]deviceLogicId_[%u] is bigger than MAX_MODULE_DEVICE_NUM[%u]",
-            deviceLogicId_, MAX_MODULE_DEVICE_NUM), HCCL_E_INTERNAL);
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
+    CHK_PRT_RET(deviceLogicId_ >= maxDeviceNum,
+        HCCL_ERROR("[TaskExceptionHandler][Save]deviceLogicId_[%u] is bigger than maxDeviceNum[%u]",
+            deviceLogicId_, maxDeviceNum), HCCL_E_INTERNAL);
     HCCL_INFO("[TaskExceptionHandler][%s]Save task info, streamId[%u], taskId[%u], taskType[%d]", __func__,
         streamID, taskID, taskType);
     if (GetExternalInputHcclEnableFfts() &&
@@ -1286,9 +1356,11 @@ HcclResult TaskExceptionHandler::Save(u32 &streamID, u32 &taskID, TaskType &task
 
 HcclResult TaskExceptionHandler::Save(u32 captureStreamID, u32 streamID, u32 taskID, TaskType &taskType, const TaskParaDMA &para)
 {
-    CHK_PRT_RET(deviceLogicId_ >= MAX_MODULE_DEVICE_NUM,
-        HCCL_ERROR("[TaskExceptionHandler][Save]deviceLogicId_[%u] is bigger than MAX_MODULE_DEVICE_NUM[%u]",
-            deviceLogicId_, MAX_MODULE_DEVICE_NUM), HCCL_E_INTERNAL);
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
+    CHK_PRT_RET(deviceLogicId_ >= maxDeviceNum,
+        HCCL_ERROR("[TaskExceptionHandler][Save]deviceLogicId_[%u] is bigger than maxDeviceNum[%u]",
+            deviceLogicId_, maxDeviceNum), HCCL_E_INTERNAL);
     HCCL_INFO("[TaskExceptionHandler][%s]Save task info, streamId[%u], taskId[%u], taskType[%d]", __func__,
         streamID, taskID, taskType);
     if (GetExternalInputHcclEnableFfts() &&
@@ -1321,9 +1393,11 @@ HcclResult TaskExceptionHandler::Save(u32 &streamID, u32 &taskID, TaskType &task
 
 HcclResult TaskExceptionHandler::Save(u32 captureStreamID, u32 streamID, u32 taskID, TaskType &taskType, const TaskParaReduce &para)
 {
-    CHK_PRT_RET(deviceLogicId_ >= MAX_MODULE_DEVICE_NUM,
-        HCCL_ERROR("[TaskExceptionHandler][Save]deviceLogicId_[%u] is bigger than MAX_MODULE_DEVICE_NUM[%u]",
-            deviceLogicId_, MAX_MODULE_DEVICE_NUM), HCCL_E_INTERNAL);
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
+    CHK_PRT_RET(deviceLogicId_ >= maxDeviceNum,
+        HCCL_ERROR("[TaskExceptionHandler][Save]deviceLogicId_[%u] is bigger than maxDeviceNum[%u]",
+            deviceLogicId_, maxDeviceNum), HCCL_E_INTERNAL);
     HCCL_INFO("[TaskExceptionHandler][%s]Save task info, streamId[%u], taskId[%u], taskType[%d]", __func__,
         streamID, taskID, taskType);
     if (GetExternalInputHcclEnableFfts() &&
@@ -1352,9 +1426,11 @@ HcclResult TaskExceptionHandler::Save(u32 captureStreamID, u32 streamID, u32 tas
 
 HcclResult TaskExceptionHandler::Save(u32 &streamID, u32 &taskID, const TaskParaAiv &para)
 {
-    CHK_PRT_RET(deviceLogicId_ >= MAX_MODULE_DEVICE_NUM,
-        HCCL_ERROR("[TaskExceptionHandler][Save]deviceLogicId_[%u] is bigger than MAX_MODULE_DEVICE_NUM[%u]",
-            deviceLogicId_, MAX_MODULE_DEVICE_NUM), HCCL_E_INTERNAL);
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
+    CHK_PRT_RET(deviceLogicId_ >= maxDeviceNum,
+        HCCL_ERROR("[TaskExceptionHandler][Save]deviceLogicId_[%u] is bigger than maxDeviceNum[%u]",
+            deviceLogicId_, maxDeviceNum), HCCL_E_INTERNAL);
 
     std::string tag;
     CHK_RET(ProfilerBase::GetTagByStream(streamID, tag));
@@ -1372,9 +1448,11 @@ HcclResult TaskExceptionHandler::Save(u32 &streamID, u32 &taskID, TaskType &task
 
 HcclResult TaskExceptionHandler::Save(u32 captureStreamID, u32 streamID, u32 taskID)
 {
-    CHK_PRT_RET(deviceLogicId_ >= MAX_MODULE_DEVICE_NUM,
-        HCCL_ERROR("[TaskExceptionHandler][Save]deviceLogicId_[%u] is bigger than MAX_MODULE_DEVICE_NUM[%u]",
-            deviceLogicId_, MAX_MODULE_DEVICE_NUM), HCCL_E_INTERNAL);
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
+    CHK_PRT_RET(deviceLogicId_ >= maxDeviceNum,
+        HCCL_ERROR("[TaskExceptionHandler][Save]deviceLogicId_[%u] is bigger than maxDeviceNum[%u]",
+            deviceLogicId_, maxDeviceNum), HCCL_E_INTERNAL);
     HCCL_INFO("[TaskExceptionHandler][%s]Save task info, streamId[%u], taskId[%u]", __func__, streamID, taskID);
     std::string tag;
     CHK_RET(ProfilerBase::GetTagByStream(captureStreamID, tag));

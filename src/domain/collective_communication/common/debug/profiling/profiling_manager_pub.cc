@@ -78,9 +78,19 @@ HcclResult ProfilingManagerPub::ClearStoragedProfilingInfo()
     return ProfilingManager::Instance().ClearStoragedProfilingInfo();
 }
 
-void ProfilingManagerPub::SetCaptureStatus(bool isCapture)
+void ProfilingManagerPub::SetThreadCaptureStatus(s32 threadID, bool isCapture)
 {
-    ProfilingManager::Instance().SetCaptureStatus(isCapture);
+    ProfilingManager::Instance().SetThreadCaptureStatus(threadID, isCapture);
+}
+
+bool ProfilingManagerPub::GetThreadCaptureStatus()
+{
+    return ProfilingManager::Instance().GetThreadCaptureStatus();
+}
+
+void ProfilingManagerPub::DeleteThreadCaptureStatus(s32 threadID)
+{
+    ProfilingManager::Instance().DeleteThreadCaptureStatus(threadID);
 }
 
 }

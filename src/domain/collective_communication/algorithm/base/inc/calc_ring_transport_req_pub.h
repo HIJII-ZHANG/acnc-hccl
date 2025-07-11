@@ -11,7 +11,7 @@
 #ifndef CALC_RING_TRANSPORT_REQ_PUB_H
 #define CALC_RING_TRANSPORT_REQ_PUB_H
 
-#include "calc_transport_req_base_pub.h"
+#include "calc_transport_req_base.h"
 
 namespace hccl {
 class CalcRingTransportReq : public CalcTransportReqBase {

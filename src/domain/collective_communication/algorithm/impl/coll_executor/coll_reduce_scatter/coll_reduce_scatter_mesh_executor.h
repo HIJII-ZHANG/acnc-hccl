@@ -34,6 +34,8 @@ private:
     u64 CalcLoopMaxCount(const u32 unitSize) override;
     bool IsHugeData(const u64 curSize, OpParam *param = nullptr) override;
     HcclResult KernelRun(const OpParam &param, ExecMem &execMem) override;
+    HcclResult Getlevel1CommRank(SubCommInfo& level1CommInfo) override;
+    HcclResult SelectTempAlg(std::unique_ptr<AlgTemplateBase> &level1TempAlg, u32 level1RankSize) override;
 
     bool meshSinglePlane_ = false;
 };

@@ -36,7 +36,7 @@ __aicore__ inline void AivAllGatherSmall910B::Process(GM_ADDR input, GM_ADDR out
     uint64_t count = len;
 
     if (block_idx != rank_) {
-        CheckFlagNew((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffset), tag);
+        WaitSignalValue((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffset), localCheckTensor, tag);
         pipe_barrier(PIPE_ALL);
 
         CpGM2GM(outputGM + block_idx *count, cclGMOther, count);
@@ -45,7 +45,7 @@ __aicore__ inline void AivAllGatherSmall910B::Process(GM_ADDR input, GM_ADDR out
         CpGM2GM(cclGMSelf, inputGM, count);
         // 卡间同步
         pipe_barrier(PIPE_ALL);
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffset), tag);
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffset), localSetTensor, tag);
         CpGM2GM(outputGM + count * rank_, cclGMSelf, count);
     }
 }

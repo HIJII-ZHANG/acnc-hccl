@@ -58,8 +58,8 @@ HcclResult OpRetryManager::RegisterOpRetryMachine(const std::string& group, u32 
     std::shared_ptr<HcclSocket> agentConnection, std::map<u32, std::shared_ptr<HcclSocket> > &serverConnections,
     std::shared_ptr<HDCommunicate> h2dPtr, std::shared_ptr<HDCommunicate> d2hPtr,
     std::shared_ptr<HcclOpStreamRes> opStreamPtr, OpRetryResetNotifyCallback notifyResetCallback,
-    OpRetrySetTransprotStatusCallback setTransprotStatusCallback, bool isEnableBackupLink,
-    const OpRetryServerInfo& serverInfo, const OpRetryAgentInfo& agentInfo)
+    OpRetrySetTransportStatusCallback setTransportStatusCallback, OpRetryGetSwitchRanksCallback getSwitchRanksCallback,
+    bool isEnableBackupLink, const OpRetryServerInfo& serverInfo, const OpRetryAgentInfo& agentInfo)
 {
     std::unique_lock<std::mutex> lock(ProcessLock_);
     CHK_SMART_PTR_NULL(h2dPtr);
@@ -78,7 +78,8 @@ HcclResult OpRetryManager::RegisterOpRetryMachine(const std::string& group, u32 
 
     // 注册agent状态机
     CHK_RET(RegisterAgentRetryMachine(group, agentConnection, h2dPtr, d2hPtr,
-        opStreamPtr, notifyResetCallback, setTransprotStatusCallback, isEnableBackupLink, agentInfo));
+        opStreamPtr, notifyResetCallback, setTransportStatusCallback, getSwitchRanksCallback,
+        isEnableBackupLink, agentInfo));
 
     // 注册server状态机
     if (isRoot) {
@@ -91,8 +92,8 @@ HcclResult OpRetryManager::RegisterOpRetryMachine(const std::string& group, u32 
 HcclResult OpRetryManager::RegisterAgentRetryMachine(const std::string& group, std::shared_ptr<HcclSocket> socket,
     std::shared_ptr<HDCommunicate> h2dPtr, std::shared_ptr<HDCommunicate> d2hPtr,
     std::shared_ptr<HcclOpStreamRes> opStreamPtr, OpRetryResetNotifyCallback notifyResetCallback,
-    OpRetrySetTransprotStatusCallback setTransprotStatusCallback, bool isEnableBackupLink,
-    const OpRetryAgentInfo& agentInfo)
+    OpRetrySetTransportStatusCallback setTransportStatusCallback, OpRetryGetSwitchRanksCallback getSwitchRanksCallback,
+    bool isEnableBackupLink, const OpRetryAgentInfo& agentInfo)
 {
     if (agentOpRetry_.find(group) != agentOpRetry_.end()) {
         HCCL_INFO("[Register][AgentRetryMachine]group[%s] has Registered to agentOpRetry, skip", group.c_str());
@@ -105,7 +106,7 @@ HcclResult OpRetryManager::RegisterAgentRetryMachine(const std::string& group, s
     EXECEPTION_CATCH((retryPtr = std::make_shared<OpRetryAgentRunning>()), return HCCL_E_PTR);
     EXECEPTION_CATCH((agentOpRetry_[group].retryCtx =
         std::make_shared<RetryContext>(group, socket, h2dPtr, d2hPtr, opStreamPtr, notifyResetCallback, retryPtr,
-        setTransprotStatusCallback, isEnableBackupLink, agentInfo)), return HCCL_E_PTR);
+        setTransportStatusCallback, getSwitchRanksCallback, isEnableBackupLink, agentInfo)), return HCCL_E_PTR);
     agentOpRetry_[group].startExec = true;
 
     HcclRtContext ctx = nullptr;
@@ -192,7 +193,8 @@ void OpRetryManager::RetryStateMonitor(const std::string &group, std::shared_ptr
     HcclResult ret = HCCL_SUCCESS;
     while(initialized_ && startExec) {
         ret = retryCtx->Request();
-        CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("RetryStateMonitor group[%s] exec fail", group.c_str()), );
+        CHK_PRT_RET(ret != HCCL_SUCCESS,
+            HCCL_ERROR("RetryStateMonitor group[%s] exec fail", group.c_str()), );
     }
     HCCL_INFO("RetryStateMonitor group[%s] exit, ret[%d], initialized_[%d], startExec[%d]",
         group.c_str(), ret, initialized_, startExec);
@@ -215,4 +217,75 @@ HcclResult OpRetryManager::DeleteLinkInfoByIdentifier(s32 deviceLogicID, const s
     return OpretryLinkManage::GetInstance(deviceLogicID).DeleteLinkInfoByIdentifier(identifier);
 }
 
+HcclResult OpRetryManager::SetRetryStateToWaitResume(const std::string &group, bool isRoot)
+{
+    std::unique_lock<std::mutex> lock(ProcessLock_);
+    std::chrono::seconds setTimeout = std::chrono::seconds(OP_RETRY_SWITCH_WAIT_RESUM);
+    std::chrono::steady_clock::time_point startTime = std::chrono::steady_clock::now();
+    if (agentOpRetry_.find(group) != agentOpRetry_.end()) {
+        agentOpRetry_[group].retryCtx->isAgentStateWaitResume_ = true;
+        agentOpRetry_[group].retryCtx->SetEnableSendRecv(false);
+        while (agentOpRetry_[group].retryCtx->GetRetryState() != RETRY_STATE_AGENT_WAIT_RESUME) {
+            std::chrono::steady_clock::time_point curTime = std::chrono::steady_clock::now();
+            const auto setTime = std::chrono::duration_cast<std::chrono::seconds>(curTime - startTime);
+            if (setTime > setTimeout) {
+                HCCL_ERROR("[OpRetryManager][SetRetryStateToWaitResume]group[%s], set agent state to wait resume timeout.", group.c_str());
+                return HCCL_E_TIMEOUT;
+            }
+        }
+        agentOpRetry_[group].retryCtx->SetEnableSendRecv(true);
+    }
+
+    if (isRoot && serverOpRetry.find(group) != serverOpRetry.end()) {
+        serverOpRetry[group].retryCtx->isServerStateWaitResume_ = true;
+        serverOpRetry[group].retryCtx->SetEnableSendRecv(false);
+        while (serverOpRetry[group].retryCtx->GetRetryState() != RETRY_STATE_SERVER_WAIT_RESUME) {
+            std::chrono::steady_clock::time_point curTime = std::chrono::steady_clock::now();
+            const auto setTime = std::chrono::duration_cast<std::chrono::seconds>(curTime - startTime);
+            if (setTime > setTimeout) {
+                HCCL_ERROR("[OpRetryManager][SetRetryStateToWaitResume]group[%s], set server state to wait resume timeout.", group.c_str());
+                return HCCL_E_TIMEOUT;
+            }
+        }
+        serverOpRetry[group].retryCtx->SetEnableSendRecv(true);
+    }
+    HCCL_INFO("[OpRetryManager][SetRetryStateToWaitResume]group[%s], set sate to wait resume success", group.c_str());
+    return HCCL_SUCCESS;
+}
+
+HcclResult OpRetryManager::ExitWaitResumeState(const std::string &group, bool isRoot)
+{
+    std::unique_lock<std::mutex> lock(ProcessLock_);
+    std::chrono::seconds exitTimeout = std::chrono::seconds(OP_RETRY_SWITCH_WAIT_RESUM);
+    std::chrono::steady_clock::time_point startTime = std::chrono::steady_clock::now();
+    if (agentOpRetry_.find(group) != agentOpRetry_.end()) {
+        agentOpRetry_[group].retryCtx->isAgentStateWaitResume_ = false;
+        agentOpRetry_[group].retryCtx->SetEnableSendRecv(false);
+        while (agentOpRetry_[group].retryCtx->GetRetryState() != RETRY_STATE_AGENT_RUNNING) {
+            std::chrono::steady_clock::time_point curTime = std::chrono::steady_clock::now();
+            const auto exitTime = std::chrono::duration_cast<std::chrono::seconds>(curTime - startTime);
+            if (exitTime > exitTimeout) {
+                HCCL_ERROR("[OpRetryManager][ExitWaitResumeState]group[%s], agent exit wait resume state timeout", group.c_str());
+                return HCCL_E_TIMEOUT;
+            }
+        }
+        agentOpRetry_[group].retryCtx->SetEnableSendRecv(true);
+    }
+
+    if (isRoot && serverOpRetry.find(group) != serverOpRetry.end()) {
+        serverOpRetry[group].retryCtx->isServerStateWaitResume_ = false;
+        serverOpRetry[group].retryCtx->SetEnableSendRecv(false);
+        while (serverOpRetry[group].retryCtx->GetRetryState() != RETRY_STATE_SERVER_RUNNING) {
+            std::chrono::steady_clock::time_point curTime = std::chrono::steady_clock::now();
+            const auto exitTime = std::chrono::duration_cast<std::chrono::seconds>(curTime - startTime);
+            if (exitTime > exitTimeout) {
+                HCCL_ERROR("[OpRetryManager][ExitWaitResumeState]group[%s], server exit wait resume state timeout", group.c_str());
+                return HCCL_E_TIMEOUT;
+            }
+        }
+        serverOpRetry[group].retryCtx->SetEnableSendRecv(true);
+    }
+    HCCL_INFO("[OpRetryManager][ExitWaitResumeState]group[%s], exit wait resume state success", group.c_str());
+    return HCCL_SUCCESS;
+}
 }

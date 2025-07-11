@@ -162,7 +162,7 @@ template<typename T>
 __aicore__ inline void aiv_all_to_all_v_91093(KERNEL_ARGS_DEF, ExtraArgsV2* extraArgs)
 {
     AivAll2AllV91093 op;
-    uint32_t baseFlagOffset = 0;
+    uint32_t baseFlagOffset = AIV_ALL_TO_ALL_V_91093 * MAX_RANK_SIZE_A3 * FLAG_SIZE;
     op.Init(buffOut0, rank, rankSize, tag, baseFlagOffset, true);
     op.InitOpCounter(headCountMem, tailCountMem, addOneMem, counterMemSize, isEnableCounter);
     op.HeadCounter();

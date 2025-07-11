@@ -7,6 +7,12 @@ set(src_list
     ${CMAKE_CURRENT_SOURCE_DIR}/calc_transport_req_base.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/calc_p2p_transport_req.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/calc_hccs_plus_sio_transport_req.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/calc_nb_transport_req.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/calc_nhr_transport_req.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/calc_nhr_v1_transport_req.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/calc_ahc_transport_req_base.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/calc_ahc_transport_req.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/calc_ahc_broke_transport_req.cc
 )
 
 target_sources(hccl_alg PRIVATE

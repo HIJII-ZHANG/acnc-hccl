@@ -25,7 +25,7 @@ void CollAllReduceMeshExecutor::ParseParam(const OpParam& param)
     bool isInlineReduce = IsSupportSDMAReduce(param.inputPtr, param.outputPtr,
         param.DataDes.dataType, param.reduceType);
     meshSinglePlane_ = (topoAttr_.deviceType == DevType::DEV_TYPE_910B) &&
-        !topoMatcher_->GetExternalInputHcclDeterministic() &&
+        topoMatcher_->GetExternalInputHcclDeterministic() == DETERMINISTIC_DISABLE &&
         isInlineReduce && (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
     aicpuUnfoldMode_ = param.aicpuUnfoldMode;
 }
@@ -88,6 +88,7 @@ bool CollAllReduceMeshExecutor::IsSmallData(const u64 totalSize, const u64 curSi
 
 HcclResult CollAllReduceMeshExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollAllReduceMeshExecutor][KernelRun] userRank[%u] starts.", topoAttr_.userRank);
     u32 perDataSize = SIZE_TABLE[param.DataDes.dataType];
 
     std::vector<Slice> dataSegsSlice;   // 数据分成ranksize份，每份的起始偏移和大小
@@ -105,7 +106,8 @@ HcclResult CollAllReduceMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
 
     CHK_RET(ActiveSlaveStreams(param.stream));
 
-    if (!topoMatcher_->GetExternalInputHcclDeterministic() && (param.DataDes.dataType != HCCL_DATA_TYPE_INT64) &&
+    if (topoMatcher_->GetExternalInputHcclDeterministic() == DETERMINISTIC_DISABLE &&
+        (param.DataDes.dataType != HCCL_DATA_TYPE_INT64) &&
         (topoAttr_.deviceType == DevType::DEV_TYPE_910B && param.reduceType != HCCL_REDUCE_PROD)) {
         CHK_RET(MultiStreamReduceScatterMeshAtomic(param.tag, execMem.inputMem, execMem.outputMem, execMem.count,
             param.DataDes.dataType, param.reduceType, dataSegsSlice, const_cast<Stream&>(param.stream), COMM_LEVEL0));
@@ -219,6 +221,54 @@ HcclResult CollAllReduceMeshExecutor::KernelRun(const OpParam &param, ExecMem &e
     return HCCL_SUCCESS;
 }
 
+
+HcclResult CollAllReduceMeshExecutor::Getlevel1CommRank(SubCommInfo& level1CommInfo)
+{
+    if (CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1) != HCCL_SUCCESS) {
+        return HCCL_E_UNAVAIL;
+    }
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    u32 ringNum = (topoType_ == TopoType::TOPO_TYPE_8P_RING) ? LEVEL0_PLANE_NUM_IN_8PRING :
+        LEVEL0_PLANE_NUM_IN_NPRING_SINGLE;
+    u32 commIndex = (ringNum == LEVEL0_PLANE_NUM_IN_8PRING) ? topoAttr_.devicePhyId : level0CommInfo.localRank;
+
+    if (CheckCommSize(COMM_LEVEL1, commIndex + 1) != HCCL_SUCCESS) {
+        return HCCL_E_UNAVAIL;
+    }
+    level1CommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
+
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollAllReduceMeshExecutor::SelectTempAlg(std::unique_ptr<AlgTemplateBase> &level1TempAlg, u32 level1RankSize)
+{
+    if (level1RankSize > 1) {
+        if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_RING, dispatcher_);
+            HCCL_INFO("allreduce mesh: using ring algo inter-server.");
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_NHR, dispatcher_);
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_NHR_V1, dispatcher_);
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_AHC, dispatcher_);
+            HCCL_INFO("allreduce mesh: using ahc algo inter-server.");
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_AHC_BROKE, dispatcher_);
+            HCCL_INFO("allreduce mesh: using ahc-broke algo inter-server.");
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_ALL_REDUCE_NB, dispatcher_);
+            HCCL_INFO("allreduce mesh: using nb algo inter-server.");
+        } else {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_ALL_REDUCE_RECURSIVE_HALVING_DOUBLING, dispatcher_);
+            HCCL_INFO("allreduce mesh: using Recursive halving-doubling algo inter-server.");
+        }
+        return HCCL_SUCCESS;
+    }
+    return HCCL_E_UNAVAIL;
+}
 REGISTER_EXEC("AllReduceMeshExecutor", AllReduceMesh, CollAllReduceMeshExecutor);
 
 } // namespace hccl

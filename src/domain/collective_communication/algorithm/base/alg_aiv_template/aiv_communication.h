@@ -23,7 +23,7 @@
 #include "aiv_all_reduce_910b_smalldata_graph.h"
 #include "aiv_all_reduce_910b_rdma_smalldata_graph.h"
 #include "aiv_all_reduce_910b_rdma_middata_graph.h"
-#include "aiv_all_reduce_91093_smalldata.h"
+#include "aiv_all_reduce_91093.h"
 #include "aiv_all_reduce_91093_bigdata_graph.h"
 
 #include "aiv_all_to_all_vc_910b_no_loop.h"
@@ -38,7 +38,7 @@
 #include "aiv_all_to_all_v_91093.h"
 #include "aiv_all_to_all_v_91093_graph.h"
 #include "aiv_all_to_all_v_91093_single.h"
-#include "aiv_all_to_all_91093_single_graph.h"
+#include "aiv_all_to_all_91093_single.h"
 #include "aiv_all_to_all_91093_single_pingpong.h"
 
 #include "aiv_all_gather_910b_graph.h"
@@ -48,31 +48,52 @@
 #include "aiv_all_gather_v_910b_smalldata.h"
 #include "aiv_all_gather_910b_bigdata.h"
 
+#include "aiv_all_gather_crossnode_91093.h"
+#include "aiv_all_gather_crossnode_91093_graph.h"
+
 #include "aiv_all_gather_v_910b_bigdata.h"
 
 #include "aiv_reduce_scatter_910b_graph.h"
-#include "aiv_reduce_scatter_91093_smalldata_graph.h"
 #include "aiv_reduce_scatter_91093_smalldata.h"
 #include "aiv_reduce_scatter_910b_smalldata.h"
 #include "aiv_reduce_scatter_910b_bigdata.h"
 #include "aiv_reduce_scatter_910b_middata.h"
+
+#include "aiv_reduce_scatter_crossnode_91093.h"
+#include "aiv_reduce_scatter_crossnode_91093_graph.h"
 
 #include "aiv_reduce_scatter_v_910b_smalldata.h"
 #include "aiv_reduce_scatter_v_910b_middata.h"
 #include "aiv_reduce_scatter_v_910b_bigdata.h"
 
 #include "aiv_sync_910b.h"
+#include "aiv_sync_91093.h"
 
 #include "aiv_all_gather_910B_rdma.h"
 #include "aiv_all_gather_910B_rdma_graph.h"
 #include "aiv_reduce_scatter_910b_rdma.h"
 #include "aiv_reduce_scatter_910b_rdma_graph.h"
+#include "aiv_all_reduce_deter_910b_smalldata.h"
+#include "aiv_all_reduce_deter_910b_middata.h"
+#include "aiv_all_reduce_deter_910b_bigdata.h"
+#include "aiv_reduce_scatter_deter_910b_smalldata.h"
+#include "aiv_reduce_scatter_deter_910b_middata.h"
+#include "aiv_reduce_scatter_deter_910b_bigdata.h"
+
 using namespace AscendC;
 
 #define AIV_ALL_REDUCE_KERNEL_BATCH_DEF(type) \
 extern "C" __global__ __aicore__ void aiv_all_reduce_##type(KERNEL_ARGS_DEF) { \
     if (isOpBase) { \
-        if (aivRdmaStep >= 0) { \
+        if (deterministic == 1) { \
+            if (len * sizeof(type) < AIV_ALL_REDUCE_DETER_MID_SIZE) { \
+                return aiv_all_reduce_deter_910b_smalldata<type>(KERNEL_ARGS_CALL); \
+            } else if (len * sizeof(type) <= bufferSize / DETERMINISTIC_RANKSIZE) { \
+                return aiv_all_reduce_deter_910b_smalldata<type>(KERNEL_ARGS_CALL); \
+            } else { \
+                return aiv_all_reduce_deter_910b_bigdata<type>(KERNEL_ARGS_CALL); \
+            } \
+        } else if (aivRdmaStep >= 0) { \
             if (!useAivRdmaSmall) { \
                 return aiv_all_reduce_910b_rdma_middata<type>(KERNEL_ARGS_CALL); \
             } else { \
@@ -87,11 +108,7 @@ extern "C" __global__ __aicore__ void aiv_all_reduce_##type(KERNEL_ARGS_DEF) { \
         } \
     } else { \
         if (devType == DEV_TYPE_910_93) { \
-            if (len * sizeof(type) <= AIV_A3_ALL_REDUCE_GRAPH_GUIYI_SIZE) { \
-                return aiv_all_reduce_91093_smalldata<type>(KERNEL_ARGS_CALL); \
-            } else { \
-                return aiv_all_reduce_91093_bigdata_graph<type>(KERNEL_ARGS_CALL); \
-            } \
+            return aiv_all_reduce_91093<type>(KERNEL_ARGS_CALL); \
         } else if (aivRdmaStep >= 0) { \
             if (!useAivRdmaSmall) { \
                 return aiv_all_reduce_910b_rdma_middata_graph<type>(KERNEL_ARGS_CALL); \
@@ -165,11 +182,7 @@ extern "C" __global__ __aicore__ void aiv_all_to_all_##type(KERNEL_ARGS_DEF) { \
         } \
     } else { \
         if (devType == DEV_TYPE_910_93) { \
-            if (len * sizeof(type) > AIV_A3_ALL_TO_ALL_GRAPH_GUIYI_SIZE) { \
-                return aiv_all_to_all_91093_single_graph<type>(KERNEL_ARGS_CALL); \
-            } else { \
-                return aiv_all_to_all_91093_single_pingpong<type>(KERNEL_ARGS_CALL); \
-            } \
+            return aiv_all_to_all_91093_single<type>(KERNEL_ARGS_CALL); \
         } \
     } \
 }
@@ -177,7 +190,13 @@ extern "C" __global__ __aicore__ void aiv_all_to_all_##type(KERNEL_ARGS_DEF) { \
 // aiv allgather
 #define AIV_ALL_GATHER_KERNEL_BATCH_DEF(type) \
 extern "C" __global__ __aicore__ void aiv_all_gather_##type(KERNEL_ARGS_DEF) { \
-    if (isOpBase) { \
+    if (devType == DEV_TYPE_910_93 && serverNum > 1) { \
+        if (isOpBase) { \
+            return aiv_all_gather_crossnode_91093<type>(KERNEL_ARGS_CALL); \
+        } else { \
+            return aiv_all_gather_crossnode_91093_graph<type>(KERNEL_ARGS_CALL); \
+        } \
+    } else if (isOpBase) { \
         if (aivRdmaStep >= 0) { \
             return aiv_all_gather_910b_rdma<type>(KERNEL_ARGS_CALL); \
         } else if (len * sizeof(type) > AIV_ALL_GATHER_SMALL_SIZE) { \
@@ -190,10 +209,8 @@ extern "C" __global__ __aicore__ void aiv_all_gather_##type(KERNEL_ARGS_DEF) { \
             return aiv_all_gather_910b_rdma_graph<type>(KERNEL_ARGS_CALL); \
         } else if (block_num == rankSize) { \
             return aiv_all_gather_910b_bigdata_graph<type>(KERNEL_ARGS_CALL); \
-        } else if (len * sizeof(type) <= AIV_A3_ALL_GATHER_GRAPH_GUIYI_SIZE) { \
-            return aiv_all_gather_91093_smalldata<type>(KERNEL_ARGS_CALL); \
         } else { \
-            return aiv_all_gather_91093_smalldata_graph<type>(KERNEL_ARGS_CALL); \
+            return aiv_all_gather_91093_smalldata<type>(KERNEL_ARGS_CALL); \
         } \
     } \
 }
@@ -212,8 +229,22 @@ extern "C" __global__ __aicore__ void aiv_all_gather_v_##type(EXTERN_KERNEL_ARGS
 
 #define AIV_REDUCE_SCATTER_KERNEL_BATCH_DEF(type) \
 extern "C" __global__ __aicore__ void aiv_reduce_scatter_##type(KERNEL_ARGS_DEF) { \
-    if (isOpBase) { \
-        if (aivRdmaStep >= 0) { \
+    if (devType == DEV_TYPE_910_93 && serverNum > 1) { \
+        if (isOpBase) { \
+            return aiv_reduce_scatter_crossnode_91093<type>(KERNEL_ARGS_CALL); \
+        } else { \
+            return aiv_reduce_scatter_crossnode_91093_graph<type>(KERNEL_ARGS_CALL); \
+        } \
+    } else if (isOpBase) { \
+        if (deterministic == 1) { \
+            if (rankSize * len * sizeof(type) < AIV_REDUCE_SCATTER_DETER_SMALL_SIZE) { \
+                return aiv_reduce_scatter_deter_910b_smalldata<type>(KERNEL_ARGS_CALL); \
+            } else if (rankSize * len * sizeof(type) <= bufferSize / DETERMINISTIC_RANKSIZE) { \
+                return aiv_reduce_scatter_deter_910b_smalldata<type>(KERNEL_ARGS_CALL); \
+            } else { \
+                return aiv_reduce_scatter_deter_910b_bigdata<type>(KERNEL_ARGS_CALL); \
+            } \
+        } else if (aivRdmaStep >= 0) { \
             return aiv_reduce_scatter_910b_rdma<type>(KERNEL_ARGS_CALL); \
         } else if (len * sizeof(type) > AIV_REDUCE_SCATTER_MID_SIZE) { \
             return aiv_reduce_scatter_910b_bigdata<type>(KERNEL_ARGS_CALL); \
@@ -227,11 +258,8 @@ extern "C" __global__ __aicore__ void aiv_reduce_scatter_##type(KERNEL_ARGS_DEF)
             return aiv_reduce_scatter_910b_rdma_graph<type>(KERNEL_ARGS_CALL); \
         } else if (block_num == rankSize) { \
             return aiv_reduce_scatter_910b_bigdata_graph<type>(KERNEL_ARGS_CALL); \
-        } else if (len * sizeof(type) <= AIV_A3_REDUCE_SCATTER_GRAPH_GUIYI_SIZE && \
-            rankSize <= MAX_BLOCK_DIM / BLOCK_DIM_FOUR_PER_RANK_A3) { \
-            return aiv_reduce_scatter_91093_smalldata<type>(KERNEL_ARGS_CALL); \
         } else { \
-            return aiv_reduce_scatter_91093_smalldata_graph<type>(KERNEL_ARGS_CALL); \
+            return aiv_reduce_scatter_91093_smalldata<type>(KERNEL_ARGS_CALL); \
         } \
     } \
 }
@@ -250,7 +278,11 @@ extern "C" __global__ __aicore__ void aiv_reduce_scatter_v_##type(EXTERN_KERNEL_
 
 // aiv sync
 extern "C" __global__ __aicore__ void hccl_aiv_sync(KERNEL_ARGS_DEF) {
-    return aiv_sync_910b_inner(KERNEL_ARGS_CALL);
+    if (devType == DEV_TYPE_910_93 && serverNum > 1) { \
+        return aiv_sync_91093_inner(KERNEL_ARGS_CALL); \
+    } else  { \
+        return aiv_sync_910b_inner(KERNEL_ARGS_CALL); \
+    }
 }
 
 // 910B支持的Atomic数据类型

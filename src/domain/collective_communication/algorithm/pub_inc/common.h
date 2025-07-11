@@ -16,7 +16,8 @@
 #include "hccl_common.h"
 #include "transport_pub.h"
 #include "externalinput_pub.h"
-#include "common_pub.h"
+#include "template_v1_utils.h"
+#include "comm_utils.h"
 
 // sub stream 相关
 constexpr s64 HCCL_SUB_STREAM_NUM_ZERO = 0;  // subStream 数量为0
@@ -150,7 +151,8 @@ public:
     u32 serverIdx{INVALID_UINT};                                          // Server在ranktable中的自然顺序（用户指定）
     u32 superDeviceId{INVALID_UINT};                                      // 当前rank所在的超节点内的device id（sdid）
     std::string superPodId{""};                                           // 当前rank所在超节点id
-    u32 superPodIdx{INVALID_UINT};                                        // SuperPod在ranktable中的自然顺序（用户指定）
+    u32 superPodIdx{INVALID_UINT};                                        // SuperPod在ranktable中的自然顺序（用户指定)
+    HcclIpAddress deviceVnicIp;                                           // 当前rank所归属网卡的虚拟ip                                                // 当前rank所在通信域的server数
 };
 
 constexpr s64 HCCL_SMALL_COUNT_128_KB = 128 * 1024;  // hccl 910B/310P duo卡单算子小数据量标准，暂定128kb

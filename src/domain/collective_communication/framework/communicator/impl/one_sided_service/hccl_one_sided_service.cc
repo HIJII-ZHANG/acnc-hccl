@@ -10,6 +10,7 @@
 
 #include "hccl_one_sided_service.h"
 #include "device_capacity.h"
+#include "sal_pub.h"
 
 namespace hccl {
 using namespace std;
@@ -18,6 +19,34 @@ HcclOneSidedService::HcclOneSidedService(unique_ptr<HcclSocketManager> &socketMa
     unique_ptr<NotifyPool> &notifyPool)
     : IHcclOneSidedService(socketManager, notifyPool)
 {
+}
+
+HcclOneSidedService::~HcclOneSidedService()
+{
+    HCCL_RUN_INFO("[~HcclOneSidedService] localRankId[%u] has registedMemCnt[%u] mem didn't dereg",
+                localRankInfo_.userRank, registedMemCnt_);
+    HcclResult ret = HCCL_SUCCESS;
+    for (auto it = desc2HcclBufMapIpc_.begin(); it != desc2HcclBufMapIpc_.end(); ++it) {
+        HcclBuf &buf = it->second;
+        do {
+            ret = HcclMemDereg(&buf);  // 需循环调用DeregMem来去注册内存(因为存在一块内存多次Reg的情况)
+            // 失败场景记录log即可，接着处理后面的mem
+            CHK_PRT_CONT(((ret != HCCL_SUCCESS) && (ret != HCCL_E_AGAIN)),
+                HCCL_ERROR("[~HcclOneSidedService] DeregMem IPC localRankId[%u] addr[%p] size[%lu] failed",
+                    localRankInfo_.userRank, buf.addr, buf.len));
+        } while (ret == HCCL_E_AGAIN);
+    }
+
+    for (auto it = desc2HcclBufMapRoce_.begin(); it != desc2HcclBufMapRoce_.end(); ++it) {
+        HcclBuf &buf = it->second;
+        do {
+            ret = HcclMemDereg(&buf);  // 需循环调用DeregMem来去注册内存(因为存在一块内存多次Reg的情况)
+            // 失败场景记录log即可，接着处理后面的mem
+            CHK_PRT_CONT(((ret != HCCL_SUCCESS) && (ret != HCCL_E_AGAIN)),
+                HCCL_ERROR("[~HcclOneSidedService] DeregMem ROCE localRankId[%u] addr[%p] size[%lu] failed",
+                    localRankInfo_.userRank, buf.addr, buf.len));
+        } while (ret == HCCL_E_AGAIN);
+    }
 }
 
 HcclResult HcclOneSidedService::IsUsedRdma(RankId remoteRankId, bool &useRdma)
@@ -75,6 +104,17 @@ HcclResult HcclOneSidedService::GetIsUsedRdma(RankId remoteRankId, bool &useRdma
     return HCCL_SUCCESS;
 }
 
+HcclResult HcclOneSidedService::ReMapMem(HcclMem *memInfoArray, u64 arraySize)
+{
+    HcclResult ret = HCCL_SUCCESS;
+    if (netDevRdmaCtx_) {  // 非roce场景不进行remap，返回success
+        ret = HcclMemRemap(netDevRdmaCtx_, memInfoArray, arraySize);
+    } else {
+        HCCL_RUN_INFO("[HcclOneSidedService][ReMapMem] doesn't support remap ipc mem, just return success");
+    }
+    return ret;
+}
+
 HcclResult HcclOneSidedService::RegMem(void* addr, u64 size, HcclMemType type, RankId remoteRankId,
     HcclMemDesc &localMemDesc)
 {
@@ -85,56 +125,113 @@ HcclResult HcclOneSidedService::RegMem(void* addr, u64 size, HcclMemType type, R
         return HCCL_E_UNAVAIL;
     }
 
+    bool useRdma = true;
     if (isUsedRdmaMap_.find(remoteRankId) == isUsedRdmaMap_.end()) {
-        bool useRdma = true;
         CHK_RET(IsUsedRdma(remoteRankId, useRdma));
         isUsedRdmaMap_[remoteRankId] = useRdma;
     }
-
-    std::shared_ptr<HcclOneSidedConn> tempConn;
-    auto it = oneSidedConns_.find(remoteRankId);
-    if (it == oneSidedConns_.end()) {
-        HcclRankLinkInfo remoteRankInfo;
-        CHK_RET(SetupRemoteRankInfo(remoteRankId, remoteRankInfo));
-        CHK_RET(CreateConnection(remoteRankId, remoteRankInfo, tempConn));
-        oneSidedConns_.emplace(remoteRankId, tempConn);
-    } else {
-        tempConn = it->second;
-    }
+    useRdma = isUsedRdmaMap_[remoteRankId];
 
     HcclMem localMem{type, addr, size};
-    HcclResult ret = tempConn->RegMem(localMem, localMemDesc);
-    if (ret == HCCL_E_AGAIN) {  // 调用RegMem前，内存已注册过
-        ret = HCCL_SUCCESS;
-    } else if (ret == HCCL_SUCCESS) {
-        registedMemCnt_++;
+    HcclBuf buf;
+    HcclResult ret = HcclMemReg(useRdma ? netDevRdmaCtx_ : netDevIpcCtx_, &localMem, &buf);
+    if ((ret != HCCL_SUCCESS) && (ret != HCCL_E_AGAIN)) {  // HCCL_E_AGAIN:调用HcclMemReg前，内存已注册过
+        return ret;
+    }
+    bool firstReg = (ret == HCCL_SUCCESS);
+
+    char *desc = nullptr;
+    uint64_t descLen = 0;
+    ret = HcclMemGetDesc(&buf, &desc, &descLen);
+    if (ret != HCCL_SUCCESS) {
+        HCCL_ERROR("[HcclOneSidedService][RegMem] get mem desc fialed, ret[%d]", ret);
+        throw logic_error("[HcclOneSidedService][RegMem] get mem desc fialed");
     }
 
-    return ret;
+    HcclMemDescData *ptr = static_cast<HcclMemDescData *>(static_cast<void *>(localMemDesc.desc));
+    ptr->localRankId = localRankInfo_.userRank;
+    ptr->remoteRankId = remoteRankId;
+    memset_s(ptr->memDesc, HCCL_MEM_DESC_STR_LEN, 0, HCCL_MEM_DESC_STR_LEN);
+    if (memcpy_s(ptr->memDesc, HCCL_MEM_DESC_STR_LEN, desc, descLen + 1) != EOK) {
+        HCCL_ERROR("[HcclOneSidedService][RegMem] memcpy_s memDesc failed");
+        return HCCL_E_INTERNAL;
+    }
+
+    if (firstReg) {
+        registedMemCnt_++;
+        std::string descStr(ptr->memDesc, HCCL_MEM_DESC_STR_LEN);
+        if (useRdma) {
+            desc2HcclBufMapRoce_.emplace(descStr, buf);
+        } else {
+            desc2HcclBufMapIpc_.emplace(descStr, buf);
+        }
+    }
+    HCCL_DEBUG("[HcclOneSidedService][RegMem] localRankId[%u] remoteRankId[%u] size[%lu] useRdma[%d] "
+        "desc2HcclBufMap[%u] registedMemCnt[%u]",
+        ptr->localRankId, ptr->remoteRankId, size, useRdma,
+        useRdma ? desc2HcclBufMapRoce_.size() : desc2HcclBufMapIpc_.size(), registedMemCnt_);
+    return HCCL_SUCCESS;
+}
+
+HcclBuf *HcclOneSidedService::GetHcclBufByDesc(std::string &descStr, bool useRdma)
+{
+    HcclBuf *buf = nullptr;
+    if (useRdma) {
+        auto iter = desc2HcclBufMapRoce_.find(descStr);
+        if (iter == desc2HcclBufMapRoce_.end()) {
+            HCCL_ERROR("[HcclOneSidedService][GetHcclBufByDesc]Roce memory is not registered, please register first.");
+            return nullptr;
+        }
+        buf = &(iter->second);
+    } else {
+        auto iter = desc2HcclBufMapIpc_.find(descStr);
+        if (iter == desc2HcclBufMapIpc_.end()) {
+            HCCL_ERROR("[HcclOneSidedService][GetHcclBufByDesc]Ipc memory is not registered, please register first.");
+            return nullptr;
+        }
+        buf = &(iter->second);
+    }
+    return buf;
 }
 
 HcclResult HcclOneSidedService::DeregMem(const HcclMemDesc &localMemDesc)
 {
-    const TransportMem::RmaMemDesc* ptr = reinterpret_cast<const TransportMem::RmaMemDesc*>(localMemDesc.desc);
+    const HcclMemDescData *ptr = static_cast<const HcclMemDescData *>(static_cast<const void *>(localMemDesc.desc));
     u32 remoteRankId = ptr->remoteRankId;
     if (registedMemCnt_ == 0) {
         HCCL_ERROR("[HcclOneSidedService][DeregMem]The number of registered memory is 0, please register first.");
         return HCCL_E_NOT_FOUND;
     }
 
-    auto it = oneSidedConns_.find(remoteRankId);
-    if (it == oneSidedConns_.end()) {
-        HCCL_ERROR("[HcclOneSidedService][DeregMem] connection not found, remoteRank[%u], "\
-            "please reg mem desc to create connection first.", remoteRankId);
-        return HCCL_E_NOT_FOUND;
+    bool useRdma = true;
+    if (isUsedRdmaMap_.find(remoteRankId) == isUsedRdmaMap_.end()) {
+        CHK_RET(IsUsedRdma(remoteRankId, useRdma));
+        isUsedRdmaMap_[remoteRankId] = useRdma;
     }
-    HcclResult ret = it->second->DeregMem(localMemDesc);
-    if (ret == HCCL_E_AGAIN) {  // 调用DeregMem后，去注册的内存还需继续使用（即有多次注册）
-        ret = HCCL_SUCCESS;
-    } else if (ret == HCCL_SUCCESS) {
+    useRdma = isUsedRdmaMap_[remoteRankId];
+
+    std::string descStr(ptr->memDesc, HCCL_MEM_DESC_STR_LEN);
+    HcclBuf *buf = GetHcclBufByDesc(descStr, useRdma);
+    CHK_PRT_RET(buf == nullptr, HCCL_ERROR("[HcclOneSidedService][DeregMem] GetHcclBufByDesc failed."), HCCL_E_INTERNAL);
+    HcclResult ret = HcclMemDereg(buf);
+    if ((ret != HCCL_SUCCESS) && (ret != HCCL_E_AGAIN)) {  // 调用DeregMem后，去注册的内存还需继续使用（即有多次注册
+        return ret;
+    }
+
+    HCCL_DEBUG("[HcclOneSidedService][DeregMem] localRankId[%u] remoteRankId[%u] size[%lu] useRdma[%d] "
+        "desc2HcclBufMap[%u] registedMemCnt[%u]",
+        ptr->localRankId, ptr->remoteRankId, buf->len, useRdma,
+        useRdma ? desc2HcclBufMapRoce_.size() : desc2HcclBufMapIpc_.size(), registedMemCnt_);
+
+    if (ret == HCCL_SUCCESS) {
         registedMemCnt_--;
+        if (useRdma) {
+            desc2HcclBufMapRoce_.erase(descStr);
+        } else {
+            desc2HcclBufMapIpc_.erase(descStr);
+        }
     }
-    return ret;
+    return HCCL_SUCCESS;
 }
 
 HcclResult HcclOneSidedService::SetupRemoteRankInfo(RankId remoteRankId, HcclRankLinkInfo &remoteRankInfo)
@@ -192,23 +289,63 @@ HcclResult HcclOneSidedService::CreateConnection(RankId remoteRankId, const Hccl
     u32 serverId = isUsedRdmaMap_.at(remoteRankId) ? 0 : rankTable_->rankList.at(localRankInfo_.userRank).serverIdx;
     EXECEPTION_CATCH(tempConn = std::make_shared<HcclOneSidedConn>(*ctx, *rankInfo, remoteRankInfo,
         socketManager_, notifyPool_, dispatcher_,
-        isUsedRdmaMap_[remoteRankId], sdid, serverId), return HCCL_E_PTR);
+        isUsedRdmaMap_[remoteRankId], sdid, serverId, trafficClass_, serviceLevel_), return HCCL_E_PTR);
 
     CHK_SMART_PTR_NULL(tempConn);
+    return HCCL_SUCCESS;
+}
+
+HcclResult HcclOneSidedService::Grant(const HcclMemDesc &localMemDesc, const ProcessInfo &remoteProcess)
+{
+    const HcclMemDescData *ptr = static_cast<const HcclMemDescData *>(static_cast<const void *>(localMemDesc.desc));
+    std::string descStr(ptr->memDesc, HCCL_MEM_DESC_STR_LEN);
+    HCCL_DEBUG("[HcclOneSidedService][Grant] desc[%s] length[%u]", descStr.c_str(), descStr.length());
+    HcclBuf *buf = GetHcclBufByDesc(descStr, false);
+    if (buf == nullptr) {
+        return HCCL_E_INTERNAL;
+    }
+
+    HcclMemGrantInfo grantInfo = {remoteProcess.sdid, static_cast<int32_t>(remoteProcess.pid)};
+    HcclResult ret = HcclMemGrant(buf, &grantInfo);
+    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[HcclOneSidedService][Grant] Grant error"), ret);
     return HCCL_SUCCESS;
 }
 
 HcclResult HcclOneSidedService::ExchangeMemDesc(RankId remoteRankId, const HcclMemDescs &localMemDescs,
     HcclMemDescs &remoteMemDescs, u32 &actualNumOfRemote, const std::string &commIdentifier, s32 timeoutSec)
 {
+    std::shared_ptr<HcclOneSidedConn> tempConn;
     auto it = oneSidedConns_.find(remoteRankId);
     if (it == oneSidedConns_.end()) {
-        HCCL_ERROR("[HcclOneSidedService][ExchangeMemDesc] connection not found, remoteRank[%u], "\
-            "please reg mem desc to create connection first.", remoteRankId);
-        throw logic_error("[HcclOneSidedService][ExchangeMemDesc]connection not found.");
+        HcclRankLinkInfo remoteRankInfo;
+        CHK_RET(SetupRemoteRankInfo(remoteRankId, remoteRankInfo));
+        CHK_RET(CreateConnection(remoteRankId, remoteRankInfo, tempConn));
+        CHK_RET(tempConn->Connect(commIdentifier, timeoutSec));
+        oneSidedConns_.emplace(remoteRankId, tempConn);
+    } else {
+        tempConn = it->second;
     }
 
-    return it->second->ExchangeMemDesc(localMemDescs, remoteMemDescs, actualNumOfRemote, commIdentifier, timeoutSec);
+    // HCCS下进行权限授予
+    if (!isUsedRdmaMap_[remoteRankId]) {
+        u32 pid;
+        SalGetBareTgid(&pid);
+        RankId localRankId = localRankInfo_.userRank;
+        u32 sid = rankTable_->rankList.at(localRankId).superDeviceId;
+        u32 serverId = rankTable_->rankList.at(localRankId).serverIdx;
+
+        // 收发进程信息
+        ProcessInfo localProcess = {pid, sid, serverId};
+        ProcessInfo remoteProcess = {0};
+        CHK_RET(tempConn->ExchangeIpcProcessInfo(localProcess, remoteProcess));
+        remoteProcess.sdid = localProcess.serverId == remoteProcess.serverId ? INVALID_INT : remoteProcess.sdid;
+
+        for (u32 i = 0; i < localMemDescs.arrayLength; ++i) {
+            CHK_RET(Grant(localMemDescs.array[i], remoteProcess));
+        }
+    }
+
+    return tempConn->ExchangeMemDesc(localMemDescs, remoteMemDescs, actualNumOfRemote);
 }
 
 void HcclOneSidedService::EnableMemAccess(const HcclMemDesc &remoteMemDesc, HcclMem &remoteMem)
@@ -240,8 +377,8 @@ void HcclOneSidedService::BatchPut(RankId remoteRankId, const HcclOneSideOpDesc*
 {
     auto it = oneSidedConns_.find(remoteRankId);
     if (it == oneSidedConns_.end()) {
-        HCCL_ERROR("[HcclMemCommunication][BatchPut] Cann't find oneSidedConn by remoteRank %u", remoteRankId);
-        throw out_of_range("Cann't find oneSidedConn by remoteRank.");
+        HCCL_ERROR("[HcclMemCommunication][BatchPut] Can't find oneSidedConn by remoteRank %u", remoteRankId);
+        throw out_of_range("Can't find oneSidedConn by remoteRank.");
     }
     it->second->BatchWrite(desc, descNum, stream);
 }
@@ -251,8 +388,8 @@ void HcclOneSidedService::BatchGet(RankId remoteRankId, const HcclOneSideOpDesc*
 {
     auto it = oneSidedConns_.find(remoteRankId);
     if (it == oneSidedConns_.end()) {
-        HCCL_ERROR("[HcclMemCommunication][BatchGet] Cann't find oneSidedConn by remoteRank %u", remoteRankId);
-        throw out_of_range("Cann't find oneSidedConn by remoteRank.");
+        HCCL_ERROR("[HcclMemCommunication][BatchGet] Can't find oneSidedConn by remoteRank %u", remoteRankId);
+        throw out_of_range("Can't find oneSidedConn by remoteRank.");
     }
     it->second->BatchRead(desc, descNum, stream);
 }

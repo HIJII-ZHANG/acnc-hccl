@@ -30,16 +30,18 @@ HcclResult AllGatherVOperator::SelectAlg(const std::string& tag, const OpParam& 
 {
     HcclResult ret;
 
-    if(deviceType_ == DevType::DEV_TYPE_910B) {
+    if (deviceType_ == DevType::DEV_TYPE_910_93) {
+        ret = SelectAlgfor91093(param, algName);
+    } else if (deviceType_ == DevType::DEV_TYPE_910B) {
         ret = SelectAlgfor910B(param, algName);
-    } else if(deviceType_ == DevType::DEV_TYPE_310P3) {
+    } else if (deviceType_ == DevType::DEV_TYPE_310P3) {
         ret = SelectAlgfor310P3(param, algName);
     } else {
-        HCCL_ERROR("[AllGatherVOperator][SelectAlg] all_gatherv only support A2 and 310P.");
+        HCCL_ERROR("[AllGatherVOperator][SelectAlg] all_gatherv only support A3, A2 and 310P.");
         return HCCL_E_NOT_SUPPORT;
     }
     CHK_PRT_RET(ret != HCCL_SUCCESS,
-        HCCL_ERROR("[AllGatherVOperator][SelectAlg]tag[%s], all_gatherv failed, return[%d]", tag.c_str(), ret), ret);
+        HCCL_ERROR("[AllGatherVOperator][SelectAlg]tag[%s], all_gather_v failed, return[%d]", tag.c_str(), ret), ret);
 
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB) {
         newTag = tag;
@@ -55,8 +57,52 @@ HcclResult AllGatherVOperator::SelectAlg(const std::string& tag, const OpParam& 
     }
 
     newTag += (param.aicpuUnfoldMode ? "_device" : "_host");
-    HCCL_INFO("[SelectAlg] all_gatherv newTag is [%s]", newTag.c_str());
+
+    if (UNLIKELY(EnvConfig::GetExternalInputDebugConfig() & HCCL_ALG)) {
+        HCCL_CONFIG_INFO(HCCL_ALG, 
+            "[AllGatherVOperator][SelectAlg]userRank_[%u], algName[%s] actual level1 algo[%d], level2 algo[%d]",
+            userRank_, algName.c_str(), algType_.algoLevel1, algType_.algoLevel2);
+    }
+    HCCL_INFO("[SelectAlg] all_gather_v newTag is [%s]", newTag.c_str());
     return ret;
+}
+
+HcclResult AllGatherVOperator::SelectAlgfor91093(const OpParam& param, std::string& algName)
+{
+    const HcclDataType dataType = param.VDataDes.dataType;
+    const auto *countsPtr = static_cast<const u64*>(param.VDataDes.counts);
+    const auto countsPerRank = std::vector<u64>(countsPtr, countsPtr + userRankSize_);
+    const u64 maxCount = *std::max_element(countsPerRank.begin(), countsPerRank.end());
+    const u32 unitSize = SIZE_TABLE[dataType];
+    const u64 dataSize = maxCount * unitSize; // 单位：字节
+    if (dataSize >= cclBufferManager_.GetInCCLbufferSize()) {
+        HCCL_WARNING("The current inCCLbufferSize is [%llu] bytes, change the HCCL_BUFFSIZE environment variable to "
+            "be greater than the current data volume[%llu] bytes to improve the performance of the 91093 environment.",
+            cclBufferManager_.GetInCCLbufferSize(), dataSize);
+    }
+
+    if (multiModuleDiffDeviceNumMode_ || multiSuperPodDiffServerNumMode_) {
+        HCCL_ERROR("[AllGatherVOperator][SelectAlgfor91093]not support mode, multiModuleDiffDeviceNumMode_[%u], "
+            "multiSuperPodDiffServerNumMode_[%u]", multiModuleDiffDeviceNumMode_, multiSuperPodDiffServerNumMode_);
+        return HCCL_E_NOT_SUPPORT;
+    } else {
+        if (!(algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING ||
+            algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_WHOLE_RING ||
+            algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB)) {
+            algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_NHR;
+            HCCL_WARNING("[AllGatherVOperator][SelectAlgfor91093] only support ring, NB and NHR in AlgoLevel1 yet, "
+                "default is algType=NHR.");
+        }
+        if (IsSupportUnifiedMarch(param, topoType_, serverNum_, superPodNum_)) {
+            algName = "AllGatherVSemiRingExecutor";
+        } else if (topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) {
+            algName = "AlignedAllGatherVDoubleRingFor91093Executor";
+        } else {
+            algName = "AllGatherVRingFor91093Executor";
+        }
+    }
+    HCCL_INFO("[SelectAlgfor91093] all_gather_v SelectAlgfor91093 is algName [%s]", algName.c_str());
+    return HCCL_SUCCESS;
 }
 
 HcclResult AllGatherVOperator::SelectAlgfor910B(const OpParam& param, std::string& algName)
@@ -99,7 +145,7 @@ HcclResult AllGatherVOperator::SelectAlgfor910B(const OpParam& param, std::strin
 HcclResult AllGatherVOperator::SelectAlgfor310P3(const OpParam& param, std::string& algName)
 {
     algName = "AllGatherVFor310PExecutor";
-    HCCL_INFO("[SelectAlgfor310P3] all_gatherv SelectAlgfor310P3 is algName [%s]", algName.c_str());
+    HCCL_INFO("[SelectAlgfor310P3] all_gather_v SelectAlgfor310P3 is algName [%s]", algName.c_str());
     return HCCL_SUCCESS;
 }
 

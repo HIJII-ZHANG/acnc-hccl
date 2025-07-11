@@ -11,7 +11,7 @@
 #ifndef CALC_P2P_TRANSPORT_REQ_H
 #define CALC_P2P_TRANSPORT_REQ_H
 
-#include "calc_transport_req_base_pub.h"
+#include "calc_transport_req_base.h"
 
 namespace hccl {
 class CalcP2PTransportReq : public CalcTransportReqBase {

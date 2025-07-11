@@ -32,9 +32,9 @@ constexpr u64 MAX_ALLTOALLV_DIRECT_FULLMESH_SERVER_NUM = 8; // alltoallv在A2支
 bool IsAlgTypeLevel0Mesh(AlgTypeLevel0 &originalAlgTypeLevel0);
 
 bool IsSupportUnifiedMarch(const OpParam& param, const TopoType& topoType, u32 serverNum, u32 superPodNum);
-bool IsAlltoAllvcSatisfyBufferSize(const OpParam& param, u32 userRankSize);
+bool IsAlltoAllvcSatisfyBufferSize(const OpParam& param, u32 userRankSize, u64 cclbufferSize);
 bool IsSupportDirectFullmeshForAlltoallv(const OpParam& param, DevType deviceType, bool useSuperPodMode, u32 serverNum,
-    bool isSingleMeshAggregation, u32 userRankSize, bool multiModuleDiffDeviceNumMode = false);
+    bool isSingleMeshAggregation, u32 userRankSize, u64 cclbufferSize);
 bool FullmeshPairwiseSatisfyHighPerfAlltoallMeshCondition(DevType deviceType, u32 rankSize, bool useSuperPodMode);
 bool SatisfyIntraSuperPod(DevType deviceType, u32 rankSize, bool useSuperPodMode, u32 superPodNum = 1);
 bool HcclOpInplaceDefaultCase(const OpParam &param, u8 &isInplaceStatus);

@@ -36,6 +36,9 @@ HcclResult CollAlignedAllGatherDoubleRingFor91093Executor::DoubleRingAllGather(
     Stream stream, s32 profStage, const u64 baseOffset, const HcomCollOpInfo *opInfo,
     const std::vector<std::vector<Slice>> multRingsUserMemSlice)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollAlignedAllGatherDoubleRingFor91093Executor]userRank[%u], count[%llu]",
+        topoAttr_.userRank, count);
+
     (void)tag;
     HCCL_INFO("[CollAlignedAllGatherDoubleRingFor91093Executor][DoubleRingAllGather] DoubleRingAllGather starts");
     HcclResult ret = HCCL_SUCCESS;
@@ -75,11 +78,13 @@ HcclResult CollAlignedAllGatherDoubleRingFor91093Executor::DoubleRingAllGather(
         HCCL_ERROR("[CollAlignedAllGatherDoubleRingFor91093Executor][DoubleRingAllGather]Double ring "
         "all gather failed, return[%d]", ret), ret);
 
+    // 空拷贝用于后续操作附着
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     ret = RunTemplate(tempAlg, level0ZeroCommInfo);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAlignedAllGatherDoubleRingFor91093Executor][DoubleRingAllGather] Double ring "
                    "all gather failed, return[%d]", ret), ret);
+    // 添加空task,保证执行时不乱序
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     return HCCL_SUCCESS;
 }

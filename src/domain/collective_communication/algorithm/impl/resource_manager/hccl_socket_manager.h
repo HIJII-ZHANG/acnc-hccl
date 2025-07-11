@@ -22,6 +22,7 @@
 #include "hccl_common.h"
 #include "hccl_ip_address.h"
 #include "hccl_socket.h"
+#include "common.h"
 
 namespace hccl {
 class PortInfo {
@@ -117,7 +118,8 @@ public:
         bool isSupportReuse = false);
 
     HcclResult WaitLinksEstablishCompleted(HcclSocketRole localRole,
-        std::map <u32, std::vector<std::shared_ptr<HcclSocket> > > &socketsMap, std::map<u32, u32> &dstRankToUserRank);
+        std::map <u32, std::vector<std::shared_ptr<HcclSocket> > > &socketsMap, std::map<u32, u32> &dstRankToUserRank,
+        RankInfo &loaclRankInfo, RankInfo &remoteRankInfo);
     void DestroySockets();
 
     HcclResult SetStopFlag(bool value);

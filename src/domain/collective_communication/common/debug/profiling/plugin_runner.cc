@@ -20,6 +20,7 @@ PluginRunner::~PluginRunner() {}
 
 HcclResult isStreamCapture(rtStream_t stream, bool& isCapture)
 {   
+#ifndef HCCD
     isCapture = false;
     DevType devType;   
     CHK_RET(hrtGetDeviceType(devType));
@@ -61,6 +62,10 @@ HcclResult isStreamCapture(rtStream_t stream, bool& isCapture)
         }
     }
     return HCCL_SUCCESS;
+#else
+    HCCL_WARNING("[PluginRunner][isStreamCapture]Stream capture not support!");
+    return HCCL_SUCCESS;
+#endif
 }
 
 template <typename T> 

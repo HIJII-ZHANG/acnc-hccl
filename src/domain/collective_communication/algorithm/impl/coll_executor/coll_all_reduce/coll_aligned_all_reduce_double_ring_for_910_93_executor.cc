@@ -31,7 +31,8 @@ HcclResult CollAlignedAllReduceDoubleRingFor91093Executor::DoubleRingReduceScatt
     const std::vector<std::vector<Slice>> multRingsUserMemSlice, const bool disableDMAReduce)
 {
     (void)tag;
-    HCCL_INFO("[CollAlignedAllReduceDoubleRingFor91093Executor][DoubleRingReduceScatter] DoubleRingReduceScatter starts");
+    HCCL_CONFIG_INFO(HCCL_ALG,
+        "[CollAlignedAllReduceDoubleRingFor91093Executor][DoubleRingReduceScatter] DoubleRingReduceScatter starts");
     HcclResult ret = HCCL_SUCCESS;
     u32 ringNum = multRingsSliceZero.size();
     CHK_RET(CheckCommSize(COMM_LEVEL0, ringNum));
@@ -68,6 +69,7 @@ HcclResult CollAlignedAllReduceDoubleRingFor91093Executor::DoubleRingReduceScatt
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAlignedAllReduceDoubleRingFor91093Executor][DoubleRingReduceScatter] Double ring "
                    "reduce scatter failed,return[%d]", ret), ret);
+    // 空拷贝用于后续操作附着
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     ret = RunTemplate(tempAlg, level0RingCommInfo);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
@@ -85,7 +87,8 @@ HcclResult CollAlignedAllReduceDoubleRingFor91093Executor::DoubleRingAllGather(
     const std::vector<std::vector<Slice>> multRingsUserMemSlice)
 {
     (void)tag;
-    HCCL_INFO("[CollAlignedAllReduceDoubleRingFor91093Executor][DoubleRingAllGather] DoubleRingAllGather starts");
+    HCCL_CONFIG_INFO(HCCL_ALG,
+        "[CollAlignedAllReduceDoubleRingFor91093Executor][DoubleRingAllGather] DoubleRingAllGather starts");
     HcclResult ret = HCCL_SUCCESS;
     u32 ringNum = multRingsSliceZero.size();
     CHK_RET(CheckCommSize(COMM_LEVEL0, ringNum));
@@ -123,12 +126,13 @@ HcclResult CollAlignedAllReduceDoubleRingFor91093Executor::DoubleRingAllGather(
         HCCL_ERROR("[CollAlignedAllReduceDoubleRingFor91093Executor][DoubleRingAllGather]Double ring "
         "all gather failed, return[%d]", ret), ret);
 
+    // 空拷贝用于后续操作附着
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     ret = RunTemplate(tempAlg, level0ZeroCommInfo);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAlignedAllReduceDoubleRingFor91093Executor][DoubleRingAllGather] Double ring "
                    "all gather failed,return[%d]", ret), ret);
-
+    // 添加空task,保证执行时不乱序
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     return HCCL_SUCCESS;
 }

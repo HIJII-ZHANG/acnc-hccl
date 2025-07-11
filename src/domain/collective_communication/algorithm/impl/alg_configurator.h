@@ -56,7 +56,7 @@ public:
 private:
     HcclAlgoAttr &algoAttr_;
     HcclTopoAttr &topoAttr_;
-    u8 deterministic_;      // 确定性计算配置：0-关闭，1-开启，其他数字暂时保留
+    u8 deterministic_;  // 确定性计算配置：0-关闭，1-开启确定性（不开启规约保序），2-开启确定性&规约保序 其他数字暂时保留
     TopoType topoType_ = TopoType::TOPO_TYPE_COMMON;
 
     std::map<HcclCMDType, AlgType> algType_ = {

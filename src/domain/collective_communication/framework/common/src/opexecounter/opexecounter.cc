@@ -10,7 +10,7 @@
 
 #include "opexecounter.h"
 #include "adapter_rts_common.h"
-#include "externalinput_pub.h"
+#include "env_config.h"
 #include "dispatcher.h"
 namespace hccl {
 OpExeCounter& OpExeCounter::GetInstance(s32 deviceLogicID)
@@ -27,7 +27,7 @@ HcclResult OpExeCounter::InitCounter()
 {
     DevType devType = DevType::DEV_TYPE_910;
     CHK_RET(hrtGetDeviceType(devType));
-    if (!GetExternalInputOpCounter() || devType == DevType::DEV_TYPE_310P3 || devType == DevType::DEV_TYPE_910 ||
+    if (!GetExternalInputStuckDetect() || devType == DevType::DEV_TYPE_310P3 || devType == DevType::DEV_TYPE_910 ||
         devType == DevType::DEV_TYPE_310P1) {
         isNeedOpCounter_ = false;
         HCCL_RUN_INFO("do not need add counter");
@@ -86,7 +86,7 @@ HcclResult OpExeCounter::DeInitCounter()
         return HCCL_SUCCESS;
     }
     refCount_--;
-    if (refCount_ == 0) {
+    if (refCount_ <= 0) {
         std::pair<int32_t, int32_t> counter;
         CHK_RET(GetCounter(counter));
         HCCL_RUN_INFO("[OpExeCounter][DeInitCounter] head counter[%d], tail counter[%d]",
@@ -147,7 +147,7 @@ HcclResult OpExeCounter::GetCounter(std::pair<int32_t, int32_t> &counter)
 
 HcclResult OpExeCounter::GetOpCountInfo(OpCounterInfo &opCounterInfo)
 {
-    opCounterInfo.isEnableCounter = GetExternalInputOpCounter();
+    opCounterInfo.isEnableCounter = GetExternalInputStuckDetect();
     if (!isNeedOpCounter_) {
         HCCL_DEBUG("do not need add counter");
         return HCCL_SUCCESS;

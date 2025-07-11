@@ -165,7 +165,11 @@ HcclResult AllReduceRing::RunReduceScatter(u32 rank, u32 rankSize, const std::ve
     CHK_RET(tempAlg->RegisterProfiler(
         profilerInput_.planeID, profilerInput_.stage, profilerInput_.step, stream_));
 
-    return tempAlg->RunAsync(rank, rankSize, links);
+    HcclResult ret = tempAlg->RunAsync(rank, rankSize, links);
+    if (ret != HCCL_SUCCESS) {
+        return ret;
+    }
+    return HCCL_SUCCESS;
 }
 
 HcclResult AllReduceRing::RunAllGather(u32 rank, u32 rankSize, const std::vector<LINK> &links)
@@ -187,7 +191,35 @@ HcclResult AllReduceRing::RunAllGather(u32 rank, u32 rankSize, const std::vector
     CHK_RET(tempAlg->RegisterProfiler(
         profilerInput_.planeID, profilerInput_.stage, profilerInput_.step, stream_));
 
-    return tempAlg->RunAsync(rank, rankSize, links);
+    HcclResult ret = tempAlg->RunAsync(rank, rankSize, links);
+    if (ret != HCCL_SUCCESS) {
+        return ret;
+    }
+    return HCCL_SUCCESS;
 }
+HcclResult AllReduceRing::GetNslbAdjInfo(const u32 rank, const u32 rankSize,
+                                         const std::vector<LINK> &links, AdjInfo& nslbAdjInfo)
+{
+    u32 ringNextRank = (rank + 1) % rankSize;
+    LINK nslbNext = links[ringNextRank];
+    // reduce_scatter 的ring
+    NslbDpAdjInfo adjInfoStep = {0};
+    nslbAdjInfo.dstRankNum = 1;
+    adjInfoStep.dstLocalRankId = nslbNext->GetRemoteRank();
+    adjInfoStep.phaseId = 1;
+    adjInfoStep.rev = 0;
+    nslbAdjInfo.nsAdjInfo.push_back(adjInfoStep);
+
+    LINK right = links[ringNextRank];
+    // all_gather 的ring
+    NslbDpAdjInfo nextAdjInfo = {0};
+    nslbAdjInfo.dstRankNum = nslbAdjInfo.dstRankNum + 1;
+    nextAdjInfo.dstLocalRankId = right->GetRemoteRank();
+    nextAdjInfo.phaseId = nslbAdjInfo.nsAdjInfo[0].phaseId + 1;
+    nextAdjInfo.rev = 0;
+    nslbAdjInfo.nsAdjInfo.push_back(nextAdjInfo);
+    return HCCL_SUCCESS;
+}
+
 REGISTER_TEMPLATE(TemplateType::TEMPLATE_ALL_REDUCE_RING, AllReduceRing);
 }  // namespace hccl

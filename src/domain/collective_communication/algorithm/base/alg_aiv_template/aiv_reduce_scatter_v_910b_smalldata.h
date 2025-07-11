@@ -46,17 +46,17 @@ __aicore__ inline void AivReduceScatterVSmall910B::Process(GM_ADDR input, GM_ADD
             extraArgs.sendCounts[block_idx]);
         // 卡间同步
         pipe_barrier(PIPE_ALL);
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffset + block_idx * FLAG_SIZE), tag);
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffset + block_idx * FLAG_SIZE), localSetTensor, tag);
 
         // 对端到ub
-        CheckFlagNew((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffset + rank_ * FLAG_SIZE), tag);
+        WaitSignalValue((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffset + rank_ * FLAG_SIZE), localCheckTensor, tag);
         pipe_barrier(PIPE_ALL);
         LocalTensor<T> localIn = inOutQue.AllocTensor<T>();
         DataCopyGM2UB(localIn, cclGTOther[extraArgs.sendDispls[rank_]], extraArgs.sendCounts[rank_]);
         inOutQue.EnQue(localIn);
         LocalTensor<T> localOut = inOutQue.DeQue<T>();
 
-        CheckFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffset + rank_ * FLAG_SIZE), tag);
+        WaitSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffset + rank_ * FLAG_SIZE), localCheckTensor, tag);
         pipe_barrier(PIPE_ALL);
         SetAtomicOp<T>(reduceOp_);
         DataCopyUB2GM(outputGT, localOut, extraArgs.sendCounts[rank_]);
@@ -67,7 +67,7 @@ __aicore__ inline void AivReduceScatterVSmall910B::Process(GM_ADDR input, GM_ADD
     } else {
         CpGM2GM(outputGM, inputGM + extraArgs.sendDispls[rank_], extraArgs.sendCounts[rank_]);
         // 卡内同步
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffset + rank_ * FLAG_SIZE), tag);
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffset + rank_ * FLAG_SIZE), localSetTensor, tag);
     }
 }
 

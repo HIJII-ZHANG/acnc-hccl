@@ -39,7 +39,7 @@ template <typename P> static CollAlgOperator *DefaultOpCreator(AlgConfigurator* 
     static_assert(std::is_base_of<CollAlgOperator, P>::value, "CollAlgOp type must derived from Hccl::CollAlgOperator");
     return new (std::nothrow) P(algConfigurator, cclBufferManager, dispatcher, topoMatcher);
 }
-
+   
 class CollAlgOpRegistry {
 public:
     static CollAlgOpRegistry &Instance();

@@ -39,6 +39,7 @@ HcclResult RegisterAlgCallBack(void* userPtr, TaskCallBack callback, s32 deviceL
     auto* aivCallBack = GetTaskCallBack(deviceLogicID);
     auto* aivCallBackUserPtr = GetAivCallBackUserPtr(deviceLogicID);
     if (aivCallBack == nullptr || aivCallBackUserPtr == nullptr){
+        HCCL_ERROR("[alg_profiling][RegisterAlgCallBack] get callback ptr fail");
         return HCCL_E_PTR;
     }
     *aivCallBack = callback;
@@ -46,31 +47,17 @@ HcclResult RegisterAlgCallBack(void* userPtr, TaskCallBack callback, s32 deviceL
     return HCCL_SUCCESS;
 }
 
-void SetupTaskParaAiv(AivTaskPara& taskPara, TaskParaAiv& para, HcclRtStream stream, u64 beginTime)
-{
-    taskPara.isMainStream = true;
-    taskPara.stream = stream;
-    taskPara.beginTime = beginTime;
-    taskPara.aiv = para;
-}
-
-HcclResult TaskAivProfiler(HcclCMDType cmdType, u32 tag, u64 size, u32 blockDim, u32 rankSize,
-                           void* flagMem, rtStream_t stream, s32 aivRdmaStep, uint64_t beginTime)
-{
+HcclResult TaskAivProfiler(struct TaskParaGeneral& taskParaGeneral){
     s32 deviceLogicID = INVALID_INT;
-    hrtGetDevice(&deviceLogicID);
+    CHK_RET(hrtGetDevice(&deviceLogicID));
     auto* aivCallBack = GetTaskCallBack(deviceLogicID);
     auto* aivCallBackUserPtr = GetAivCallBackUserPtr(deviceLogicID);
 
     if (aivCallBack==nullptr || aivCallBackUserPtr==nullptr || (*aivCallBack) == nullptr || (*aivCallBackUserPtr) == nullptr){
+        HCCL_ERROR("[alg_profiling][TaskAivProfiler] aivCallBack or aivCallBackUserPtr is invalid");
         return HCCL_E_PTR;
     }
 
-    TaskParaAiv para(cmdType, tag, size, blockDim, rankSize, aivRdmaStep, flagMem);
-    AivTaskPara taskPara;
-
-    SetupTaskParaAiv(taskPara, para, stream, beginTime);
-
-    (*aivCallBack)((*aivCallBackUserPtr), static_cast<void *>(&taskPara), sizeof(struct AivTaskPara));
+    (*aivCallBack)((*aivCallBackUserPtr), static_cast<void *>(&taskParaGeneral), sizeof(struct TaskParaGeneral));
     return HCCL_SUCCESS;
 }

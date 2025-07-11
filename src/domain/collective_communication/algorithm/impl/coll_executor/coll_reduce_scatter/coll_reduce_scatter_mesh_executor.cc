@@ -28,7 +28,7 @@ void CollReduceScatterMeshExecutor::ParseParam(const OpParam& param)
     bool isInlineReduce = IsSupportSDMAReduce(param.inputPtr, param.outputPtr, param.DataDes.dataType,
         param.reduceType);
     meshSinglePlane_ = (topoAttr_.deviceType == DevType::DEV_TYPE_910B) &&
-        topoMatcher_->GetExternalInputHcclDeterministic() == DETERMINISTIC_CONFIG_DISABLE &&
+        topoMatcher_->GetExternalInputHcclDeterministic() == DETERMINISTIC_DISABLE &&
         isInlineReduce && (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
 
     // 是否需要scratch memory
@@ -128,6 +128,7 @@ bool CollReduceScatterMeshExecutor::IsHugeData(const u64 curSize, OpParam *param
 
 HcclResult CollReduceScatterMeshExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollReduceScatterMeshExecutor][KernelRun] userRank[%u] starts.", topoAttr_.userRank);
     u32 perDataSize = SIZE_TABLE[param.DataDes.dataType];
 
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
@@ -224,7 +225,7 @@ HcclResult CollReduceScatterMeshExecutor::KernelRun(const OpParam &param, ExecMe
 
     HcomCollOpInfo *opInfoPtr = nullptr;
 
-    if (topoMatcher_->GetExternalInputHcclDeterministic() == DETERMINISTIC_CONFIG_DISABLE &&
+    if (topoMatcher_->GetExternalInputHcclDeterministic() == DETERMINISTIC_DISABLE &&
         (param.DataDes.dataType != HCCL_DATA_TYPE_INT64) &&
         (topoAttr_.deviceType == DevType::DEV_TYPE_910B && param.reduceType != HCCL_REDUCE_PROD)) {
         CHK_RET(MultiStreamReduceScatterMeshAtomic(param.tag, reduceScatterMeshInput, reduceScatterMeshOutput, // 非确定性
@@ -244,6 +245,50 @@ HcclResult CollReduceScatterMeshExecutor::KernelRun(const OpParam &param, ExecMe
     CHK_SMART_PTR_NULL(srcMem);
     CHK_RET(HcclD2DMemcpyAsync(dispatcher_, execMem.outputMem, srcMem, const_cast<Stream&>(param.stream)));
 
+    return HCCL_SUCCESS;
+}
+
+
+HcclResult CollReduceScatterMeshExecutor::Getlevel1CommRank(SubCommInfo& level1CommInfo)
+{
+    CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+
+    u32 commIndex = level0CommInfo.localRank; // 找到rank所在的节点间平面
+    CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
+
+    level1CommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollReduceScatterMeshExecutor::SelectTempAlg(std::unique_ptr<AlgTemplateBase> &level1TempAlg, u32 level1RankSize)
+{
+    if (level1RankSize > 1) {
+        if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_REDUCESCATTER_RING, dispatcher_);
+            CHK_SMART_PTR_NULL(level1TempAlg);
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_REDUCESCATTER_NHR, dispatcher_);
+            HCCL_INFO("reducescatter mesh: using nhr algo inter-server.");
+            CHK_SMART_PTR_NULL(level1TempAlg);
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_REDUCESCATTER_NHR_V1, dispatcher_);
+            HCCL_INFO("reducescatter mesh: using nhr_v1 algo inter-server.");
+            CHK_SMART_PTR_NULL(level1TempAlg);
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_REDUCESCATTER_NB, dispatcher_);
+            HCCL_INFO("reducescatter mesh: using nonuniform-bruck algo inter-server.");
+            CHK_SMART_PTR_NULL(level1TempAlg);
+        } else {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_REDUCESCATTER_RECURSIVE_HD, dispatcher_);
+            CHK_SMART_PTR_NULL(level1TempAlg);
+        }
+    }
     return HCCL_SUCCESS;
 }
 

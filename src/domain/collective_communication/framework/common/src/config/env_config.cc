@@ -17,6 +17,7 @@
 #include "log.h"
 #include "sal_pub.h"
 #include "mmpa_api.h"
+#include "config_log.h"
 
 using namespace hccl;
 
@@ -28,7 +29,10 @@ constexpr char ENV_EMPTY_STRING[] = "EmptyString";
 constexpr char HCCL_AUTO_PORT_CONFIG[] = "auto"; // 端口范围配置为auto时，由OS分配浮动监听端口
 constexpr u32 MAX_PORT_NUMBER = 65535; // 合法端口号的上限
 constexpr u32 HCCL_SOCKET_PORT_RANGE_AUTO = 0; // 需要保留的
-
+const std::string CLUSTER_HEART_CONFIG = "cluster_heart:";
+const std::string STUCK_DETECTION_CONFIG = "stuck_detection:";
+const std::string CONNECTION_FAULT_DETCTION_TIME = "connection_fault_detction_time:";
+constexpr static const s32 HCCL_MAX_LINK_TIME_OUT_S  = (120 * 60); // HCCL 最大探测超时时间设置为120*60s
 HcclResult InitEnvConfig()
 {
     std::lock_guard<std::mutex> lock(g_envConfigMutex);
@@ -65,6 +69,16 @@ const u32& EnvConfig::GetExternalInputRdmaServerLevel()
     return g_envConfig.rdmaServerLevel;
 }
 
+const u64& EnvConfig::GetExternalInputDebugConfig()
+{
+    return g_envConfig.debugConfig;
+}
+
+void EnvConfig::SetExternalInputDebugConfig(u64 value)
+{
+    g_envConfig.debugConfig = value;
+}
+
 const std::vector<HcclSocketPortRange> &GetExternalInputHostSocketPortRange()
 {
     std::lock_guard<std::mutex> lock(g_envConfigMutex);
@@ -76,6 +90,12 @@ const std::vector<HcclSocketPortRange> &GetExternalInputNpuSocketPortRange()
     std::lock_guard<std::mutex> lock(g_envConfigMutex);
     return g_envConfig.npuSocketPortRange;
 }
+
+s32& GetExternalInputDfsConnectionFaultDetctionTime()
+{
+    return g_envConfig.dfsConnectionFaultDetctionTime;
+}
+
 HcclResult InitEnvParam()
 {
     HcclResult ret = ParseHostSocketPortRange();
@@ -92,6 +112,13 @@ HcclResult InitEnvParam()
         HCCL_ERROR("[InitEnvParam]errNo[0x%016llx] In init environtment param, parse "
             "HCCL_NPU_SOCKET_PORT_RANGE failed. errorno[%d]", HCCL_ERROR_CODE(ret), ret), ret);
 
+    ret = ParseDFSConfig();
+    RPT_ENV_ERR(ret != HCCL_SUCCESS, "EI0001", std::vector<std::string>({"env", "tips"}),
+        std::vector<std::string>({"HCCL_DFS_CONFIG", "Please check whether the DFS config is valid."}));
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[InitEnvParam]errNo[0x%016llx] In init environtment param, parse "
+            "HCCL_DFS_CONFIG failed. errorno[%d]", HCCL_ERROR_CODE(ret), ret), ret);
+
     ret = g_envConfig.ParseRDMATrafficClass();
     RPT_ENV_ERR(ret != HCCL_SUCCESS, "EI0001", std::vector<std::string>({"env", "tips"}),
         std::vector<std::string>({"HCCL_RDMA_TC", "Value range[0, 255], Must be a multiple of 4"}));
@@ -106,6 +133,12 @@ HcclResult InitEnvParam()
         HCCL_ERROR("[InitEnvParam]errNo[0x%016llx] In init environtment param, parse "
             "HCCL_RDMA_SL failed. errorno[%d]", HCCL_ERROR_CODE(ret), ret), ret);
 
+    ret = g_envConfig.ParseDebugConfig();
+    RPT_ENV_ERR(ret != HCCL_SUCCESS, "EI0001", std::vector<std::string>({"env", "tips"}),
+        std::vector<std::string>({"HCCL_DEBUG_CONFIG", "Please check whether the env is valid"}));
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[InitEnvParam]errNo[0x%016llx] In init environtment param, parse "
+        "HCCL_DEBUG_CONFIG failed. errorno[%d]", HCCL_ERROR_CODE(ret), ret), ret);
     return HCCL_SUCCESS;
 }
 
@@ -382,4 +415,137 @@ HcclResult EnvConfig::ParseRDMAServerLevel()
     MM_SYS_GET_ENV(MM_ENV_HCCL_RDMA_SL, mmSysGetEnvValue);
     std::string envValue = (mmSysGetEnvValue != nullptr) ? mmSysGetEnvValue : "EmptyString";
     return ParseEnvConfig(param, envValue, g_envConfig.rdmaServerLevel);
+}
+
+HcclResult EnvConfig::ParseDebugConfig()
+{
+    char* env = nullptr; // 环境变量值
+    MM_SYS_GET_ENV(MM_ENV_HCCL_DEBUG_CONFIG, env);
+    if (env == nullptr) {
+        HCCL_RUN_INFO("HCCL_DEBUG_CONFIG is not set, debugConfig set by default to 0x%llx", g_envConfig.debugConfig);
+        return HCCL_SUCCESS;
+    }
+
+    bool invert = (env[0] == '^');
+    g_envConfig.debugConfig = invert ? ~0ULL : 0ULL; // 第一个字符是'^', 使用取反模式, 用户配置的项关闭, 未配置的项打开
+    char* configValue = (env[0] == '^') ? env + 1 : env; // 去掉'^'符号
+    char* configDup = strdup(configValue); // 需要使用strdup避免修改字符串常量
+    CHK_PTR_NULL(configDup);
+
+    char* left = nullptr;
+    char* subConfig = strtok_r(configDup, ",", &left); // 按逗号分割
+    while (subConfig != nullptr) {
+        u64 mask = 0;
+        if (strcasecmp(subConfig, "ALG") == 0) {
+            mask = HCCL_ALG;
+        } else if (strcasecmp(subConfig, "TASK") == 0) {
+            mask = HCCL_TASK;
+        } else {
+            HCCL_ERROR("HCCL_DEBUG_CONFIG:%s is invalid, subConfig:%s is not supported", env, subConfig);
+            free(configDup);
+            return HCCL_E_PARA;
+        }
+        g_envConfig.debugConfig = invert ? (g_envConfig.debugConfig & (~mask)) :
+                                           (g_envConfig.debugConfig | mask);
+        subConfig = strtok_r(nullptr, ",", &left);
+    }
+    free(configDup);
+    HCCL_RUN_INFO("HCCL_DEBUG_CONFIG[%s], set debugConfig[0x%llx]", env, g_envConfig.debugConfig);
+    return HCCL_SUCCESS;
+}
+
+HcclResult ParseSingleDFSConfigItem(const std::string& dfsConfigEnv, const std::string& configName,
+    std::string& configResult)
+{
+    size_t start = dfsConfigEnv.find(configName);
+    if (start == std::string::npos) {
+        HCCL_INFO("[Parse] DFS config item [%s] is not found.", configName.c_str());
+        return HCCL_SUCCESS;
+    }
+    size_t end = dfsConfigEnv.find(",", start);
+    if (end == std::string::npos) {
+        configResult = dfsConfigEnv.substr(start + configName.size());
+    } else {
+        configResult = dfsConfigEnv.substr(start + configName.size(), end - start - configName.size());
+    }
+    HCCL_INFO("[Parse] DFS config item %s [%s]", configName.c_str(), configResult.c_str());
+    return HCCL_SUCCESS;
+}
+
+HcclResult ParseDFSConfig()
+{
+    char* dfsConfigValue = nullptr;
+    MM_SYS_GET_ENV(MM_ENV_HCCL_DFS_CONFIG, dfsConfigValue);
+    std::string dfsConfigEnv = (dfsConfigValue != nullptr) ? dfsConfigValue : "EmptyString";
+    if (dfsConfigEnv == "EmptyString") {
+        HCCL_RUN_INFO("[Parse][HCCL_DFS_CONFIG] Parse environmental variable HCCL_DFS_CONFIG is not set.");
+        return HCCL_SUCCESS;
+    }
+
+    //去除空格
+    dfsConfigEnv.erase(std::remove(dfsConfigEnv.begin(), dfsConfigEnv.end(), ' '), dfsConfigEnv.end());
+
+    std::transform(dfsConfigEnv.begin(), dfsConfigEnv.end(), dfsConfigEnv.begin(), ::tolower);
+
+    std::string heartbeatSwitch;
+    CHK_RET(ParseSingleDFSConfigItem(dfsConfigEnv, CLUSTER_HEART_CONFIG, heartbeatSwitch));
+    if (heartbeatSwitch == "off") {
+        g_envConfig.enableClusterHeartBeat = false;
+    } else if (heartbeatSwitch == "on") {
+        g_envConfig.enableClusterHeartBeat = true;
+    } else {
+        HCCL_RUN_WARNING("[ParseDFSConfig] HCCL_DFS_CONFIG-cluster_heart was configed to [%s], please configed to"\
+            "'on' or 'off'", heartbeatSwitch.c_str());
+    }
+
+    std::string stuckDetectSwitch;
+    CHK_RET(ParseSingleDFSConfigItem(dfsConfigEnv, STUCK_DETECTION_CONFIG, stuckDetectSwitch));
+    if (stuckDetectSwitch == "off") {
+        g_envConfig.opCounterEnable = false;
+    } else if (stuckDetectSwitch == "on") {
+        g_envConfig.opCounterEnable = true;
+    } else {
+        HCCL_RUN_WARNING("[ParseDFSConfig] HCCL_DFS_CONFIG-stuck_detection was configed to [%s], please configed to"\
+            "'on' or 'off'", stuckDetectSwitch.c_str());
+    }
+
+    // 解析连接故障检测时间
+    std::string connectionDefaultDetctionTime = "";
+    CHK_RET(ParseSingleDFSConfigItem(dfsConfigEnv, CONNECTION_FAULT_DETCTION_TIME, connectionDefaultDetctionTime));
+    if (connectionDefaultDetctionTime.empty()) {
+        g_envConfig.dfsConnectionFaultDetctionTime = HCCL_MIN_CONNECT_FAULT_DETCTION_TIME;
+        HCCL_RUN_INFO("[Parse] HCCL_DFS_CONFIG cluster_heartbeat set by environment to [%d], "
+            "stuck_detection set by environment to [%d], connection_fault_detction_time[%d]s",
+            g_envConfig.enableClusterHeartBeat, g_envConfig.opCounterEnable, g_envConfig.dfsConnectionFaultDetctionTime);
+        return HCCL_SUCCESS;
+    }
+    s32 detctTime = 0;
+    HcclResult ret = SalStrToInt(connectionDefaultDetctionTime, HCCL_BASE_DECIMAL, detctTime);
+    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[ParseDFSConfig] HCCL_DFS_CONFIG-connection_fault_detction_time[%s]"
+        "is invalid, errorno[%d]", connectionDefaultDetctionTime.c_str(), ret), ret);
+
+    if (detctTime == 0) {
+        g_envConfig.dfsConnectionFaultDetctionTime = 0;
+    } else if (detctTime >= HCCL_MIN_CONNECT_FAULT_DETCTION_TIME && detctTime <= HCCL_MAX_LINK_TIME_OUT_S) {
+        g_envConfig.dfsConnectionFaultDetctionTime = detctTime;
+    }  else { // 不在允许范围内报错
+        HCCL_ERROR("[ParseDFSConfig] HCCL_DFS_CONFIG-connection_fault_detction_time[%d] is invalid, except: [%d, %d]",
+            detctTime, HCCL_MIN_CONNECT_FAULT_DETCTION_TIME, HCCL_MAX_LINK_TIME_OUT_S);
+        return HCCL_E_PARA;
+    }
+
+    HCCL_RUN_INFO("[Parse] HCCL_DFS_CONFIG cluster_heartbeat set by environment to [%d], "
+        "stuck_detection set by environment to [%d], connection_fault_detction_time[%d]s", 
+        g_envConfig.enableClusterHeartBeat, g_envConfig.opCounterEnable, g_envConfig.dfsConnectionFaultDetctionTime);
+    return HCCL_SUCCESS;
+}
+
+const bool& GetExternalInputHcclHeartBeatEnable()
+{
+    return g_envConfig.enableClusterHeartBeat;
+}
+
+const bool& GetExternalInputStuckDetect()
+{
+    return g_envConfig.opCounterEnable;
 }

@@ -50,7 +50,9 @@ bool ZeroCopyAddressMgr::IsAddressSet(u32 devicePhyId, void *baseAddr)
 
 HcclResult ZeroCopyAddressMgr::AddLocalIpc2RemoteAddr(u32 devicePhyId, void *localIpcBase, void *remoteAddrBase, u64 length)
 {
-    if (devicePhyId >= MAX_MODULE_DEVICE_NUM || localIpcBase == nullptr || remoteAddrBase == nullptr) {
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
+    if (devicePhyId >= maxDeviceNum || localIpcBase == nullptr || remoteAddrBase == nullptr) {
         HCCL_ERROR("[ZeroCopyAddressMgr][AddLocalIpc2RemoteAddr] devPhyId [%u] localIpc[%p] remoteAddr[%p] invalid params",
             devicePhyId, localIpcBase, remoteAddrBase);
         return HCCL_E_PARA;
@@ -86,7 +88,9 @@ HcclResult ZeroCopyAddressMgr::AddLocalIpc2RemoteAddr(u32 devicePhyId, void *loc
 
 HcclResult ZeroCopyAddressMgr::DelLocalIpc2RemoteAddr(u32 devicePhyId, void *remoteAddrBase)
 {
-    if (devicePhyId >= MAX_MODULE_DEVICE_NUM || remoteAddrBase == nullptr) {
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
+    if (devicePhyId >= maxDeviceNum || remoteAddrBase == nullptr) {
         HCCL_ERROR("[ZeroCopyAddressMgr][DelLocalIpc2RemoteAddr] devPhyId [%u] invalid params", devicePhyId);
         return HCCL_E_PARA;
     }
@@ -126,7 +130,9 @@ HcclResult ZeroCopyAddressMgr::DelLocalIpc2RemoteAddr(u32 devicePhyId, void *rem
 
 HcclResult ZeroCopyAddressMgr::GetLocalIpc2RemoteAddr(u32 devicePhyId, void *remoteAddr, LocalIpc2RemoteAddr &addr)
 {
-    if (devicePhyId >= MAX_MODULE_DEVICE_NUM || remoteAddr == nullptr) {
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
+    if (devicePhyId >= maxDeviceNum || remoteAddr == nullptr) {
         HCCL_ERROR("[ZeroCopyAddressMgr][GetLocalIpc2RemoteAddr] devPhyId [%u] invalid params", devicePhyId);
         return HCCL_E_PARA;
     }
@@ -311,6 +317,7 @@ bool ZeroCopyAddressMgr::IsInSetAddressRange(u32 devicePhyId, void *startPtr, u6
 
 HcclResult ZeroCopyAddressMgr::InitRingBuffer()
 {
+#if (!defined(HCCD)) && (!defined(CCL_KERNEL_AICPU))
     if (ringBuffer_.ptr() != nullptr) {
         return HCCL_SUCCESS;
     }
@@ -333,6 +340,9 @@ HcclResult ZeroCopyAddressMgr::InitRingBuffer()
         ringBuffer_.ptr(), ringBuffer_.size(), ringBufferCtl_.ptr(), ringBufferCtl_.size(), devRingHead_, devRingTail_);
 
     HCCL_INFO("[ZeroCopyAddressMgr][InitRingBuffer] ringbuffer[%p] head[%p] tail[%p]", devRingBufBase_, devRingHead_, devRingTail_);
+#else
+    HCCL_DEBUG("[ZeroCopyAddressMgr][InitRingBuffer] aicpu or hccd do nothing");
+#endif
 
     return HCCL_SUCCESS;
 }
@@ -344,6 +354,7 @@ HcclResult ZeroCopyAddressMgr::PushOne(ZeroCopyRingBufferItem &item)
         return HCCL_SUCCESS;
     }
 
+#if (!defined(HCCD)) && (!defined(CCL_KERNEL_AICPU))
     // 检测RingBuffer是否已经初始化，没有的话就初始化一下
     CHK_RET(InitRingBuffer());
 
@@ -362,6 +373,9 @@ HcclResult ZeroCopyAddressMgr::PushOne(ZeroCopyRingBufferItem &item)
         HcclRtMemcpyKind::HCCL_RT_MEMCPY_KIND_HOST_TO_DEVICE));
     CHK_RET(hrtMemSyncCopy(devRingTail_, sizeof(updateTail), &updateTail, sizeof(updateTail),
         HcclRtMemcpyKind::HCCL_RT_MEMCPY_KIND_HOST_TO_DEVICE));
+#else
+    HCCL_DEBUG("[ZeroCopyAddressMgr][PushOne] aicpu or hccd do nothing");
+#endif
 
     return HCCL_SUCCESS;
 }

@@ -16,12 +16,14 @@
 namespace hccl {
 CommConfig::CommConfig(const std::string &commName)
     : bufferSize_(GetExternalInputCCLBuffSize()),
-      deterministic_(static_cast<u8>(GetExternalInputHcclDeterministic())),
+      deterministic_(GetExternalInputHcclDeterministicV2()),
       commName_(commName),
       aivMode_(GetExternalInputHcclAivMode()),
       aicpuUnfold_(GetExternalInputHcclAicpuUnfold()),
       trafficClass_(HCCL_COMM_TRAFFIC_CLASS_CONFIG_NOT_SET),
-      serviceLevel_(HCCL_COMM_SERVICE_LEVEL_CONFIG_NOT_SET)
+      serviceLevel_(HCCL_COMM_SERVICE_LEVEL_CONFIG_NOT_SET),
+      worldRankID_(0),
+      jobID_(0)
 {}
 
 CommConfig::~CommConfig() {}
@@ -123,6 +125,12 @@ HcclResult CommConfig::SetConfigByVersion(const CommConfigHandle &config)
         serviceLevel_ = config.serviceLevel;
     }
 
+    if (config.info.version >= CommConfigVersion::COMM_CONFIG_VERSION_SIX) {
+        // 版本大于等于6
+        worldRankID_ = config.worldRankID;
+        jobID_ = config.jobID;
+    }
+    HCCL_INFO("NSLBDP-VERSION config.info.version = [%u] .", config.info.version);
     return HCCL_SUCCESS;
 }
 
@@ -158,20 +166,36 @@ HcclResult CommConfig::SetConfigDeterministic(const CommConfigHandle &config)
         // 默认跟随环境变量配置
         HCCL_INFO("[SetConfigByVersion] The hcclDeterministic is not configured, use the env config [%u] as default.",
             deterministic_);
-    } else if (config.deterministic > 1) {
+    } else if (config.deterministic > DETERMINISTIC_STRICT) {
         RPT_INPUT_ERR(true, "EI0003", std::vector<std::string>({ "ccl_op", "parameter", "value", "tips" }),
             std::vector<std::string>({
                 "HcclCommInitRootInfoConfig",
                 "hcclDeterministic",
                 std::to_string(config.deterministic),
-                "Value should be 0(disable) or 1(enable)."
+                "Value should be 0(disable) , 1(enable) or 2(strict)."
             })
         );
-        HCCL_ERROR(
-            "[SetConfigByVersion] The configuration of hcclDeterministic[%u] is invalid, which should be 0 or 1.",
-            config.deterministic);
+        HCCL_ERROR("[SetConfigByVersion] The configuration of hcclDeterministic[%u] is invalid, "
+            "which should be 0(disable) , 1(enable) or 2(strict).", config.deterministic);
         return HCCL_E_PARA;
     } else {
+        if (config.deterministic == DETERMINISTIC_STRICT) {
+            DevType deviceType;
+            CHK_RET(hrtGetDeviceType(deviceType));
+            if (deviceType != DevType::DEV_TYPE_910B) {
+                RPT_INPUT_ERR(true, "EI0003", std::vector<std::string>({ "ccl_op", "parameter", "value", "tips" }),
+                    std::vector<std::string>({
+                        "HcclCommInitRootInfoConfig",
+                        "hcclDeterministic",
+                        std::to_string(config.deterministic),
+                        "Value is set to 2(strict), only support A2."
+                    })
+                );
+                HCCL_ERROR("[SetConfigByVersion] The configuration of hcclDeterministic[%u] is set to "
+                    "2(strict), and only support A2", config.deterministic);
+                return HCCL_E_PARA;
+            }
+        }
         deterministic_ = static_cast<u8>(config.deterministic);     // 前面已保证数值不超过UINT8_MAX，直接进行类型转换
     }
     return HCCL_SUCCESS;
@@ -203,12 +227,6 @@ HcclResult CommConfig::SetConfigUdi(const CommConfigHandle &config)
 
 HcclResult CommConfig::SetConfigOpExpansionMode(const CommConfigHandle &config)
 {   
-    DevType deviceType;
-    CHK_RET(hrtGetDeviceType(deviceType));
-    if (!(deviceType == DevType::DEV_TYPE_910B)) {
-        HCCL_WARNING("CommConfig is not work because not on A2, aicpuUnfold_ is [%d] and aivMode_ is [%d].", aicpuUnfold_, aivMode_);
-        return HCCL_SUCCESS;
-    }
     switch (config.opExpansionMode) {
         case COMM_CONFIG_OPEXPANSION_DEFAULT:
             HCCL_INFO("CommConfig is set to 0(default), aicpuUnfold_ is [%d] and aivMode_ is [%d].", aicpuUnfold_, aivMode_);
@@ -224,7 +242,7 @@ HcclResult CommConfig::SetConfigOpExpansionMode(const CommConfigHandle &config)
         case COMM_CONFIG_OPEXPANSION_AIV:
             aivMode_ = true;
             HCCL_INFO("CommConfig is set to 3(aivMode), aicpuUnfold_ is [%d] and aivMode_ is [%d].", aicpuUnfold_, aivMode_);
-            if (deterministic_ == 1) {
+            if (deterministic_ != DETERMINISTIC_DISABLE) {
                 // Aiv模式不支持确定性计算的场景，保证确定性计算优先
                 HCCL_WARNING("Deterministic is [%d], the Aiv mode does not support when the deterministic is enabled.", deterministic_);
             }
@@ -276,5 +294,15 @@ u32 CommConfig::GetConfigTrafficClass() const
 u32 CommConfig::GetConfigServiceLevel() const
 {
     return serviceLevel_;
+}
+
+u32 CommConfig::GetConfigWorldRankID() const
+{
+    return worldRankID_;
+}
+
+u64 CommConfig::GetConfigJobID() const
+{
+    return jobID_;
 }
 }

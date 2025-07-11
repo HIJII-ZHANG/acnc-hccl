@@ -27,7 +27,7 @@ void CollReduceScatterVMeshExecutor::ParseParam(const OpParam& param)
     bool isInlineReduce = IsSupportSDMAReduce(param.inputPtr, param.outputPtr, param.VDataDes.dataType,
         param.reduceType);
     meshSinglePlane_ = (topoAttr_.deviceType == DevType::DEV_TYPE_910B) &&
-        topoMatcher_->GetExternalInputHcclDeterministic() == DETERMINISTIC_CONFIG_DISABLE &&
+        topoMatcher_->GetExternalInputHcclDeterministic() == DETERMINISTIC_DISABLE &&
         isInlineReduce && (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB);
 
     // 记录图模式总数据量
@@ -83,6 +83,7 @@ HcclResult CollReduceScatterVMeshExecutor::CalcLevel0CommInfo(TransportMemType i
 
 HcclResult CollReduceScatterVMeshExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollReduceScatterVMeshExecutor] reducescatterv mesh run");
     HcclDataType dataType = param.VDataDes.dataType;
     const u32 unitSize = SIZE_TABLE[dataType];
 

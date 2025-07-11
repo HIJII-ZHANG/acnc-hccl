@@ -9,6 +9,7 @@
  */
 
 #include "coll_executor_base.h"
+#include "hccl_aiv.h"
 
 namespace hccl {
 
@@ -43,6 +44,16 @@ HcclResult CollExecutorBase::RunTemplate(const std::unique_ptr<AlgTemplateBase> 
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollExecutorBase][RunTemplate]run tempAlg rank[%u] rank size[%u] failed",
         commInfo.localRank, commInfo.localRankSize), ret);
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollExecutorBase::GetAivExecParam(const OpParam& param, AlgResourceResponse& algRes, AivSuperKernelArgs &args)
+{
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollExecutorBase::PrepareCommInfoToDevice(AlgResourceResponse& algResource)
+{
     return HCCL_SUCCESS;
 }
 
@@ -88,4 +99,8 @@ HcclResult CollExecutorBase::SetOpCounter(const OpCounterInfo& opCounter)
    opCounter_ = opCounter; 
    return HCCL_SUCCESS;
 }
+HcclResult CollExecutorBase::GetAdjInfo(AlgResourceResponse& algRes, AdjInfo& adjInfo){
+   return HCCL_SUCCESS;
+}
+
 }

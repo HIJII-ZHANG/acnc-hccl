@@ -10,7 +10,6 @@
 
 
 #include "coll_all_to_all_staged_aiv_rdma_executor.h"
-#include "alg_profiling.h"
 
 namespace hccl {
 constexpr u32 A_X_SIZE = 16;
@@ -19,6 +18,7 @@ CollRunAlltoAllStagedAivRdmaExecutor::CollRunAlltoAllStagedAivRdmaExecutor(const
     std::unique_ptr<TopoMatcher> &topoMatcher)
     : CollAlltoAllExecutor(dispatcher, topoMatcher)
 {
+    desc_.isAivMode = true;
 }
 
 HcclResult CollRunAlltoAllStagedAivRdmaExecutor::Orchestrate(OpParam& param, AlgResourceResponse& algRes)
@@ -116,10 +116,6 @@ HcclResult CollRunAlltoAllStagedAivRdmaExecutor::RunAlltoAllStaged1InAIV(const O
 
     CHK_RET(PrepareAivBuffers(execMem.inputMem, execMem.scratchMem, dataBuffers, flagBuffers));
 
-    if (aivClearEnable_) {
-        ClearAivSyncBuf(flagBuffers, outerCommInfo_.localRank, outerCommInfo_.localRankSize, param.stream.ptr());
-    }
-
     AivOpArgs opArgs {
         HcclCMDType::HCCL_CMD_ALLTOALL, execMem.inputPtr, execMem.outputPtr, sendCount,
         param.All2AllDataDes.sendType, HCCL_REDUCE_RESERVED, 0, true
@@ -130,21 +126,21 @@ HcclResult CollRunAlltoAllStagedAivRdmaExecutor::RunAlltoAllStaged1InAIV(const O
     };
     blockDim_ = CalBlockDim(outerCommInfo_.localRankSize);
     AivResourceArgs resourceArgs {
-        param.tag, param.stream.ptr(), dataBuffers, flagBuffers, execMem.inputMem.size(), blockDim_
+        param.tag, param.stream.ptr(), dataBuffers, flagBuffers, execMem.inputMem.size(), blockDim_, param.aivTag
     };
     AivAlgArgs algArgs {0};
     struct AivProfilingInfo aivProfilingInfo;
     aivProfilingInfo.counter = opCounter_;
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
-        HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
+        HCCL_PROFILER_ADD_TAG_AIV(param.tag, algoAttr_.identifier, workflowMode_);
         HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
     }
 
-    CHK_RET(ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, aivProfilingInfo));
+    if (aivClearEnable_) {
+        ClearAivSyncBuf(flagBuffers, param.stream.ptr(), topoArgs);
+    }
 
-    TaskAivProfiler(opArgs.cmdType, aivProfilingInfo.tag, opArgs.count * sizeof(opArgs.dataType),
-        aivProfilingInfo.blockDim, topoArgs.rankSize, resourceArgs.buffersOut[topoArgs.rank], resourceArgs.stream,
-        algArgs.step, aivProfilingInfo.beginTime);
+    CHK_RET(ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, aivProfilingInfo));
 
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){ 
         HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());
@@ -205,7 +201,7 @@ void CollRunAlltoAllStagedAivRdmaExecutor::CalcInterMeshAggregationAlltoAllMemIn
 
 HcclResult CollRunAlltoAllStagedAivRdmaExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollRunAlltoAllStagedAivRdmaExecutor][KernelRun] alltoall staged starts");
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollRunAlltoAllStagedAivRdmaExecutor][KernelRun] alltoall staged starts");
     CHK_PRT_RET(topoAttr_.userRankSize % topoAttr_.meshAggregationRankSize != 0,
         HCCL_ERROR("userRankSize[%u] is not an Integer multiple of MeshAggregation Dev Num[%u]",
         topoAttr_.userRankSize, topoAttr_.meshAggregationRankSize), HCCL_E_PARA);

@@ -9,6 +9,7 @@
  */
 
 #include "coll_all_gather_executor.h"
+#include <numeric>
 
 namespace hccl {
 CollAllGatherExecutor::CollAllGatherExecutor(const HcclDispatcher dispatcher,
@@ -23,23 +24,27 @@ HcclResult CollAllGatherExecutor::Orchestrate(OpParam& param, AlgResourceRespons
     tag_ = param.tag;
     algResResp_ = &algRes;
 
+    const u64 count = GetCount(param);
+    const HcclDataType dataType = GetDataType(param);
+
     HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
     HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
     CHK_RET(AddSubStreamToProfiling());
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && !is310P3Common_) {
-        HCCL_PROFILER_ADD_OPDATA_OP(param.tag, param.DataDes.count, param.inputPtr, param.outputPtr,
-            param.DataDes.dataType, INVALID_VALUE_RANKID, algoAttr_.identifier, HcclReduceOp::HCCL_REDUCE_RESERVED);
+        HCCL_PROFILER_ADD_OPDATA_OP(param.tag, count, param.inputPtr, param.outputPtr, dataType, INVALID_VALUE_RANKID,
+            algoAttr_.identifier, HcclReduceOp::HCCL_REDUCE_RESERVED);
         HCCL_PROFILER_ADD_GROUPRANK(algoAttr_.identifier, topoAttr_.userRankSize, topoAttr_.userRank);
     }
 
     HcclResult ret = HCCL_SUCCESS;
     // 图模式和单卡场景下不需要Loop
     if (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-        u64 totalSize = param.DataDes.count * SIZE_TABLE[param.DataDes.dataType];
+        u64 countSize = count * SIZE_TABLE[dataType];
+        u64 totalSize = CalcTotalCount(param) * SIZE_TABLE[dataType];
         ExecMem execMem;
-        execMem.count = param.DataDes.count;
-        execMem.inputMem = DeviceMem::create(algRes.paramInputMem.ptr(), totalSize);
-        execMem.outputMem = DeviceMem::create(algRes.paramOutputMem.ptr(), totalSize * topoAttr_.userRankSize);
+        execMem.count = count;
+        execMem.inputMem = DeviceMem::create(algRes.paramInputMem.ptr(), countSize);
+        execMem.outputMem = DeviceMem::create(algRes.paramOutputMem.ptr(), totalSize);
         execMem.scratchMem = algRes.scratchMem;
         execMem.inputPtr = param.inputPtr;
         execMem.outputPtr = param.outputPtr;
@@ -50,21 +55,27 @@ HcclResult CollAllGatherExecutor::Orchestrate(OpParam& param, AlgResourceRespons
         ret = KernelRun(param, execMem);
     } else if (topoAttr_.userRankSize == 1) {
         ExecMem execMem;
-        execMem.count = param.DataDes.count;
+        execMem.count = count;
         execMem.inputMem = algRes.cclInputMem;
         execMem.outputMem = algRes.cclOutputMem;
         execMem.scratchMem = algRes.scratchMem;
         execMem.inputPtr = param.inputPtr;
         execMem.outputPtr = param.outputPtr;
         ret = KernelRun(param, execMem);
-    } else if (param.isZeroCopy) {
-        // RunLoop only for L1&L2 communication when zerocopy is enabled
-        ret = RunLoop(param, algRes);
-        CHK_PRT_RET(ret != HCCL_SUCCESS,
-            HCCL_ERROR("[CollAllGatherExecutor][Orchestrate]errNo[0x%016llx]all gather excutor run loop failed",
-                HCCL_ERROR_CODE(ret)), ret);
-        // KernelRun for L0 communication
+    } else if (desc_.isZeroCopy) {
         u64 totalSize = param.DataDes.count * SIZE_TABLE[param.DataDes.dataType];
+        // 在Level1和Level2执行RunLoop
+        if (topoAttr_.serverNum > 1) {
+            ret = RunLoop(param, algRes);
+            CHK_PRT_RET(ret != HCCL_SUCCESS,
+                HCCL_ERROR("[CollAllGatherExecutor][Orchestrate]errNo[0x%016llx]all gather excutor run loop failed",
+                    HCCL_ERROR_CODE(ret)), ret);
+        } else {        // 单机场景，数据直接从UserInput搬到UserOutput
+            DeviceMem dstMem = DeviceMem::create(static_cast<u8 *>(algRes.paramOutputMem.ptr()) + totalSize * topoAttr_.userRank, totalSize);
+            DeviceMem srcMem = DeviceMem::create(algRes.paramInputMem.ptr(), totalSize);
+            CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dstMem, srcMem, param.stream));
+        }
+        // 在Level0执行KernelRun
         ExecMem execMem;
         execMem.count = param.DataDes.count;
         execMem.inputMem = DeviceMem::create(algRes.paramInputMem.ptr(), totalSize);
@@ -72,10 +83,13 @@ HcclResult CollAllGatherExecutor::Orchestrate(OpParam& param, AlgResourceRespons
         execMem.scratchMem = algRes.scratchMem;
         execMem.inputPtr = param.inputPtr;
         execMem.outputPtr = param.outputPtr;
-        ret = KernelRunIntraServer(param, execMem);
-    }
-    else {
-        ret = RunLoop(param, algRes);
+        ret = KernelRunIntraServerPost(param, execMem);
+    } else {
+        if (isAllGatherV_) {
+            ret = RunLoopV(param, algRes);
+        } else {
+            ret = RunLoop(param, algRes);
+        }
     }
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollAllGatherExecutor][Orchestrate]errNo[0x%016llx]all gather excutor kernel run failed",
@@ -92,7 +106,6 @@ HcclResult CollAllGatherExecutor::Orchestrate(OpParam& param, AlgResourceRespons
     return HCCL_SUCCESS;
 }
 
-
 u64 CollAllGatherExecutor::CalcLoopMaxCount(const u64 cclBuffSize, const u32 unitSize)
 {
     // 中转内存单次最多能够接受的output count
@@ -100,17 +113,6 @@ u64 CollAllGatherExecutor::CalcLoopMaxCount(const u64 cclBuffSize, const u32 uni
         * HCCL_MIN_SLICE_ALIGN / unitSize;
     HCCL_WARNING("[CollAllGatherExecutor][CalcLoopMaxCount]" \
         "using default maxCountPerLoop[%llu] as CCLBuffSize / unitSize.", maxCountPerLoop);
-    return maxCountPerLoop;
-}
-
-u64 CollAllGatherExecutor::CalcLoopMaxCountZeroCopy(const u32 unitSize, const bool isZeroCopy)
-{
-    // 中转内存单次最多能够接受的output count
-    u32 sliceNum = isZeroCopy ? topoAttr_.serverNum : topoAttr_.userRankSize;
-    u64 maxCountPerLoop = inCCLbufferSize_ / sliceNum / HCCL_MIN_SLICE_ALIGN
-        * HCCL_MIN_SLICE_ALIGN / unitSize;
-    HCCL_INFO("[CollAllGatherExecutor][CalcLoopMaxCountZeroCopy]" \
-        "using default maxCountPerLoop[%llu] as CCLBuffSize / (level1RankSize * level2RankSize * unitSize).", maxCountPerLoop);
     return maxCountPerLoop;
 }
 
@@ -133,6 +135,113 @@ bool CollAllGatherExecutor::IsDataSplitForRdmaSdmaConcurrent(const u64 curSize)
     return false;
 }
 
+u64 CollAllGatherExecutor::GetCount(const OpParam &param) const
+{
+    if (isAllGatherV_) {
+        return static_cast<const u64 *>(param.VDataDes.counts)[topoAttr_.userRank];
+    }
+    return param.DataDes.count;
+}
+
+HcclDataType CollAllGatherExecutor::GetDataType(const OpParam &param) const
+{
+    if (isAllGatherV_) {
+        return param.VDataDes.dataType;
+    }
+    return param.DataDes.dataType;
+}
+
+u64 CollAllGatherExecutor::CalcTotalCount(const OpParam &param) const
+{
+    if (isAllGatherV_) {
+        const auto *countsPtr = static_cast<const u64 *>(param.VDataDes.counts);
+        return std::accumulate(countsPtr, countsPtr + topoAttr_.userRankSize, 0);
+    }
+    return param.DataDes.count * topoAttr_.userRankSize;
+}
+
+bool CollAllGatherExecutor::CalcCountsDispls(const u64 maxTotalCount, std::vector<u64> &countsLeft,
+    std::vector<u64> &displs, std::vector<u64> &curCounts, std::vector<u64> &curDispls)
+{
+    bool finished = true;
+
+    curCounts.resize(countsLeft.size(), 0);
+    curDispls.resize(displs.size(), 0);
+
+    // 先设置本轮的displacements，等于入参displs
+    std::copy(displs.begin(), displs.end(), curDispls.begin());
+
+    // 分配好每个rank的counts
+    for (auto i = 0U; i < countsLeft.size(); ++i) {
+        const auto curCount = countsLeft[i] < maxTotalCount ? countsLeft[i] : maxTotalCount;
+        curCounts[i] = curCount;
+        countsLeft[i] -= curCount;
+        displs[i] += curCount;
+
+        if (countsLeft[i] != 0) {
+            finished = false;
+        }
+    }
+
+    PrintCountsDispls(finished, curCounts, curDispls);
+
+    return finished;
+}
+
+void CollAllGatherExecutor::PrintCountsDispls(bool finished, const std::vector<u64> &curCounts,
+    const std::vector<u64> &curDispls)
+{
+    if (HcclCheckLogLevel(DLOG_DEBUG)) {
+        std::ostringstream curLoopInfo;
+        curLoopInfo << "counts[ ";
+        for (auto count : curCounts) {
+            curLoopInfo << count << " ";
+        }
+        curLoopInfo << "], displs[ ";
+        for (auto displ : curDispls) {
+            curLoopInfo << displ << " ";
+        }
+        curLoopInfo << "]";
+        HCCL_DEBUG("[CollAllGatherExecutor][CountsDispls]finished[%u], Current loop info: %s", finished,
+            curLoopInfo.str().c_str());
+    }
+}
+
+std::vector<u64> CollAllGatherExecutor::GetCounts(const OpParam &param) const
+{
+    const auto *countsPtr = static_cast<const u64 *>(param.VDataDes.counts);
+    return std::vector<u64>(countsPtr, countsPtr + topoAttr_.userRankSize);
+}
+
+std::vector<u64> CollAllGatherExecutor::GetDispls(const OpParam &param) const
+{
+    const auto *displsPtr = static_cast<const u64 *>(param.VDataDes.displs);
+    return std::vector<u64>(displsPtr, displsPtr + topoAttr_.userRankSize);
+}
+
+u64 CollAllGatherExecutor::GetCurrentCount(const OpParam &param, const std::vector<u64> &curCounts) const
+{
+    return curCounts[topoAttr_.userRank];
+}
+
+u64 CollAllGatherExecutor::CalcCurrentTotalCount(const OpParam &param, const std::vector<u64> &curCounts) const
+{
+    return std::accumulate(curCounts.cbegin(), curCounts.cend(), 0);
+}
+
+HcclOpMetaInfoDef CollAllGatherExecutor::GetOpMetaInfo(u32 algTypeLevel1, bool hugeData, bool smallData,
+    bool dataSplit) const
+{
+    return HcclOpMetaInfo::GetOneForAllGatherV(algTypeLevel1, hugeData, smallData, CopyPattern::BCOPY, dataSplit);
+}
+
+void CollAllGatherExecutor::UpdateOpParam(OpParam &param, std::vector<u64> &curCounts,
+    std::vector<u64> &curDispls) const
+{
+    param.VDataDes.counts = curCounts.data();
+    param.VDataDes.displs = curDispls.data();
+}
+
 // 基于性能考量，合并RunLoop和RunLoopInner
 HcclResult CollAllGatherExecutor::RunLoop(OpParam &param, AlgResourceResponse &algRes)
 {
@@ -147,7 +256,7 @@ HcclResult CollAllGatherExecutor::RunLoop(OpParam &param, AlgResourceResponse &a
     CHK_PTR_NULL(commInputPtr);
     CHK_PTR_NULL(commOutputPtr);
 
-    u64 maxCountPerLoop = param.isZeroCopy ? CalcLoopMaxCountZeroCopy(unitSize, param.isZeroCopy) : CalcLoopMaxCount(algRes.cclInputMem.size(), unitSize);
+    u64 maxCountPerLoop = CalcLoopMaxCount(algRes.cclInputMem.size(), unitSize);
     CHK_PRT_RET(maxCountPerLoop == 0,
         HCCL_ERROR("[CollAllGatherExecutor][RunLoop]tag[%s], userRankSize is [%u], maxCountPerLoop is [%llu].",
             param.tag.c_str(), topoAttr_.userRankSize, maxCountPerLoop),
@@ -189,16 +298,15 @@ HcclResult CollAllGatherExecutor::RunLoop(OpParam &param, AlgResourceResponse &a
         ExecMem execMem;
         execMem.count = curCount;
         execMem.inputMem = DeviceMem::create(commInputPtr, curSize);
-        u32 sliceNum = param.isZeroCopy ? topoAttr_.serverNum : topoAttr_.userRankSize;
+        u32 sliceNum = desc_.isZeroCopy ? topoAttr_.serverNum : topoAttr_.userRankSize;
         execMem.outputMem = DeviceMem::create(commOutputPtr, curSize * sliceNum);
         execMem.scratchMem = algRes.scratchMem;
         execMem.inputPtr = curInputPtr;
         execMem.outputPtr = curOutputPtr;
         HcclResult ret = HCCL_SUCCESS;
-        if (!param.isZeroCopy) {
+        if (!desc_.isZeroCopy) {
             ret = KernelRun(param, execMem);
-        }
-        else {
+        } else {
             ret = KernelRunInterServer(param, execMem);
         }
         CHK_PRT_RET(ret != HCCL_SUCCESS,
@@ -208,7 +316,7 @@ HcclResult CollAllGatherExecutor::RunLoop(OpParam &param, AlgResourceResponse &a
             curCount, param.DataDes.dataType),
             ret);
         
-        if (!DMAReduceFlag_ && !param.isZeroCopy) {
+        if (!DMAReduceFlag_) {
             // 如果使用CCL buffer，需要将CCL buffer out中的结果拷贝到user buffer out
             for (u32 i = 0; i < topoAttr_.userRankSize; i++) {
                 // 拷贝中转output上每个slice的数据到output内存，目的端中每个slice的size固定为output的size
@@ -224,6 +332,73 @@ HcclResult CollAllGatherExecutor::RunLoop(OpParam &param, AlgResourceResponse &a
 
         inputOffset = curSize;
         outputOffset = curSize;
+    }
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollAllGatherExecutor::RunLoopV(OpParam &param, AlgResourceResponse &algRes)
+{
+    auto counts = GetCounts(param);
+    auto displs = GetDispls(param);
+    const HcclDataType dataType = GetDataType(param);
+    u32 unitSize = SIZE_TABLE[dataType];
+
+    u8 *curInputPtr = static_cast<u8 *>(param.inputPtr);
+    u8 *curOutputPtr = static_cast<u8 *>(param.outputPtr);
+    u8 *commInputPtr = static_cast<u8 *>(algRes.cclInputMem.ptr());
+    u8 *commOutputPtr = static_cast<u8 *>(algRes.cclOutputMem.ptr());
+    CHK_PTR_NULL(curInputPtr);
+    CHK_PTR_NULL(curOutputPtr);
+    CHK_PTR_NULL(commInputPtr);
+    CHK_PTR_NULL(commOutputPtr);
+
+    u64 maxCountPerLoop = CalcLoopMaxCount(algRes.cclInputMem.size(), unitSize);
+    CHK_PRT_RET(maxCountPerLoop == 0,
+        HCCL_ERROR("[CollAllGatherExecutor][RunLoopV]tag[%s], userRankSize is [%u], maxCountPerLoop is [%llu].",
+            param.tag.c_str(), topoAttr_.userRankSize, maxCountPerLoop),
+        HCCL_E_PARA);
+
+    bool finished = false;
+    while (!finished) {
+        auto curCounts = std::vector<u64>();
+        auto curDispls = std::vector<u64>();
+        // 每轮loop需要重新计算counts和displs
+        finished = CalcCountsDispls(maxCountPerLoop, counts, displs, curCounts, curDispls);
+        u64 curCount = GetCurrentCount(param, curCounts);
+        u64 curSize = curCount * unitSize; // 单位：字节
+        const u64 totalSize = CalcCurrentTotalCount(param, curCounts) * unitSize;
+
+        HCCL_DEBUG("[CollAllGatherExecutor][RunLoopV]tag[%s], sendBuf[%p], recvBuf[%p], sendSize[%llu], "
+            "recvSize[%llu], cclInputMem[%u], cclOutputMem[%u], dataType[%d].", param.tag.c_str(), curInputPtr,
+            curOutputPtr, curSize, totalSize, algRes.cclInputMem.size(), algRes.cclOutputMem.size(), dataType);
+
+        /* 设置子图复用标志 */
+        auto autoSelectedAlgTypeLevel1 = static_cast<u32>(algType_.algoLevel1);
+        bool hugeData = IsHugeData(curSize);    // override
+        bool smallData = IsSmallData(curSize);
+        bool dataSplit = IsDataSplitForRdmaSdmaConcurrent(curSize);
+        auto opMeta = GetOpMetaInfo(autoSelectedAlgTypeLevel1, hugeData, smallData, dataSplit);
+        CHK_RET(InitTask(dispatcher_, param.stream, opMeta.isEnableCache, opMeta.GetCacheKey()));
+
+        // 使用当前Loop偏移到的地址作为当前的inputPtr和outputPtr
+        ExecMem execMem;
+        execMem.count = curCount;
+        execMem.inputMem = DeviceMem::create(commInputPtr, curSize);
+        execMem.outputMem = DeviceMem::create(commOutputPtr, totalSize);
+        execMem.scratchMem = algRes.scratchMem;
+        execMem.inputPtr = curInputPtr;
+        execMem.outputPtr = curOutputPtr;
+        UpdateOpParam(param, curCounts, curDispls);
+        HcclResult ret = KernelRun(param, execMem);
+        CHK_PRT_RET(ret != HCCL_SUCCESS,
+            HCCL_ERROR("[CollAllGatherExecutor][RunLoopV]errNo[0x%016llx]kernel run error, tag[%s], "
+                "inputMem ptr[%p], outputMem ptr[%p], count[%llu], dataType[%d]", HCCL_ERROR_CODE(ret),
+                param.tag.c_str(), commInputPtr, commOutputPtr, curCount, dataType), ret);
+
+        CHK_RET(LaunchTaskExtend(dispatcher_, param.stream, algResResp_->slaveStreams));
+
+        curInputPtr += curSize;
+        // AllGatherV curOutputPtr不需要偏移，偏移由displs计算
     }
     return HCCL_SUCCESS;
 }

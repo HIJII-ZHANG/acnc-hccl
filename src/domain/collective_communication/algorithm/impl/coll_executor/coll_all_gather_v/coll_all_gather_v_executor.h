@@ -19,6 +19,7 @@ public:
     ~CollAllGatherVExecutor() = default;
 
     HcclResult Orchestrate(OpParam& param, AlgResourceResponse& algRes) override;
+    HcclResult GetAdjInfo(AlgResourceResponse& algRes, AdjInfo& adjInfo) override;
 protected:
     // AllGather Loop Executor公共接口
     virtual u64 CalcLoopMaxCount(const u64 cclBuffSize, const u32 unitSize);

@@ -34,9 +34,9 @@ public:
 
         if (block_idx == 0) {
             // 本卡该片数据已经可以被跨片读取
-            SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + FLAG_SIZE), tag);
+            SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + FLAG_SIZE), localSetTensor, tag);
         }
-        CheckFlagNew((__gm__ int32_t *)(GM_OUT[block_idx] + FLAG_SIZE), tag);
+        WaitSignalValue((__gm__ int32_t *)(GM_OUT[block_idx] + FLAG_SIZE), localCheckTensor, tag);
         pipe_barrier(PIPE_ALL);
 
         // todo:1、serverNum需要赋值。 2、len是inputCount 还是inputSize还是 output相关？
@@ -48,10 +48,10 @@ public:
         }
         pipe_barrier(PIPE_ALL);
         //尾同步，每个卡搬完完后要进行标记。要确保所有卡都搬完再退出。
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_]) + FLAG_SIZE + block_idx*FLAG_SIZE, tag);
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_]) + FLAG_SIZE + block_idx*FLAG_SIZE, localSetTensor, tag);
         pipe_barrier(PIPE_ALL);
         for (int j = 0; j< rankSize_; j++) {
-            CheckFlagNew((__gm__ int32_t *)(GM_OUT[j]) + FLAG_SIZE + block_idx*FLAG_SIZE, tag);
+            WaitSignalValue((__gm__ int32_t *)(GM_OUT[j]) + FLAG_SIZE + block_idx*FLAG_SIZE, localCheckTensor, tag);
         }
     }
 };

@@ -22,7 +22,8 @@ public:
     ~CollAlltoAllExecutor() = default;
 
     HcclResult Orchestrate(OpParam& param, AlgResourceResponse& algRes) override;
-    virtual HcclResult SetExcutorExtraInfo(const std::vector<SendRecvInfo> &allMeshAggregationSendRecvInfo);
+    HcclResult GetAdjInfo(AlgResourceResponse& algRes, AdjInfo& adjInfo) override;
+    virtual HcclResult SetExcutorExtraInfo(const std::vector<SendRecvInfo> &allMeshAggregationSendRecvInfo, u64 cclbufferSize);
     HcclResult CalcResRequest(const OpParam& param, AlgResourceRequest &resourceRequest) override;
     virtual HcclResult CheckNeedCreateVirtualLinks(AlgResourceRequest &resourceRequest);
 
@@ -42,7 +43,7 @@ protected:
     /* *************** 算法编排 *************** */
     // 公共接口
     virtual HcclOpMetaInfo GetOpMeta(HcclCMDType opType, const u64 size);
-    void UpdateAlltoAllZCopyMode(std::vector<SendRecvInfo> &allMeshAggregationSendRecvInfo);
+    void UpdateAlltoAllZCopyMode(std::vector<SendRecvInfo> &allMeshAggregationSendRecvInfo, u64 cclbufferSize);
     void CalcIntraMeshAggregationAlltoAllMemInfo(const AlltoAllUserRankInfo &userRankInfo,
         const std::vector<SendRecvInfo> &allSendRecvInfo,
         std::map<u32, std::list<OneSendRecvAddrInfo>> &sendAddrInfosIntra,
@@ -67,7 +68,9 @@ protected:
     bool isAlltoAllZCopyMode_ = false;
 
     HcclDispatcher vDispatcher_;
+#ifndef CCL_KERNEL_AICPU
     ParallelTaskLoader* parallelTaskLoader_; // 并行下发taskloader管理
+#endif
 };
 
 } // namespace hccl

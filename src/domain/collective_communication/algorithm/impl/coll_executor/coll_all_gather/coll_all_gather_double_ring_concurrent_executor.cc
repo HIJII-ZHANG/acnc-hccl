@@ -102,7 +102,8 @@ bool CollAllGatherDoubleRingConcurrentExecutor::IsDataSplitForRdmaSdmaConcurrent
 
 HcclResult CollAllGatherDoubleRingConcurrentExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollAllGatherDoubleRingConcurrentExecutor][KernelRun]AllGatherDoubleRingConcurrentExecutor starts.");
+    HCCL_CONFIG_INFO(HCCL_ALG,
+        "[CollAllGatherDoubleRingConcurrentExecutor][KernelRun]AllGatherDoubleRingConcurrentExecutor starts.");
 
     u32 perDataSize = 0;
     CHK_RET(SalGetDataTypeSize(param.DataDes.dataType, perDataSize));

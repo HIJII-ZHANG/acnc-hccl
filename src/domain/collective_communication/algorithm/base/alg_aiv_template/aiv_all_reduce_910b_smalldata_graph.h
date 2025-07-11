@@ -38,13 +38,13 @@ __aicore__ inline void AivAllReduceSmallGraph910B::Process(GM_ADDR input, GM_ADD
         PipeBarrier<PIPE_MTE3>();
         
         // 卡内同步
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetIn), (rankSize_ - 1) * tag);
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetIn), localSetTensor, (rankSize_ - 1) * tag);
     } else {
         __gm__ T *cclGMOther = (__gm__ T *)(GM_IN[block_idx]);
         __gm__ T *outputGM = (__gm__ T *)output;
         // 告诉对端可以从本端拉走数据
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetOut + block_idx * FLAG_INTERVAL), tag);
-        CheckFlagNew((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffsetOut + rank_ * FLAG_INTERVAL), tag);
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetOut + block_idx * FLAG_INTERVAL), localSetTensor, tag);
+        WaitSignalValue((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffsetOut + rank_ * FLAG_INTERVAL), localCheckTensor, tag);
         PipeBarrier<PIPE_ALL>();
 
         GlobalTensor<T> cclGTOther;
@@ -58,9 +58,9 @@ __aicore__ inline void AivAllReduceSmallGraph910B::Process(GM_ADDR input, GM_ADD
         LocalTensor<T> localOut = inOutQue.DeQue<T>();
 
         // 卡内同步
-        CheckFlagGE((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetIn), tag);
+        WaitSignalGEValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetIn), localCheckGETensor, tag);
         PipeBarrier<PIPE_ALL>();
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetIn), -tag, true);
+        AddSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetIn), localSetTensor, -tag);
 
         PipeBarrier<PIPE_ALL>();
 
@@ -73,14 +73,14 @@ __aicore__ inline void AivAllReduceSmallGraph910B::Process(GM_ADDR input, GM_ADD
         PipeBarrier<PIPE_ALL>();
 
         // 本端告诉对端已经拉走数据
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffsetOut + rank_ * FLAG_INTERVAL + FLAG_SIZE), tag);
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffsetOut + rank_ * FLAG_INTERVAL + FLAG_SIZE), localSetTensor, tag);
         
         // 确认对端已经将所有数据拉走
-        CheckFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetOut + block_idx * FLAG_INTERVAL + FLAG_SIZE), tag);
+        WaitSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetOut + block_idx * FLAG_INTERVAL + FLAG_SIZE), localCheckTensor, tag);
         
         PipeBarrier<PIPE_ALL>();
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetOut + block_idx * FLAG_INTERVAL), 0);
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetOut + block_idx * FLAG_INTERVAL + FLAG_SIZE), 0);
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetOut + block_idx * FLAG_INTERVAL), localSetTensor, 0);
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetOut + block_idx * FLAG_INTERVAL + FLAG_SIZE), localSetTensor, 0);
     }
 }
 

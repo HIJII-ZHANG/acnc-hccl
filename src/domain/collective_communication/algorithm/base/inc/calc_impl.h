@@ -11,16 +11,16 @@
 #ifndef CALC_IMPL_H
 #define CALC_IMPL_H
 
-#include "calc_transport_req_base_pub.h"
+#include "calc_transport_req_base.h"
 #include "calc_hd_transport_req_pub.h"
-#include "calc_nhr_transport_req_pub.h"
-#include "calc_nhr_v1_transport_req_pub.h"
-#include "calc_ahc_transport_req_pub.h"
-#include "calc_ahc_broke_transport_req_pub.h"
+#include "calc_nhr_transport_req.h"
+#include "calc_nhr_v1_transport_req.h"
+#include "calc_ahc_transport_req.h"
+#include "calc_ahc_broke_transport_req.h"
 #include "calc_mesh_transport_req_pub.h"
 #include "calc_partial_mesh_transport_req_pub.h"
 #include "calc_ring_transport_req_pub.h"
-#include "calc_nb_transport_req_pub.h"
+#include "calc_nb_transport_req.h"
 #include "calc_hccs_plus_sio_transport_req_pub.h"
 
 namespace hccl {

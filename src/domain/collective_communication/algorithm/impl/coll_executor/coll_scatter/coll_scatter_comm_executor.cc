@@ -19,6 +19,7 @@ CollScatterCommExecutor::CollScatterCommExecutor(const HcclDispatcher dispatcher
 
 HcclResult CollScatterCommExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollScatterCommExecutor] scatter starts.");
     DeviceMem& inputMem = execMem.inputMem;
     DeviceMem& outputMem = execMem.outputMem;
     u64 count = execMem.count;

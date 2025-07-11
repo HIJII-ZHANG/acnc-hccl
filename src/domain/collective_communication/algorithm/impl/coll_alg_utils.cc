@@ -23,7 +23,7 @@ bool IsAlgTypeLevel0Mesh(AlgTypeLevel0 &originalAlgTypeLevel0)
            originalAlgTypeLevel0 == AlgTypeLevel0::ALG_LEVEL0_1P_MESH;
 }
 
-bool IsAlltoAllvcSatisfyBufferSize(const OpParam& param, u32 userRankSize) {
+bool IsAlltoAllvcSatisfyBufferSize(const OpParam& param, u32 userRankSize, u64 cclbufferSize) {
     for (u32 i = 0; i < userRankSize; i++) {
         u64 maxSendLength = 0;
         u64 maxRecvLength = 0;
@@ -40,7 +40,7 @@ bool IsAlltoAllvcSatisfyBufferSize(const OpParam& param, u32 userRankSize) {
             maxSendLength += curSendLength;
             maxRecvLength += curRecvLength;
         }
-        if ((maxSendLength <= GetExternalInputCCLBuffSize()) || (maxRecvLength <= GetExternalInputCCLBuffSize())) {
+        if ((maxSendLength <= cclbufferSize) || (maxRecvLength <= cclbufferSize)) {
             return false;
         }
     }
@@ -56,10 +56,10 @@ bool IsSupportUnifiedMarch(const OpParam& param, const TopoType& topoType, u32 s
 }
 
 bool IsSupportDirectFullmeshForAlltoallv(const OpParam& param, DevType deviceType, bool useSuperPodMode, u32 serverNum,
-    bool isSingleMeshAggregation, u32 userRankSize, bool multiModuleDiffDeviceNumMode)
+    bool isSingleMeshAggregation, u32 userRankSize, u64 cclbufferSize)
 {
-    bool isDeviceType = (deviceType == DevType::DEV_TYPE_910_93 || deviceType == DevType::DEV_TYPE_910B);
     bool isOpbase = (GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
+    bool baseInfo = (deviceType == DevType::DEV_TYPE_910_93 || (deviceType == DevType::DEV_TYPE_910B && isOpbase));
     bool isHCCS = false;
     bool isSatisfyBuffer = true;
     if (deviceType == DevType::DEV_TYPE_910_93) {
@@ -74,7 +74,7 @@ bool IsSupportDirectFullmeshForAlltoallv(const OpParam& param, DevType deviceTyp
             CHK_PRT_CONT(retCapture != HCCL_SUCCESS,
                 HCCL_ERROR("Get capture status error. return[%d], capture model", retCapture));
             isHCCS = (userRankSize <= MAX_ALLTOALLV_DIRECT_FULLMESH_RANKSIZE &&
-                      serverNum <= MAX_ALLTOALLV_DIRECT_FULLMESH_SERVER_NUM && !multiModuleDiffDeviceNumMode && isCapture) ||
+                      serverNum <= MAX_ALLTOALLV_DIRECT_FULLMESH_SERVER_NUM && isCapture) ||
                       isSingleMeshAggregation;
             // A+X单机双module启用下， 未使能RDMA不能走directfullmesh算法
             bool isDifModule = serverNum == 1 && !isSingleMeshAggregation && userRankSize > HCCL_ALLTOALLV_P2P_SIZE;
@@ -86,13 +86,13 @@ bool IsSupportDirectFullmeshForAlltoallv(const OpParam& param, DevType deviceTyp
             isHCCS = (isSingleMeshAggregation) ? (true) : (false);
             if (isHCCS) {
                 // A2场景下alltoall和alltoallvc需满足数据量大于cclbuffer大小条件
-                isSatisfyBuffer = IsAlltoAllvcSatisfyBufferSize(param, userRankSize);
+                isSatisfyBuffer = IsAlltoAllvcSatisfyBufferSize(param, userRankSize, cclbufferSize);
             }
         }
     }
-    HCCL_DEBUG("[IsSupportDirectFullmeshForAlltoallv]isDevice91093[%u], isOpbase[%u], isHCCS[%u], isSatisfyBuffer[%u]",
-        isDeviceType, isOpbase, isHCCS, isSatisfyBuffer);
-    return isDeviceType && isOpbase && isHCCS && isSatisfyBuffer;
+    HCCL_DEBUG("[IsSupportDirectFullmeshForAlltoallv]baseInfo[%u], isOpbase[%u], isHCCS[%u], isSatisfyBuffer[%u]",
+        baseInfo, isOpbase, isHCCS, isSatisfyBuffer);
+    return baseInfo && isOpbase && isHCCS && isSatisfyBuffer;
 }
 
 bool SatisfyIntraSuperPod(DevType deviceType, u32 rankSize, bool useSuperPodMode, u32 superPodNum)
@@ -257,7 +257,7 @@ u32 InplaceDataUnitSize(const HcclCMDType &opType, const OpParam &param)
 {
     u32 unitSize = 0;
     if (opType != HcclCMDType::HCCL_CMD_ALLTOALLV && opType != HcclCMDType::HCCL_CMD_ALLTOALLVC &&
-        opType != HcclCMDType::HCCL_CMD_ALLTOALL) {
+        opType != HcclCMDType::HCCL_CMD_ALLTOALL && opType != HcclCMDType::HCCL_CMD_ALLGATHER_V) {
         if (param.DataDes.dataType >= HCCL_DATA_TYPE_RESERVED) {
             HCCL_WARNING("[InplaceDataUnitSize] out of range[%d, %d]",
                 HCCL_DATA_TYPE_INT8, HCCL_DATA_TYPE_RESERVED - 1);

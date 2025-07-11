@@ -24,7 +24,8 @@ HcclResult CollReduceScatterFastDoubleRingFor91093Executor::DoubleRingReduceScat
     const std::vector<std::vector<Slice>> multRingsUserMemSlice, const bool disableDMAReduce)
 {
     (void)tag;
-    HCCL_INFO("[CollReduceScatterFastDoubleRingFor91093Executor][DoubleRingReduceScatter] DoubleRingReduceScatter starts");
+    HCCL_CONFIG_INFO(HCCL_ALG, 
+        "[CollReduceScatterFastDoubleRingFor91093Executor][DoubleRingReduceScatter] DoubleRingReduceScatter starts");
     HcclResult ret = HCCL_SUCCESS;
     u32 ringNum = multRingsSliceZero.size();
     CHK_RET(CheckCommSize(COMM_LEVEL0, ringNum));
@@ -67,7 +68,7 @@ HcclResult CollReduceScatterFastDoubleRingFor91093Executor::DoubleRingReduceScat
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[CollReduceScatterFastDoubleRingFor91093Executor][DoubleRingReduceScatter] Double ring reduce scatter failed "
         "failed,return[%d]", ret), ret);
-
+    // 空拷贝用于后续操作附着
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem, outputMem, stream, dispatcher_));
     ret = RunTemplate(tempAlg, level0RingCommInfo);
     CHK_PRT_RET(ret != HCCL_SUCCESS,

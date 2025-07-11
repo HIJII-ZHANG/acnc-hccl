@@ -158,5 +158,10 @@ HcclResult BroadcastRing::RunAsync(const u32 rank, const u32 rankSize,
     HCCL_INFO("BroadcastRing finished: rank[%u] end count[%llu]", rank, count_);
     return HCCL_SUCCESS;
 }
+HcclResult BroadcastRing::GetNslbAdjInfo(const u32 rank, const u32 rankSize,
+                                         const std::vector<LINK> &links, AdjInfo& nslbAdjInfo)
+{
+    return HCCL_SUCCESS;
+}
 REGISTER_TEMPLATE(TemplateType::TEMPLATE_BROADCAST_RING, BroadcastRing);
 }  // namespace hccl

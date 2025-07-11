@@ -154,6 +154,8 @@ using ErrCqeInfo = struct TagErrCqeInfo {
 
 class Heartbeat {
 public:
+    HcclResult Init(u32 userRank, std::vector<RankInfo> &rankInfoList, DevType devType, const bool useSuperPodMode,
+        const bool isNeedNic, const u32 port);
     static Heartbeat& GetInstance(s32 deviceLogicID);
     HcclResult RegisterToHeartBeat(u32 userRank, DevType devType, std::vector<RankInfo> &rankInfoList, const u32 port,
         const bool isNeedNic, const std::string &commIdentifier, bool useSuperPodMode, bool isUsedRdmaLevel0,
@@ -175,11 +177,12 @@ public:
     HcclResult ClearAllCqeErr(const std::string &identifier);
     HcclResult ClearCqeErr(const std::string &identifier, u32 remoteRank, u32 qpn = 0);
     void SetOpretryErr();
+    void GetIpQueue();
  
 private:
     Heartbeat() = default;
     ~Heartbeat();
-    HcclResult Init(const RankInfo& locRank, const bool useSuperPodMode, const bool isNeedNic, const u32 port);
+
     HcclResult DeInit();
     HcclResult RegisterRanks(const RankInfo& locRank, std::vector<RankInfo>& rankInfos, const u32 port,
         const bool isNeedNic, const std::string& group = HCCL_WORLD_GROUP, bool isUsedRdmaLevel0 = false,
@@ -201,8 +204,6 @@ private:
     void HeartbeatStatusMonitor();
     void ProcessExceptionEvent();
     void ProcessCqeErrInfo();
-    HcclResult CreateHeartConnect(const std::string &group, std::map<UIDType, ConnInfo> &needConnectRank, bool &isLoop,
-        std::chrono::time_point<std::chrono::steady_clock> &startTime);
     void DelErrorSocket();
     bool IsKeyEvent(HeartBeatFrame &event, HcclUs curTime);
     void MakeErrMsg(std::queue<HeartBeatFrame> &keyEvents, std::vector<std::string> &errStatusVec);
@@ -222,12 +223,20 @@ private:
     u32 GetPort(HcclSocketType type, u32 remoteUserRank, u32 remoteDeviceId);
     u32 GetHostPort(s32 devicePhyId);
     HcclResult PrepareConnect(ConnInfo &info);
-
+    void CreateLinkWithRemote(std::string group, UIDType rem, ConnInfo needConnectRank);
+    void CreateHBLinksAsync();
+    
     struct Status {
         HeartBeatStatus status = HeartBeatStatus::HEARTBEAT_OK;
         UIDType informer;
         bool needBroadcast = false;
         Status() {}
+    };
+
+    enum class HBLinkStatus {
+        HEARTBEAT_LINK_NOT_START,
+        HEARTBEAT_LINK_BUILDING,
+        HEARTBEAT_LINK_COMPLETED
     };
 
     HcclIpAddress vnicIp_;
@@ -242,9 +251,15 @@ private:
     u32 lostThreshold_ = 0;
     bool isDeInit_ = false;
     bool startSendRecvTask_ = false;
+    std::map<std::string, std::queue<std::pair<UIDType, ConnInfo>>> hbLinkConnInfo_{};
+    std::mutex hbLinkConnInfoMtx_;
     std::map<std::string, std::map<UIDType, u8>> groupMap_;
     ReferenceMap<UIDType, ConnInfo> rankId2SocketMap_;
     ReferenceMap<UIDType, Status> rankId2StatusMap_;
+    std::map<UIDType, HBLinkStatus> rankId2LinkStatusMap_;
+    std::map<UIDType, std::unique_ptr<std::thread>> linkThreadMap_{};
+    std::atomic<bool> linkThreadRunning_{false};
+    std::atomic<u32> linkThreadCount_{0};
     std::unique_ptr<std::thread> sendRecvThread_;
     std::queue<HeartBeatFrame> errStatusQueue_;
     std::queue<UIDType> errRankQueue_;
@@ -269,6 +284,7 @@ private:
     std::map<HcclIpAddress, HcclNetDevCtx> netDevCtxMap_;
     std::map<HcclIpAddress, std::shared_ptr<HcclSocket>> listenSocketMap_;
     s32 stuckDetectTime_;
+    std::vector<RankInfo> rankInfoList_;
 };
 } // namespace hccl
 

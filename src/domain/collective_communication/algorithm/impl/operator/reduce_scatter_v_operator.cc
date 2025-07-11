@@ -62,6 +62,12 @@ HcclResult ReduceScatterVOperator::SelectAlg(const std::string& tag, const OpPar
     newTag += (param.aicpuUnfoldMode ? "_device" : "_host");
     HCCL_INFO("[SelectAlg] reduce_scatter_v newTag is [%s]", newTag.c_str());
 
+    if (UNLIKELY(EnvConfig::GetExternalInputDebugConfig() & HCCL_ALG)) {
+        HCCL_CONFIG_INFO(HCCL_ALG, 
+            "[ReduceScatterVOperator][SelectAlg]userRank_[%u], algName[%s] actual level1 algo[%d], level2 algo[%d]",
+            userRank_, algName.c_str(), algType_.algoLevel1, algType_.algoLevel2);
+    }
+
     return ret;
 }
 
@@ -80,7 +86,7 @@ HcclResult ReduceScatterVOperator::SelectAlgfor910B(const OpParam& param, std::s
     // 910B单机AIV模式下ReduceScatterV算子当前仅支持单卡数据量不大于256M的场景，大于256M暂不支持
     bool isAivMode = topoMatcher_->GetAivModeConfig() && isSingleMeshAggregation_ && maxDataSize <= AIV_BIG_SIZE
         && IsSupportAIVReduce(param.VDataDes.dataType, param.reduceType)
-        && topoMatcher_->GetDeterministicConfig() == DETERMINISTIC_CONFIG_DISABLE;
+        && topoMatcher_->GetDeterministicConfig() == DETERMINISTIC_DISABLE;
     HCCL_INFO("[ReduceScatterVOperator][SelectAlgfor910B]isAivMode[%d], maxCount[%llu], maxDataSize[%llu], "
         "deterministic[%u], isSingleMeshAggregation[%d].", isAivMode, maxCount, maxDataSize,
         topoMatcher_->GetDeterministicConfig(), isSingleMeshAggregation_);

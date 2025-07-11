@@ -17,13 +17,13 @@ using namespace std;
 HcclOneSidedConn::HcclOneSidedConn(const HcclNetDevCtx &netDevCtx, const HcclRankLinkInfo &localRankInfo,
     const HcclRankLinkInfo &remoteRankInfo, std::unique_ptr<HcclSocketManager> &socketManager,
     std::unique_ptr<NotifyPool> &notifyPool, const HcclDispatcher &dispatcher,
-    const bool &useRdma, u32 sdid, u32 serverId)
+    const bool &useRdma, u32 sdid, u32 serverId, u32 trafficClass, u32 serviceLevel)
     : localRankInfo_(localRankInfo), socketManager_(socketManager),  notifyPool_(notifyPool)
 {
     netDevCtx_ = netDevCtx;
     remoteRankInfo_ = remoteRankInfo;
     useRdma_ = useRdma;
-    TransportMem::AttrInfo attrInfo = {localRankInfo.userRank, remoteRankInfo.userRank, sdid, serverId};
+    TransportMem::AttrInfo attrInfo = {localRankInfo.userRank, remoteRankInfo.userRank, sdid, serverId, trafficClass, serviceLevel};
     if (useRdma) {
         transportMemPtr_ = TransportMem::Create(TransportMem::TpType::ROCE, notifyPool, netDevCtx, 
             dispatcher, attrInfo);
@@ -68,30 +68,27 @@ HcclResult HcclOneSidedConn::Connect(const std::string &commIdentifier, s32 time
     return HCCL_SUCCESS;
 }
 
-HcclResult HcclOneSidedConn::RegMem(HcclMem &localMem, HcclMemDesc &localMemDesc)
+HcclResult HcclOneSidedConn::ExchangeIpcProcessInfo(const ProcessInfo &localProcess, ProcessInfo &remoteProcess)
 {
-    RmaMemType memType = static_cast<RmaMemType>(localMem.type);
-    TransportMem::RmaMem localRmaMem = {memType, localMem.addr, localMem.size};
-    TransportMem::RmaMemDesc *localRmaMemDesc = static_cast<TransportMem::RmaMemDesc *>(static_cast<void *>(localMemDesc.desc));
-    return transportMemPtr_->RegMem(localRmaMem, *localRmaMemDesc);
-}
-
-HcclResult HcclOneSidedConn::DeregMem(const HcclMemDesc &localMemDesc)
-{
-    const TransportMem::RmaMemDesc *localRmaMemDesc = static_cast<const TransportMem::RmaMemDesc *>(static_cast<const void *>(localMemDesc.desc));
-    return transportMemPtr_->DeregMem(*localRmaMemDesc);
+    HCCL_DEBUG("[HcclOneSidedConn][ExchangeIpcProcessInfo] localRank[%u] exchange process info", localRankInfo_.userRank);
+    if (socket_->GetLocalRole() == HcclSocketRole::SOCKET_ROLE_CLIENT) {
+        CHK_RET(socket_->Recv(&remoteProcess, sizeof(ProcessInfo)));
+        CHK_RET(socket_->Send(&localProcess, sizeof(ProcessInfo)));
+    } else {
+        CHK_RET(socket_->Send(&localProcess, sizeof(ProcessInfo)));
+        CHK_RET(socket_->Recv(&remoteProcess, sizeof(ProcessInfo)));
+    }
+    return HCCL_SUCCESS;
 }
 
 HcclResult HcclOneSidedConn::ExchangeMemDesc(const HcclMemDescs &localMemDescs, HcclMemDescs &remoteMemDescs,
-    u32 &actualNumOfRemote, const std::string &commIdentifier, s32 timeoutSec)
+    u32 &actualNumOfRemote)
 {
     TransportMem::RmaMemDesc *localMemDescArray = static_cast<TransportMem::RmaMemDesc *>(static_cast<void *>(localMemDescs.array));
     TransportMem::RmaMemDescs localRmaMemDescs = {localMemDescArray, localMemDescs.arrayLength};
     TransportMem::RmaMemDesc *remoteMemDescArray = static_cast<TransportMem::RmaMemDesc *>(static_cast<void *>(remoteMemDescs.array));
     TransportMem::RmaMemDescs remoteRmaMemDescs = {remoteMemDescArray, remoteMemDescs.arrayLength};
-    if (!socket_) {
-        CHK_RET(Connect(commIdentifier, timeoutSec));
-    }
+
     return transportMemPtr_->ExchangeMemDesc(
         localRmaMemDescs, remoteRmaMemDescs, actualNumOfRemote);
 }

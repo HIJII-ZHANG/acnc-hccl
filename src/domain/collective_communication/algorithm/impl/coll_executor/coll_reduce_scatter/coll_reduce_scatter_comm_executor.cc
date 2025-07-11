@@ -135,6 +135,7 @@ bool CollReduceScatterCommExecutor::IsHugeData(const u64 curSize, OpParam *param
 
 HcclResult CollReduceScatterCommExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollReduceScatterCommExecutor][KernelRun] userRank[%u] starts.", topoAttr_.userRank);
     CommPlane commPlane = COMM_COMBINE;
     if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
         commPlane = COMM_COMBINE_ORDER;

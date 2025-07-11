@@ -13,22 +13,11 @@
 
 #include <hccl/hccl_types.h>
 #include <hccl/base.h>
+#include "hccl_mem_defs.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
-
-typedef enum {
-    HCCL_MEM_TYPE_DEVICE, // device侧内存
-    HCCL_MEM_TYPE_HOST, // host侧内存
-    HCCL_MEM_TYPE_NUM
-} HcclMemType;
-
-typedef struct {
-    HcclMemType type; // segment的内存类型，对应HcclMemType
-    void* addr; // segment的虚拟地址
-    u64 size; // segment的size
-} HcclMem;
 
 const u32 HCCL_MEM_DESC_LENGTH = 511;
 

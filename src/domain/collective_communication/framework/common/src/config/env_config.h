@@ -34,7 +34,7 @@ struct EnvConfigParam {
     u32 maxValue;           // 最大值
     u32 baseValue;          // 基数（可选，默认配置为0）
 };
-
+constexpr s32 HCCL_MIN_CONNECT_FAULT_DETCTION_TIME  = 20; // HCCL探测最小超时时间设置为20s
 HcclResult InitEnvConfig();
 
 bool GetExternalInputHostPortSwitch();
@@ -44,6 +44,13 @@ bool GetExternalInputNpuPortSwitch();
 const std::vector<HcclSocketPortRange> &GetExternalInputHostSocketPortRange();
 
 const std::vector<HcclSocketPortRange> &GetExternalInputNpuSocketPortRange();
+
+
+const bool& GetExternalInputHcclHeartBeatEnable();
+
+const bool& GetExternalInputStuckDetect();
+
+s32& GetExternalInputDfsConnectionFaultDetctionTime();
 
 /*************** For Internal Use ***************/
 
@@ -58,6 +65,10 @@ struct EnvConfig {
     std::vector<HcclSocketPortRange> npuSocketPortRange;
     u32 rdmaTrafficClass;
     u32 rdmaServerLevel;
+    u64 debugConfig;
+    bool enableClusterHeartBeat;
+    bool opCounterEnable;
+    s32 dfsConnectionFaultDetctionTime;
 
     EnvConfig()
     : hostSocketPortSwitch(false),
@@ -65,7 +76,11 @@ struct EnvConfig {
     hostSocketPortRange(),
     npuSocketPortRange(),
     rdmaTrafficClass(HCCL_RDMA_TC_DEFAULT),
-    rdmaServerLevel(HCCL_RDMA_SL_DEFAULT)
+    rdmaServerLevel(HCCL_RDMA_SL_DEFAULT),
+    debugConfig(0),
+    enableClusterHeartBeat(true),
+    opCounterEnable(true),
+    dfsConnectionFaultDetctionTime(HCCL_MIN_CONNECT_FAULT_DETCTION_TIME)
     {
     }
 
@@ -79,14 +94,17 @@ struct EnvConfig {
     static const u32 HCCL_RDMA_SL_DEFAULT = 4;      // 默认的server level为4
     static const u32 HCCL_RDMA_SL_MIN = 0;
     static const u32 HCCL_RDMA_SL_MAX = 7;
-
     // 解析RDMATrafficClass
     HcclResult ParseRDMATrafficClass();
     // 解析RDMAServerLevel
     HcclResult ParseRDMAServerLevel();
+    // 解析HCCL_DEBUG_CONFIG
+    HcclResult ParseDebugConfig();
 
     static const u32& GetExternalInputRdmaTrafficClass();
     static const u32& GetExternalInputRdmaServerLevel();
+    static const u64& GetExternalInputDebugConfig();
+    static void SetExternalInputDebugConfig(u64 value);
 
     bool CheckEnvLen(const char *envStr, u32 envMaxLen);
 };
@@ -101,7 +119,12 @@ HcclResult CheckSocketPortRangeValid(const std::string &envName, const std::vect
 
 HcclResult PortRangeSwitchOn(const SocketLocation &socketLoc);
 
+HcclResult ParseDFSConfig();
+
 void PrintSocketPortRange(const std::string &envName, const std::vector<HcclSocketPortRange> &portRangeVec);
 
 HcclResult ParseEnvConfig(const EnvConfigParam& param, std::string& envValue, u32& resultValue);
+
+HcclResult ParseSingleDFSConfigItem(const std::string& dfsConfigEnv, const std::string& configName,
+    std::string& configResult);
 #endif // HCCL_ENV_INPUT_H

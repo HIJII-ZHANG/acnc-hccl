@@ -27,6 +27,8 @@ constexpr u32 OP_RETRY_POLL_AICPU_STATE_INTERVAL = 10000; // 重执行状态轮�
 constexpr u32 OP_RETRY_SEND_RECV_TIMEOUT = 205; // 发送和接收的超时时间, 单位s, 比aicpu状态机超时时间长5s
 constexpr u32 OP_RETRY_SEND_RECV_INTERVAL = 10000; // 发送和接收的间隔时间, 单位us
 constexpr u32 OP_RETRY_KEEP_INTERVAL = 1; // 保活时间间隔, 单位s
+constexpr u32 OP_RETRY_SWITCH_WAIT_RESUM = 10; // 切入和切出等待通信域恢复状态的超时时间，单位s
+constexpr u32 OP_RETRY_RUNNING_POLL_INTERVAL = 100000; // 重执行状态轮询状态的间隔, 单位us
 constexpr u32 TIME_MS_TO_US = 1000;
 constexpr u32 OP_RETRY_WAIT_CAN_RETRY_RANK = 60;
 
@@ -37,11 +39,24 @@ struct LinkPortStatus {
     u32 rankList[AICPU_MAX_RANK_NUM] = {};
 };
 
+struct ActiveSwitchInfo {
+    u32 switchRankNum;
+    u32 remoteRankNum;
+    bool refreshTransportFin = false;
+    bool defaultPortStatus = false;
+    bool backupPortStatus = false;
+    bool localPortsCheckRet = false;
+    u32 switchRankList[AICPU_MAX_RANK_NUM] = {};
+    bool switchUseBackup[AICPU_MAX_RANK_NUM] = {};
+    u8 remoteRankNicStatus[AICPU_MAX_RANK_NUM] = {};
+};
+
 using HcclAgentRetryInfo = struct HcclAgentRetryInfoDef {
     std::shared_ptr<HcclSocket> socket{nullptr};
     RetryInfo retryInfo;
     ChangeLinkInfo changeLinkInfo;
     LinkPortStatus linkPortStatus;
+    ActiveSwitchInfo switchInfo;
 };
 
 inline const char *GetReadableState(RetryState retryState) {
@@ -66,6 +81,8 @@ public:
     OpRetryBase() {};
     virtual ~OpRetryBase() {};
 
+    // 设置是否直接退出send/recv循环状态，规避长时间阻塞，无法切换状态
+    void SetEnableSendRecv(bool enable);
 protected:
     /* server-agent 交互 */
     HcclResult IssueResponse(std::shared_ptr<HcclSocket> socket, RetryInfo &retryInfo); // agent向server发送数据
@@ -90,6 +107,15 @@ protected:
     // agent向device发送借轨信息
     HcclResult SetOpChangeLinkInfo(std::shared_ptr<HDCommunicate> hdcPtr, KfcCommand opCmd,
         ChangeLinkInfo &changeLinkInfo);
+    // agent向server发送主动借轨信息
+    HcclResult IssueActiveSwitchInfo(std::shared_ptr<HcclSocket> socket, ActiveSwitchInfo &switchInfo);
+    // server收到主动借轨信息
+    HcclResult WaitActiveSwitchInfo(std::shared_ptr<HcclSocket> socket, ActiveSwitchInfo &switchInfo);
+    // server处理收到主动借轨信息函数
+    HcclResult RecvActiveSwitchInfo(std::shared_ptr<HcclSocket> socket, const u32 rankId, ActiveSwitchInfo &switchInfo);
+
+    // 获取SwitchRanks等信息
+    HcclResult GetSwitchRanks(RetryContext* retryCtx, bool &needCheckDefaultNic, bool &needCheckBackupNic);
 
     /* 校验 */
     HcclResult CheckRetryInfo(RetryContext &retryCtx); // 校验收到的N个RetryInfo
@@ -118,6 +144,7 @@ private:
     HcclResult CheckOpName(const RetryInfo &opInfo1, const RetryInfo &opInfo2); // 校验算子一致
     HcclResult CheckMaxRetryCnt(const RetryInfo &retryInfo); // 校验重执行次数
     HcclResult CheckLinkStates(const RetryInfo &retryInfo); // 校验link状态
+    bool enableSendRecv = true;
 };
 
 class RetryContext {
@@ -126,11 +153,13 @@ public:
     RetryContext(const std::string& group, std::shared_ptr<HcclSocket> socket, std::shared_ptr<HDCommunicate> h2dPtr,
         std::shared_ptr<HDCommunicate> d2hPtr, std::shared_ptr<HcclOpStreamRes> opStreamPtr,
         OpRetryResetNotifyCallback notifyResetCallback, std::shared_ptr<OpRetryBase> retryBase,
-        OpRetrySetTransprotStatusCallback setTransprotStatusCallback, bool isEnableBackupLink,
-        const OpRetryAgentInfo& agentInfo):
+        OpRetrySetTransportStatusCallback setTransportStatusCallback,
+        OpRetryGetSwitchRanksCallback getSwitchRanksCallback,
+        bool isEnableBackupLink, const OpRetryAgentInfo& agentInfo):
         group_(group), agentSocket_(socket), h2dPtr_(h2dPtr), d2hPtr_(d2hPtr), opStreamPtr_(opStreamPtr),
-        notifyResetCallback_(notifyResetCallback), setTransprotStatusCallback_(setTransprotStatusCallback),
-        isEnableBackupLink_(isEnableBackupLink), retryBase_(retryBase), isRootRetryCtx_(false)
+        notifyResetCallback_(notifyResetCallback), setTransportStatusCallback_(setTransportStatusCallback),
+        getSwitchRanksCallback_(getSwitchRanksCallback), isEnableBackupLink_(isEnableBackupLink),
+        retryBase_(retryBase), isRootRetryCtx_(false)
     {
         rankId_ = agentInfo.userRank;
         deviceLogicId_ = agentInfo.deviceLogicId;
@@ -176,6 +205,10 @@ public:
         localRetryInfo_.retryState = state_;
     }
 
+    void SetEnableSendRecv(bool enable) {
+        retryBase_->SetEnableSendRecv(enable);
+    };
+
     // 外部接口调用Request()
     HcclResult Request() {
         CHK_SMART_PTR_NULL(retryBase_);
@@ -195,6 +228,19 @@ public:
         return localRetryInfo_.dfxIpInfo;
     }
 
+    void ResetAgentState () {
+        localRetryInfo_.isNeedReportOpRetryErr = false;
+        isBSRRdmaRecvError_ = false;
+        isBSRRdmaSendError_ = false;
+    }
+
+    void ResetServerState () {
+        errorRankList_.clear();
+        needRetryServerRanks_.clear();
+        isRdmaError = false;
+        isNeedReportOpRetryErr = false;
+    }
+
     std::string group_ = "";
     s32 deviceLogicId_ = INVALID_INT;
     u32 rankId_ = INVALID_UINT;
@@ -205,7 +251,8 @@ public:
     std::shared_ptr<HDCommunicate> d2hPtr_ = nullptr;
     std::shared_ptr<HcclOpStreamRes> opStreamPtr_ = nullptr;
     OpRetryResetNotifyCallback notifyResetCallback_ = nullptr;
-    OpRetrySetTransprotStatusCallback setTransprotStatusCallback_ = nullptr;
+    OpRetrySetTransportStatusCallback setTransportStatusCallback_ = nullptr;
+    OpRetryGetSwitchRanksCallback getSwitchRanksCallback_ = nullptr;
     bool isEnableBackupLink_ = false;
     RetryInfo localRetryInfo_;
     ChangeLinkInfo localChangeLinkInfo_;
@@ -219,7 +266,8 @@ public:
     bool isBSRRdmaSendError_ = false;
     HcclOpIdentifier RemainSendOpId_;
     HcclOpIdentifier RemainRecvOpId_;
-    
+    ActiveSwitchInfo switchInfo_;
+    bool isAgentStateWaitResume_ = false;
     // server状态机储存信息
     std::map<u32, HcclAgentRetryInfo> serverSockets_;
     std::vector<u32> needRetryServerRanks_;
@@ -227,6 +275,9 @@ public:
     std::map<u32, HcclOpIdentifier> errorRankList_;
     bool isRdmaError = false;
     bool isAlreadyChangeLink = false;
+    std::map<u32, ActiveSwitchInfo> switchInfoMap_;
+    bool isServerStateWaitResume_ = false;
+    bool isNeedReportOpRetryErr = false; // 针对重执行算子不一致和inplace场景，上报故障
 private:
     std::shared_ptr<OpRetryBase> retryBase_ = nullptr;
     RetryState state_ = RETRY_STATE_RESERVED;

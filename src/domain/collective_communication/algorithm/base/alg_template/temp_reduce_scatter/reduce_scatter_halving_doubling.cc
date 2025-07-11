@@ -229,6 +229,7 @@ HcclResult ReduceScatterHalvingDoubling::RunReduceScatter(const u32 rank, const 
         ret = links[peerRank]->TxWaitDone(stream_);
         CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[Run][ReduceScatter]TxWaitDone failed"), ret);
     }
+
     DeviceMem reduceSrcMem = inputMem_.range(rxSlices_[stepNum-1].offset, rxSlices_[stepNum-1].size);
     DeviceMem reduceDstMem = outputMem_.range(rxSlices_[stepNum-1].offset, rxSlices_[stepNum-1].size);
     ret = HcclD2DMemcpyAsync(dispatcher_, reduceDstMem, reduceSrcMem, stream_);
@@ -236,5 +237,13 @@ HcclResult ReduceScatterHalvingDoubling::RunReduceScatter(const u32 rank, const 
 
     return ret;
 }
+
+HcclResult ReduceScatterHalvingDoubling::GetNslbAdjInfo(const u32 rank, const u32 rankSize,
+                                                        const std::vector<LINK> &links, AdjInfo& nslbAdjInfo)
+{
+    return HCCL_SUCCESS;
+}
+
+
 REGISTER_TEMPLATE(TemplateType::TEMPLATE_REDUCESCATTER_HD, ReduceScatterHalvingDoubling);
 }  // namespace hccl

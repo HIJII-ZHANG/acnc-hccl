@@ -591,6 +591,7 @@ HcclResult AlignedReduceScatterDoubleRing::PreRunStreams(
 HcclResult AlignedReduceScatterDoubleRing::RunReduceScatter(const u32 rank, const u32 rankSize)
 {
     HCCL_INFO("AlignedReduceScatterDoubleRing starts, the input param rank[%u]", rank);
+    // 空拷贝用于后续操作附着
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
     // 主环主流通知从环主流开始通信
     CHK_RET(MainRecordSub());

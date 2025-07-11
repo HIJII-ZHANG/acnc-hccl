@@ -162,10 +162,9 @@ HcclResult CollReduceExecutor::RunLoopInner(OpParam &param, const ReduceType &re
         hugeData = hugeData || param.DataDes.count > INT32_MAX;
     }
     HCCL_DEBUG("[CollReduceExecutor][RunLoopInner]IsHugeData:[%u]", hugeData);
-    bool isDeterministic = topoMatcher_->GetExternalInputHcclDeterministic();
-    auto opMeta =
-        HcclOpMetaInfo::GetOneForReduce(isRootRank, param.root, autoSelectedAlgTypeLevel1, param.DataDes.dataType, reduceType, hugeData,
-        isDeterministic);
+    u8 deterministic = topoMatcher_->GetExternalInputHcclDeterministic();
+    auto opMeta = HcclOpMetaInfo::GetOneForReduce(isRootRank, param.root, autoSelectedAlgTypeLevel1, 
+        param.DataDes.dataType, reduceType, hugeData, deterministic);
     CHK_RET(InitTask(dispatcher_, param.stream, opMeta.isEnableCache, opMeta.GetCacheKey()));
 
     execMem.inputMem = DeviceMem::create(execMem.inputMem.ptr(), curSize);

@@ -66,20 +66,20 @@ __aicore__ inline void AivAllReduceRdmaMid910B::ReduceScatter(__gm__ T *inputGM,
         // 本地拷贝 & 卡间同步
         CpGM2GM(cclGMSelf + avgLengthPerSlice * block_idx, inputGM + avgLengthPerSlice * block_idx, curCount);
         pipe_barrier(PIPE_ALL);
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetOut), tag);  // 本卡该片数据已可以被跨片读取（也可累加）
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetOut), localSetTensor, tag);  // 本卡该片数据已可以被跨片读取（也可累加）
     } else {
         int64_t curCount = CalActualCount(block_idx, sliceCount, avgLengthPerSlice, tailLength);
  
         // 本地拷贝 & 卡间同步
         CpGM2GM(cclGMSelf + avgLengthPerSlice * block_idx, inputGM + avgLengthPerSlice * block_idx, curCount);
         pipe_barrier(PIPE_ALL);
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetOut), tag);  // 本卡该片数据已经可以被跨片读取
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetOut), localSetTensor, tag);  // 本卡该片数据已经可以被跨片读取
         
         // 检查对端数据就绪且本端就绪 & 跨片搬运
         curCount = CalActualCount(rank_, sliceCount, avgLengthPerSlice, tailLength);
  
-        CheckFlagNew((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffsetRemote), tag);
-        CheckFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetIn), tag);
+        WaitSignalValue((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffsetRemote), localCheckTensor, tag);
+        WaitSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetIn), localCheckTensor, tag);
         pipe_barrier(PIPE_ALL);
         CpGM2GM(cclGMSelf + avgLengthPerSlice * rank_, cclGMOther + avgLengthPerSlice * rank_, curCount,
             true, reduceOp_);
@@ -100,23 +100,23 @@ __aicore__ inline void AivAllReduceRdmaMid910B::AllGather(__gm__ T *outputGM, __
         int64_t curCount = CalActualCount(block_idx, sliceCount, avgLengthPerSlice, tailLength);
  
         // 本地拷贝 & 卡间同步
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetOut), tag);  // 本卡该片数据已经可以被跨片读取
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetOut), localSetTensor, tag);  // 本卡该片数据已经可以被跨片读取
         CpGM2GM(outputGM + avgLengthPerSlice * block_idx, cclGMSelf + avgLengthPerSlice * block_idx, curCount);
     } else {
         int64_t curCount = CalActualCount(block_idx, sliceCount, avgLengthPerSlice, tailLength);
  
         // 检查对端就绪 & 跨片拷贝
-        CheckFlagNew((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffsetRemote), tag);
+        WaitSignalValue((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffsetRemote), localCheckTensor, tag);
         pipe_barrier(PIPE_ALL);
         CpGM2GM(outputGM + (block_idx * avgLengthPerSlice), cclGMOther + block_idx * avgLengthPerSlice, curCount);
         pipe_barrier(PIPE_ALL);
         
         // 末尾同步
         // 本卡已读完block_idx号对端上的rank号数据
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffsetOut + FLAG_SIZE), tag);
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffsetOut + FLAG_SIZE), localSetTensor, tag);
         pipe_barrier(PIPE_ALL);
         // 检查本卡上是否有block_idx号对端的读完标记
-        CheckFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetRemote + FLAG_SIZE), tag);
+        WaitSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetRemote + FLAG_SIZE), localCheckTensor, tag);
     }
     return;
 }

@@ -585,9 +585,13 @@ HcclResult hcclImpl::CreateComm(const std::string &tag, DeviceMem &inputMem, Dev
     commInfo.reset(new (std::nothrow) CommInfo);
     CHK_SMART_PTR_NULL(commInfo);
 
-    DeviceMem inputMemComm = cclBufferManager_.GetCommRegMem(inputMem, MemAttr::IN_CCL_BUFFER, aivMode);
-    DeviceMem outputMemComm = cclBufferManager_.GetCommRegMem(outputMem, MemAttr::OUT_CCL_BUFFER, aivMode);
+    DeviceMem inputMemComm(inputMem);
+    DeviceMem outputMemComm(outputMem);
     DeviceMem expMemComm = cclBufferManager_.GetCommExpBuffer();
+    if (!isHaveCpuRank_) {
+        inputMemComm = cclBufferManager_.GetCommRegMem(inputMem, MemAttr::IN_CCL_BUFFER, aivMode);
+        outputMemComm = cclBufferManager_.GetCommRegMem(outputMem, MemAttr::OUT_CCL_BUFFER, aivMode);
+    }
 
     if (isP2p) {
         CHK_RET(CreateP2pComm(tag, *commInfo, inputMemComm, root));

@@ -194,5 +194,13 @@ HcclResult AllGatherHalvingDoubling::RunAllGather(u32 rank, u32 stepNum,
     }
     return ret;
 }
+
+HcclResult AllGatherHalvingDoubling::GetNslbAdjInfo(const u32 rank, const u32 rankSize,
+                                         const std::vector<LINK> &links, AdjInfo& nslbAdjInfo)
+{
+    return HCCL_SUCCESS;
+}
+
+
 REGISTER_TEMPLATE(TemplateType::TEMPLATE_ALL_GATHER_HALVING_DOUBLING, AllGatherHalvingDoubling);
 }  // namespace hccl

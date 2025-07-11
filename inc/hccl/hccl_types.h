@@ -44,6 +44,7 @@ typedef enum {
     HCCL_E_AGAIN = 20,              /**< try again */
     HCCL_E_REMOTE = 21,             /**< error cqe */
     HCCL_E_SUSPENDING = 22,         /**< error communicator suspending */
+    HCCL_E_OPRETRY_FAIL = 23,       /**< retry constraint */
     HCCL_E_RESERVED                 /**< reserved */
 } HcclResult;
 
@@ -80,9 +81,9 @@ typedef enum {
     HCCL_DATA_TYPE_FP64 = 10,    /**< fp64 */
     HCCL_DATA_TYPE_BFP16 = 11,    /**< bfp16 */
     HCCL_DATA_TYPE_INT128 = 12,   /**< int128 */
-    HCCL_DATA_TYPE_HIF8 = 13,     /**< hif8 */
-    HCCL_DATA_TYPE_FP8E4M3 = 14,  /**< fp8e4m3 */
-    HCCL_DATA_TYPE_FP8E5M2 = 15,  /**< fp8e5m2 */
+    HCCL_DATA_TYPE_HIF8 = 14,     /**< hif8 */
+    HCCL_DATA_TYPE_FP8E4M3 = 15,  /**< fp8e4m3 */
+    HCCL_DATA_TYPE_FP8E5M2 = 16,  /**< fp8e5m2 */
     HCCL_DATA_TYPE_RESERVED = 255 /**< reserved */
 } HcclDataType;
 
@@ -108,7 +109,7 @@ typedef struct HcclRootInfoDef {
 
 const uint32_t HCCL_COMM_CONFIG_INFO_BYTES = 24;
 const uint32_t HCCL_COMM_CONFIG_MAGIC_WORD = 0xf0f0f0f0;
-const uint32_t HCCL_COMM_CONFIG_VERSION = 5;
+const uint32_t HCCL_COMM_CONFIG_VERSION = 6;
 const uint32_t HCCL_COMM_DEFAULT_BUFFSIZE = 200;
 const uint32_t HCCL_COMM_BUFFSIZE_CONFIG_NOT_SET = 0xffffffff;
 const uint32_t HCCL_COMM_DEFAULT_DETERMINISTIC = 0;
@@ -127,6 +128,8 @@ typedef struct HcclCommConfigDef {
     uint32_t hcclOpExpansionMode;   // 0:默认值  1:host  2:aicpu  3:aiv
     uint32_t hcclRdmaTrafficClass;
     uint32_t hcclRdmaServiceLevel;
+    uint32_t hcclWorldRankID;
+    uint64_t hcclJobID;
 } HcclCommConfig;
 
 typedef enum {
@@ -135,6 +138,8 @@ typedef enum {
     HCCL_COMM_CONFIG_COMM_NAME = 2,
     HCCL_COMM_CONFIG_OP_EXPANSION_MODE = 3,
     HCCL_COMM_CONFIG_SUPPORT_INIT_BY_ENV = 4,
+    HCCL_COMM_CONFIG_WORLD_RANKID = 5,
+    HCCL_COMM_CONFIG_JOBID = 6,
     HCCL_COMM_CONFIG_RESERVED
 } HcclCommConfigCapability;
 

@@ -44,7 +44,7 @@ __aicore__ inline void AivReduceScatterRdma910B::Process(GM_ADDR input, GM_ADDR 
         }
         // 本地拷贝 & 卡间同步
         pipe_barrier(PIPE_ALL);
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetIn), tag);  // 本卡该片数据已可以被跨片读取（也可累加）
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetIn), localSetTensor, tag);  // 本卡该片数据已可以被跨片读取（也可累加）
     } else {                    // 其余block,先将数据从input搬至ccl，再从其他卡的ccl读数据至本卡ccl
         for (uint32_t i = 0; i < serverNum; i++) {    //循环处理每个服务器需要的数据
             CpGM2GM(cclGMSelf + block_idx * LengthPerPlane + i * count,
@@ -52,11 +52,11 @@ __aicore__ inline void AivReduceScatterRdma910B::Process(GM_ADDR input, GM_ADDR 
         }
         // 本地拷贝 & 卡间同步
         pipe_barrier(PIPE_ALL);
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetOut), tag);  // 本卡该片数据已可以被跨片读取
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetOut), localSetTensor, tag);  // 本卡该片数据已可以被跨片读取
 
         // 检查对端数据就绪且本端就绪 & 跨片搬运
-        CheckFlagNew((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffsetRemote), tag);    //确认其他卡的数据已准备
-        CheckFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetIn), tag);            //确认本卡数据已准备
+        WaitSignalValue((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffsetRemote), localCheckTensor, tag);    //确认其他卡的数据已准备
+        WaitSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetIn), localCheckTensor, tag);            //确认本卡数据已准备
         pipe_barrier(PIPE_ALL);
         CpGM2GM(cclGMSelf + LengthPerPlane * rank_,
                 cclGMOther + LengthPerPlane * rank_, count * serverNum, true, reduceOp_);

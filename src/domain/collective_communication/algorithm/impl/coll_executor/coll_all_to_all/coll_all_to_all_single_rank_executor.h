@@ -20,6 +20,7 @@ public:
     ~CollAlltoAllSingleRankExecutor() = default;
 
     HcclResult Orchestrate(OpParam& param, AlgResourceResponse& algRes) override;
+    HcclResult GetAdjInfo(AlgResourceResponse& algRes, AdjInfo& adjInfo) override;
 private:
     HcclResult KernelRun(const OpParam &param, ExecMem &execMem) override;
 };

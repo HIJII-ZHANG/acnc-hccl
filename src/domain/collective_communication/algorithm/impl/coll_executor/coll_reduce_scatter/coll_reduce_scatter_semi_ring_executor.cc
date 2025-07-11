@@ -80,7 +80,8 @@ HcclResult CollReduceScatterSemiRingExecutor::DoubleRingMidCountReduceScatter(
     const u64 baseOffset, const HcomCollOpInfo *opInfo,
     const std::vector<std::vector<Slice>> multRingsUserMemSlice, const bool retryEnable)
 {
-    HCCL_INFO("[CollReduceScatterSemiRingExecutor][KernelRun]AllGatherDoubleRingConcurrentExecutor starts.");
+    HCCL_CONFIG_INFO(HCCL_ALG,
+        "[CollReduceScatterSemiRingExecutor] DoubleRingMidCountReduceScatter starts.");
     
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
     SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);

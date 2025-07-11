@@ -9,7 +9,6 @@
  */
 
 #include "coll_all_gather_aiv_rdma_executor.h"
-#include "alg_profiling.h"
 
 namespace hccl {
 constexpr u32 A_X_SIZE = 16;
@@ -19,6 +18,7 @@ CollAllGatherAivRdmaExecutor::CollAllGatherAivRdmaExecutor(const HcclDispatcher 
     : CollAllGatherExecutor(dispatcher, topoMatcher)
 {
     DMAReduceFlag_ = false;
+    desc_.isAivMode = true;
 }
 
 HcclResult CollAllGatherAivRdmaExecutor::CalcStreamNum(u32& streamNum)
@@ -83,7 +83,7 @@ HcclResult CollAllGatherAivRdmaExecutor::Orchestrate(OpParam& param, AlgResource
 
     HcclResult ret = KernelRun(param, execMem);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
-        HCCL_ERROR("[CollAllGatherAivRdmaExecutor]errNo[0x%016llx] tag[%s] excutor kernel run failed",
+        HCCL_ERROR("[CollAllGatherAivRdmaExecutor]errNo[0x%016llx] tag[%s] executor kernel run failed",
             HCCL_ERROR_CODE(ret), param.tag.c_str()), ret);
 
     HCCL_INFO("tag[%s], AllReduce executor orchestrate success, take time [%lld]us.",
@@ -202,10 +202,6 @@ HcclResult CollAllGatherAivRdmaExecutor::KernelRun(const OpParam &param, ExecMem
             buffersOut[i] = static_cast<u8 *>(execMem.outputMem.ptr()) + HCCL_MID_COUNT_32_MB;
         }
     }
-
-    if (aivClearEnable_) {
-        ClearAivSyncBuf(buffersOut, localRank, localRankSize, param.stream.ptr());
-    }
     
     u32 serverNum = innerCommInfo.localRankSize;
 
@@ -219,21 +215,21 @@ HcclResult CollAllGatherAivRdmaExecutor::KernelRun(const OpParam &param, ExecMem
     };
     blockDim_ = CalBlockDim(localRankSize);
     AivResourceArgs resourceArgs {
-        param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size(), blockDim_
+        param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size(), blockDim_, param.aivTag
     };
     AivAlgArgs algArgs {0};
     struct AivProfilingInfo aivProfilingInfo;
     aivProfilingInfo.counter = opCounter_;
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
-        HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
+        HCCL_PROFILER_ADD_TAG_AIV(param.tag, algoAttr_.identifier, workflowMode_);
         HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
     }
 
-    CHK_RET(ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, aivProfilingInfo));
+    if (aivClearEnable_) {
+        ClearAivSyncBuf(buffersOut, param.stream.ptr(), topoArgs);
+    }
 
-    TaskAivProfiler(opArgs.cmdType, aivProfilingInfo.tag, opArgs.count * sizeof(opArgs.dataType),
-        aivProfilingInfo.blockDim, topoArgs.rankSize, resourceArgs.buffersOut[topoArgs.rank], resourceArgs.stream,
-        algArgs.step, aivProfilingInfo.beginTime);
+    CHK_RET(ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, aivProfilingInfo));
 
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){ 
         HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());
@@ -242,6 +238,53 @@ HcclResult CollAllGatherAivRdmaExecutor::KernelRun(const OpParam &param, ExecMem
 
     HCCL_INFO("[CollAllGatherAivRdmaExecutor][KernelRun]allGather aiv run success");
     return HCCL_SUCCESS;
+}
+
+HcclResult CollAllGatherAivRdmaExecutor::Getlevel1CommRank(SubCommInfo& level1CommInfo)
+{
+    if (CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1) != HCCL_SUCCESS) {
+        return HCCL_E_UNAVAIL;
+    }
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    u32 ringNum = (topoType_ == TopoType::TOPO_TYPE_8P_RING) ? LEVEL0_PLANE_NUM_IN_8PRING :
+        LEVEL0_PLANE_NUM_IN_NPRING_SINGLE;
+    u32 commIndex = (ringNum == LEVEL0_PLANE_NUM_IN_8PRING) ? topoAttr_.devicePhyId : level0CommInfo.localRank;
+
+    if (CheckCommSize(COMM_LEVEL1, commIndex + 1) != HCCL_SUCCESS) {
+        return HCCL_E_UNAVAIL;
+    }
+    level1CommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
+
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollAllGatherAivRdmaExecutor::SelectTempAlg(std::unique_ptr<AlgTemplateBase> &level1TempAlg, u32 level1RankSize)
+{
+    if (level1RankSize > 1) {
+        if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING || (topoAttr_.isDiffDeviceModule && topoAttr_.serverNum == 1)) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_ALL_GATHER_RING, dispatcher_);
+            HCCL_INFO("allgather mesh: using ring algo inter-server.");
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_ALL_GATHER_NHR, dispatcher_);
+            HCCL_INFO("allgather mesh: using nhr algo inter-server.");
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_ALL_GATHER_NHRV1, dispatcher_);
+            HCCL_INFO("allgather mesh: using nhr_v1 algo inter-server.");
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_ALL_GATHER_NB, dispatcher_);
+            HCCL_INFO("allgather mesh: using nonuniform-bruck algo inter-server.");
+        } else {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_ALL_GATHER_RECURSIVE_HALVING_DOUBLING, dispatcher_);
+            HCCL_INFO("allgather mesh: using halving-doubling algo inter-server.");
+        }
+        return HCCL_SUCCESS;
+    }
+    return HCCL_E_UNAVAIL;
 }
 
 REGISTER_EXEC("AllGatherAivRdmaExecutor", AllGatherAivRdma, CollAllGatherAivRdmaExecutor);

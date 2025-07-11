@@ -71,6 +71,8 @@ HcclResult CollBroadcastSmallCountExecutor::CalcLevel0CommInfo(
 
 HcclResult CollBroadcastSmallCountExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG,
+        "[CollBroadcastSmallCountExecutor][KernelRun] userRank[%u] starts.", topoAttr_.userRank);
     std::vector<Slice> dataSegsSlice;
 
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));

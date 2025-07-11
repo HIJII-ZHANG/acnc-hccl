@@ -17,7 +17,6 @@
 #include "externalinput_pub.h"
 #include "coll_alg_param.h"
 #include "comm_factory_pub.h"
-#include "common_pub.h"
 #include "hccl_common.h"
 #include "calc_impl.h"
 

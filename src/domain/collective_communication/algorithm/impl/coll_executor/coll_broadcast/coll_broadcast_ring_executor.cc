@@ -64,7 +64,7 @@ HcclResult CollBroadcastRingExecutor::CalcLevel0CommInfo(TransportMemType inputT
 
 HcclResult CollBroadcastRingExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollBroadcastRingExecutor][KernelRun]The CollBroadcastRingExecutor starts.");
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollBroadcastRingExecutor][KernelRun]The CollBroadcastRingExecutor starts.");
     u32 perDataSize = 0;
     CHK_RET(SalGetDataTypeSize(param.DataDes.dataType, perDataSize));
 
@@ -205,6 +205,49 @@ HcclResult CollBroadcastRingExecutor::KernelRun(const OpParam &param, ExecMem &e
 
     HCCL_INFO("broadcast 8PringHD stage2 run success");
     return HCCL_SUCCESS;
+}
+HcclResult CollBroadcastRingExecutor::Getlevel1CommRank(SubCommInfo& level1CommInfo)
+{
+    if (CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1) != HCCL_SUCCESS) {
+        return HCCL_E_UNAVAIL;
+    }
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+    u32 ringNum = (topoType_ == TopoType::TOPO_TYPE_8P_RING) ? LEVEL0_PLANE_NUM_IN_8PRING :
+        LEVEL0_PLANE_NUM_IN_NPRING_SINGLE;
+    u32 commIndex = (ringNum == LEVEL0_PLANE_NUM_IN_8PRING) ? topoAttr_.devicePhyId : level0CommInfo.localRank;
+
+    if (CheckCommSize(COMM_LEVEL1, commIndex + 1) != HCCL_SUCCESS) {
+        return HCCL_E_UNAVAIL;
+    }
+    level1CommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
+
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollBroadcastRingExecutor::SelectTempAlg(std::unique_ptr<AlgTemplateBase> &level1TempAlg, u32 level1RankSize)
+{
+    if (level1RankSize > 1) {
+        if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_NHR, dispatcher_);
+            HCCL_INFO("broadcast ring: using nhr algo inter-server.");
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_BROADCAST_NHR_V1,
+                dispatcher_);
+            HCCL_INFO("broadcast ring: using nhr_v1 algo inter-server.");
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_NB, dispatcher_);
+            HCCL_INFO("broadcast ring: using nonuniform-bruck algo inter-server.");
+        } else {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_BROADCAST_RECURSIVE_HD, dispatcher_);
+            HCCL_INFO("broadcast ring: using Recursive halving-doubling algo inter-server.");
+        }
+        CHK_SMART_PTR_NULL(level1TempAlg);
+        return HCCL_SUCCESS;
+    }
+    return HCCL_E_UNAVAIL;
 }
 
 REGISTER_EXEC("BroadCastRingExecutor", BroadcastRing, CollBroadcastRingExecutor);

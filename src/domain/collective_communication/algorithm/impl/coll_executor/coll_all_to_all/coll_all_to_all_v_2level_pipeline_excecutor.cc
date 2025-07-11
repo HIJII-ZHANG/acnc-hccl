@@ -81,8 +81,8 @@ HcclResult CollRunAlltoAllVTwoLevelPipeline::CalcLevel0CommInfo(TransportMemType
 HcclResult CollRunAlltoAllVTwoLevelPipeline::CalcLevel1CommInfo(TransportMemType inputType,
     TransportMemType outputType, std::vector<LevelNSubCommTransport>& opTransport)
 {
-    CommParaInfo commParaInfo(COMM_MESH_L1, CommType::COMM_TAG_MESH);
-    CHK_RET(CalcCommPlaneInfo(tag_, commParaInfo, opTransport[COMM_MESH_L1], inputType, outputType));
+    CommParaInfo commParaLevel1(COMM_MESH_L1, CommType::COMM_TAG_MESH);
+    CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel1, opTransport[COMM_MESH_L1], inputType, outputType));
     return HCCL_SUCCESS;
 }
 
@@ -131,7 +131,7 @@ HcclOpMetaInfo CollRunAlltoAllVTwoLevelPipeline::GetOpMeta(HcclCMDType opType, c
 
 HcclResult CollRunAlltoAllVTwoLevelPipeline::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollRunAlltoAllVTwoLevelPipeline][KernelRun] alltoall two level pipeline start");
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollRunAlltoAllVTwoLevelPipeline][KernelRun] alltoall two level pipeline start");
 
     bool cclEnough = true;
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE &&
@@ -139,7 +139,7 @@ HcclResult CollRunAlltoAllVTwoLevelPipeline::KernelRun(const OpParam &param, Exe
             execMem.inputMem.size()) {
         cclEnough = false;
     }
-    HCCL_INFO("[CollRunAlltoAllVTwoLevelPipeline][KernelRun] alltoall pipeline run %s algo",
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollRunAlltoAllVTwoLevelPipeline][KernelRun] alltoall pipeline run %s algo",
         cclEnough ? "cclEnough" : "ping pong");
     A2aPipelineMemory a2aPipelineMemory;
     a2aPipelineMemory.userInput = algResResp_->paramInputMem;

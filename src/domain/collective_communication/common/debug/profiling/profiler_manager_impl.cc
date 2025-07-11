@@ -234,13 +234,18 @@ void ProfilerManagerImpl::TaskAivProfilerHandle(void *param, u32 length)
         HCCL_ERROR("[ProfilerManagerImpl][%s]param is nullptr.", __func__);
         return;
     }
-    struct AivTaskPara* taskPara = (struct AivTaskPara *)param;
 
-    TaskAivProfiler(ProfilerType::TASK_ALL, taskPara->stream, taskPara->aiv);
+    struct TaskParaGeneral* taskParaGeneral = static_cast<struct TaskParaGeneral *>(param);
+
+    if(sizeof(TaskParaGeneral) < length){
+        return;
+    }
+
+    TaskAivProfiler(ProfilerType::TASK_ALL, taskParaGeneral->stream, taskParaGeneral->aiv);
     
     if (GetIfProfile()){
         auto &profilingManager = hccl::ProfilingManager::Instance();
-        (void)profilingManager.CallMsprofReportTaskApi(taskPara->isMainStream, taskPara->beginTime, ProfTaskType::TASK_AIV);
+        (void)profilingManager.CallMsprofReportTaskApi(taskParaGeneral->isMainStream, taskParaGeneral->beginTime, ProfTaskType::TASK_AIV);
     }
 }
 

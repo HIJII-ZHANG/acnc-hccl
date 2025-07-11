@@ -35,21 +35,11 @@ __aicore__ inline void AivAllReduceBig910B::ReduceWithFlagWrap(__gm__ T *cclGmSe
             break;
         }
 
-        GlobalTensor<int32_t> globalFlag;
-        globalFlag.SetGlobalBuffer(ctrlFlagsGM, UB_FLAG_PAD_COUNT);
-        GlobalTensor<int32_t> globalFlagX;
-        globalFlagX.SetGlobalBuffer(ctrlFlagsGMX, UB_FLAG_PAD_COUNT);
         LocalTensor<int32_t> localFlag = flagInQue.AllocTensor<int32_t>();
         LocalTensor<int32_t> RemoteFlag = flagInQue.AllocTensor<int32_t>();
 
-        DataCopy(localFlag, globalFlag, UB_FLAG_PAD_COUNT);
-        DataCopy(RemoteFlag, globalFlagX, UB_FLAG_PAD_COUNT);
-
-        set_flag(PIPE_MTE2, PIPE_S, EVENT_ID0);
-        wait_flag(PIPE_MTE2, PIPE_S, EVENT_ID0);
-
-        uint64_t localFlagValue = localFlag.GetValue(0);
-        uint64_t RemoteFlagValue = RemoteFlag.GetValue(0);
+        uint64_t localFlagValue = GetSignalValue(ctrlFlagsGM, localFlag);
+        uint64_t RemoteFlagValue = GetSignalValue(ctrlFlagsGMX, RemoteFlag);
 
         flagInQue.FreeTensor(localFlag);
         flagInQue.FreeTensor(RemoteFlag);
@@ -131,40 +121,40 @@ __aicore__ inline void AivAllReduceBig910B::Process(GM_ADDR input, GM_ADDR outpu
 
     if (block_idx >= blockNumPerGroup) {
         // reduce做完第1次全卡同步
-        SetFlagNew((__gm__ int32_t *)(flagAddrSelf), tag, true);
+        AddSignalValue((__gm__ int32_t *)(flagAddrSelf), localSetTensor, tag);
         
         // 全aiv退出前同步
-        SetFlagNew((__gm__ int32_t*)(flagAddrSelf + FLAG_SIZE), tag, true);
+        AddSignalValue((__gm__ int32_t*)(flagAddrSelf + FLAG_SIZE), localSetTensor, tag);
         set_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID2);
         wait_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID2);
 
-        CheckFlagNew((__gm__ int32_t *)(flagAddrSelf + 2 * FLAG_SIZE), tag);
+        WaitSignalValue((__gm__ int32_t *)(flagAddrSelf + 2 * FLAG_SIZE), localCheckTensor, tag);
         return;
     }
     pipe_barrier(PIPE_ALL);
     
     if (block_idx == rank_) {
         // check 本端aiv 所有reduce结果是否完成
-        CheckFlagNew((__gm__ int32_t *)(flagAddrSelf), rankSize_ * tag);
+        WaitSignalValue((__gm__ int32_t *)(flagAddrSelf), localCheckTensor, rankSize_ * tag);
         pipe_barrier(PIPE_ALL);
-        SetFlagNew((__gm__ int32_t *)(flagAddrSelf), 0);
+        SetSignalValue((__gm__ int32_t *)(flagAddrSelf), localSetTensor, 0);
 
         set_flag(PIPE_MTE3, PIPE_S, EVENT_ID2);
         wait_flag(PIPE_MTE3, PIPE_S, EVENT_ID2);
 
         // 告诉别人自己已经加完所有卡了
-        SetFlagNew((__gm__ int32_t *)(flagAddrSelf + midAckFlagOffset + rank_ * FLAG_SIZE), tag);
+        SetSignalValue((__gm__ int32_t *)(flagAddrSelf + midAckFlagOffset + rank_ * FLAG_SIZE), localSetTensor, tag);
 
         set_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID2);
         wait_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID2);
     }
 
     // 每个aiv读相应对端的flag
-    CheckFlagNew((__gm__ int32_t *)(flagAddrOther + midAckFlagOffset + block_idx * FLAG_SIZE), tag);
+    WaitSignalValue((__gm__ int32_t *)(flagAddrOther + midAckFlagOffset + block_idx * FLAG_SIZE), localCheckTensor, tag);
 
     // 清空计数
     __gm__ int32_t* ctrlFlagsGM = (__gm__ int32_t *)(flagAddrSelf + pipeCtrlFlagOffset + targetRank * FLAG_SIZE);
-    SetFlagNew(ctrlFlagsGM, 0);
+    SetSignalValue(ctrlFlagsGM, localSetTensor, 0);
 
     pipe_barrier(PIPE_ALL);
 
@@ -176,27 +166,27 @@ __aicore__ inline void AivAllReduceBig910B::Process(GM_ADDR input, GM_ADDR outpu
     pipe_barrier(PIPE_ALL);
 
     // 通知对端，自己已经把对端的那片数据拉回来了
-    SetFlagNew((__gm__ int32_t *)(flagAddrOther + finalAckFlagOffset + rank_ * FLAG_SIZE), tag);
+    SetSignalValue((__gm__ int32_t *)(flagAddrOther + finalAckFlagOffset + rank_ * FLAG_SIZE), localSetTensor, tag);
     pipe_barrier(PIPE_ALL);
     
     // 确认对端已经将对应的数据拉走
-    CheckFlagNew((__gm__ int32_t *)(flagAddrSelf + finalAckFlagOffset + block_idx * FLAG_SIZE), tag);
+    WaitSignalValue((__gm__ int32_t *)(flagAddrSelf + finalAckFlagOffset + block_idx * FLAG_SIZE), localCheckTensor, tag);
     pipe_barrier(PIPE_ALL);
-    SetFlagNew((__gm__ int32_t *)(flagAddrSelf + finalAckFlagOffset + block_idx * FLAG_SIZE), 0);
+    SetSignalValue((__gm__ int32_t *)(flagAddrSelf + finalAckFlagOffset + block_idx * FLAG_SIZE), localSetTensor, 0);
     pipe_barrier(PIPE_ALL);
 
     // 卡内所有aiv同步
-    SetFlagNew((__gm__ int32_t*)(flagAddrSelf + FLAG_SIZE), tag, true);
+    AddSignalValue((__gm__ int32_t*)(flagAddrSelf + FLAG_SIZE), localSetTensor, tag);
     if (block_idx == rank_) {
         pipe_barrier(PIPE_ALL);
-        CheckFlagNew((__gm__ int32_t *)(flagAddrSelf + FLAG_SIZE), rankSize_ * 2 * tag);
+        WaitSignalValue((__gm__ int32_t *)(flagAddrSelf + FLAG_SIZE), localCheckTensor, rankSize_ * 2 * tag);
         pipe_barrier(PIPE_ALL);
-        SetFlagNew((__gm__ int32_t*)(flagAddrSelf + FLAG_SIZE), 0);
+        SetSignalValue((__gm__ int32_t*)(flagAddrSelf + FLAG_SIZE), localSetTensor, 0);
         pipe_barrier(PIPE_ALL);
-        SetFlagNew((__gm__ int32_t*)(flagAddrSelf + 2 * FLAG_SIZE), tag);
+        SetSignalValue((__gm__ int32_t*)(flagAddrSelf + 2 * FLAG_SIZE), localSetTensor, tag);
     } else {
         pipe_barrier(PIPE_ALL);
-        CheckFlagNew((__gm__ int32_t *)(flagAddrSelf + 2 * FLAG_SIZE), tag);
+        WaitSignalValue((__gm__ int32_t *)(flagAddrSelf + 2 * FLAG_SIZE), localCheckTensor, tag);
     }
     
     return;

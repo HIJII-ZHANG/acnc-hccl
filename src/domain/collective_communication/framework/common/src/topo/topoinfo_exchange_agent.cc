@@ -16,6 +16,8 @@
 #include "config.h"
 #include "sal_pub.h"
 #include "device_capacity.h"
+#include "preempt_port_manager.h"
+
 namespace hccl {
 constexpr s32 DEVICE_LOGIC_ID_LENGTH = 4;
 
@@ -29,6 +31,29 @@ TopoInfoExchangeAgent::TopoInfoExchangeAgent(HcclIpAddress &serverIp, u32 server
       netDevCtx_(netDevCtx)
 {}
 
+TopoInfoExchangeAgent::TopoInfoExchangeAgent(HcclIpAddress &serverIp, u32 serverPort, std::string identifier,
+    HcclNetDevCtx netDevCtx, HcclBasicRankInfo localRankInfo, u32 connSize, u32 connRank)
+    : serverIP_(serverIp),
+      serverPort_(serverPort),
+      identifier_(identifier),
+      localRankInfo_(localRankInfo),
+      clusterTopoInfo_(),
+      netDevCtx_(netDevCtx),
+      connSize_(connSize),
+      connRank_(connRank)
+{}
+
+TopoInfoExchangeAgent::TopoInfoExchangeAgent(HcclIpAddress &serverIp, u32 serverPort, std::string identifier,
+    HcclNetDevCtx netDevCtx, HcclBasicRankInfo localRankInfo, HcclRankHandle RankInfo)
+    : serverIP_(serverIp),
+      serverPort_(serverPort),
+      identifier_(identifier),
+      localRankInfo_(localRankInfo),
+      localRankHandle_(RankInfo),
+      clusterTopoInfo_(),
+      netDevCtx_(netDevCtx)
+{}
+
 TopoInfoExchangeAgent::~TopoInfoExchangeAgent()
 {
     Teardown();
@@ -36,10 +61,61 @@ TopoInfoExchangeAgent::~TopoInfoExchangeAgent()
 
 HcclResult TopoInfoExchangeAgent::Setup()
 {
+    connSize_ = localRankInfo_.rankSize;
+    connRank_ = localRankInfo_.rank;
+    //填充要发送的localRankHandle的值
+    localRankHandle_.rankId = localRankInfo_.rank;
     HcclResult ret = Connect(serverIP_, serverPort_, socket_);
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[TopoInfoExchangeAgent][Setup]TopoExchangeAgent: "\
         "connect server[%s : %u] failed", serverIP_.GetReadableAddress(), serverPort_), ret);
     HCCL_INFO("TopoExchangeAgent: client connect with server ip[%s] port[%u] success.",
+        serverIP_.GetReadableAddress(), serverPort_);
+
+    if (!isByMasterInfo_ && localRankInfo_.rankSize > TOPO_HIERARCHICAL_ENABLE_THRESHOLD) {
+        ret = socket_->Send(&localRankHandle_, sizeof(localRankHandle_));
+        CHK_PRT_RET(ret != HCCL_SUCCESS,
+            HCCL_ERROR("[SendRankHandle]errNo[0x%016llx] rankID[%s] send localRankHandle to remote by"\
+            "client fd_handle failed, ret[%u]", HCCL_ERROR_CODE(HCCL_E_TCP_TRANSFER), localRankInfo_.rank, ret), ret);
+ 
+        CHK_RET(RecvGrpLeaderInfo(socket_, grpLeaderInfo_));
+        u32 grpIndex = localRankInfo_.rank / TOPO_MAX_GROUP_SIZE;
+        grpLeader_ = grpLeaderInfo_.GroupLeaderList[grpIndex];
+    } else {
+        CHK_RET(DetectClusterTopoInfo(socket_, clusterTopoInfo_));
+ 
+        ret = VerifyClusterInfo(clusterTopoInfo_);
+        if (ret != HCCL_SUCCESS) {
+            auto current = g_broadcastStage.load(std::memory_order_acquire);
+            if (current == BroadcastStage::Started) {
+                std::unique_lock<std::mutex> lock(g_broadcast_stage_mutex);
+                std::chrono::seconds timeout(MAX_WAIT_BROADCAST_SECONDS);
+                g_broadcast_stage_cv.wait_for(lock, timeout, [] {
+                    return g_broadcastStage.load(std::memory_order_relaxed) == BroadcastStage::Completed;
+                });
+            }
+            HCCL_ERROR("[TopoInfoExchangeAgent][Setup]VerifyCluseterInfo failed, g_broadcastStage[%d]", g_broadcastStage.load());
+        }
+
+        return ret;
+    }
+ 
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoInfoExchangeAgent::SetupRank(std::shared_ptr<HcclSocket> socket)
+{
+    CHK_RET(RecvGrpLeaderInfo(socket, grpLeaderInfo_));
+    u32 grpIndex = localRankInfo_.rank / TOPO_MAX_GROUP_SIZE;
+    grpLeader_ = grpLeaderInfo_.GroupLeaderList[grpIndex];
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoInfoExchangeAgent::SetupMember()
+{
+    HcclResult ret = Connect(serverIP_, serverPort_, socket_);
+    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[TopoInfoExchangeAgent][Setup]SetupGroupMember: "\
+        "connect server[%s : %u] failed", serverIP_.GetReadableAddress(), serverPort_), ret);
+    HCCL_INFO("SetupGroupMember: client connect with server ip[%s] port[%u] success.",
         serverIP_.GetReadableAddress(), serverPort_);
 
     CHK_RET(DetectClusterTopoInfo(socket_, clusterTopoInfo_));
@@ -58,6 +134,12 @@ HcclResult TopoInfoExchangeAgent::Teardown()
 HcclResult TopoInfoExchangeAgent::GetConnection(std::shared_ptr<HcclSocket> &socket)
 {
     socket = socket_;
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoInfoExchangeAgent::GetGroupLeader(HcclRankHandle &rankHandle)
+{
+    rankHandle = grpLeader_;
     return HCCL_SUCCESS;
 }
 
@@ -199,6 +281,7 @@ HcclResult TopoInfoExchangeAgent::GetConnection(HcclIpAddress &serverIp, u32 por
             RPT_INPUT_ERR(true, "EI0006", std::vector<std::string>({"reason"}), \
                 std::vector<std::string>({GET_SOCKET_TIMEOUT_REASON}));
             HCCL_ERROR("[Get][Connection]topo exchange agent get socket timeout! timeout[%lld]", timeout);
+            sleep(WAIT_ERROR_BROADCAST_TIME);
             return HCCL_E_TIMEOUT;
         }
 
@@ -215,7 +298,7 @@ HcclResult TopoInfoExchangeAgent::GetConnection(HcclIpAddress &serverIp, u32 por
                 agentID = localRankInfo_.superPodId + "/";
                 GenerateAgentID(localRankInfo_, agentID);
             } else {
-                std::string rankID = std::to_string(localRankInfo_.rank);
+                std::string rankID = std::to_string(connRank_);
                 agentID = std::string(16 - rankID.length(), '0') + rankID;  // agent id为rank id，16位，左对齐补零
             }
             char agentBuf[MAX_AGENT_BUF_SIZE] = {0};
@@ -226,7 +309,7 @@ HcclResult TopoInfoExchangeAgent::GetConnection(HcclIpAddress &serverIp, u32 por
                 HCCL_ERROR("[Get][Connection]errNo[0x%016llx] agentID[%s] send local rank id to remote "\
                     "by client fd_handle failed, ret[%u]", HCCL_ERROR_CODE(HCCL_E_TCP_TRANSFER), agentBuf, ret), ret);
 
-            ret = socket->Send(&localRankInfo_.rankSize, sizeof(localRankInfo_.rankSize));
+            ret = socket->Send(&connSize_, sizeof(connSize_));
             CHK_PRT_RET(ret != HCCL_SUCCESS,
                 HCCL_ERROR("[Get][Connection]errNo[0x%016llx] rank[%u] send local rank num[%u] to "\
                     "remote by client fd_handle failed, ret[%u]", HCCL_ERROR_CODE(HCCL_E_TCP_TRANSFER),
@@ -284,28 +367,21 @@ HcclResult TopoInfoExchangeAgent::Disconnect(std::shared_ptr<HcclSocket> &socket
     return HCCL_SUCCESS;
 }
 
-HcclResult TopoInfoExchangeAgent::SendClusterInfo(std::shared_ptr<HcclSocket> socket, const RankTable_t &clusterInfo)
-{
-    nlohmann::json basicJson;
-    CHK_RET(Struct2Json(clusterInfo, basicJson));
-    basicJson[PROP_STEP] = currentStep_;  // add step to verify.
-    std::string buffer = basicJson.dump();
-    u32 msgLen = buffer.length();
-    CHK_RET(SendClusterInfoMsg(socket, clusterInfo, buffer, msgLen));
-    currentStep_++;
+HcclResult TopoInfoExchangeAgent::RecvGrpLeaderInfo(std::shared_ptr<HcclSocket> socket, GroupLeader_t &leaderInfo)
+{   
+    //每次获取之前先清空 保证填充之后的数据是最新的
+    leaderInfo.grpLeaderNum = 0;
+    leaderInfo.GroupLeaderList.clear();
+    CHK_RET(RecvGrpLeaderInfoMsg(socket, leaderInfo));
     return HCCL_SUCCESS;
 }
 
-HcclResult TopoInfoExchangeAgent::RecvClusterInfo(std::shared_ptr<HcclSocket> socket, RankTable_t &clusterInfo)
-{
-    CHK_RET(RecvClusterInfoMsg(socket, clusterInfo));
-    if (isByMasterInfo_) {
-        u32 indentify = 0;
-        CHK_PRT_RET(socket->Recv(reinterpret_cast<char *>(&indentify), sizeof(indentify)) != HCCL_SUCCESS,
-            HCCL_ERROR("[Recv][ClusterInfoMsg]receive indentify from fdhandle failed"), HCCL_E_INTERNAL);
-        identifierNum_ = indentify;
-    }
-    currentStep_++;
+HcclResult TopoInfoExchangeAgent::SendGroupLeaderPortInfo(std::shared_ptr<HcclSocket> socket,  HcclRankHandle &rankHandle) 
+{   
+    CHK_RET(GetConnection(socket));
+    HcclResult ret = socket->Send(&rankHandle, sizeof(rankHandle));
+    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[TopoInfoExchangeAgent][SendGroupLeaderPortInfo]errNo[0x%016llx] " \
+        "send grpleader port info fail", HCCL_ERROR_CODE(ret)), ret);
     return HCCL_SUCCESS;
 }
 

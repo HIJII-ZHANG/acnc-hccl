@@ -27,7 +27,7 @@ void CollReduceScatterMeshGraphExecutor::ParseParam(const OpParam& param)
     bool isInlineReduce = IsSupportSDMAReduce(param.inputPtr, param.outputPtr, param.DataDes.dataType,
         param.reduceType);
     meshSinglePlane_ = (topoAttr_.deviceType == DevType::DEV_TYPE_910B) &&
-        topoMatcher_->GetExternalInputHcclDeterministic() == DETERMINISTIC_CONFIG_DISABLE &&
+        topoMatcher_->GetExternalInputHcclDeterministic() == DETERMINISTIC_DISABLE &&
         isInlineReduce && (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
 
     // 是否需要scratch memory
@@ -98,10 +98,7 @@ bool CollReduceScatterMeshGraphExecutor::IsHugeData(const u64 curSize, OpParam *
 
 HcclResult CollReduceScatterMeshGraphExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
-		HCCL_ERROR("[CollReduceScatterMeshGraphExecutor][KernelRun] single op mode should not enter this executor");
-		return HCCL_E_NOT_SUPPORT;
-	}
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollReduceScatterMeshGraphExecutor][KernelRun] userRank[%u] starts.", topoAttr_.userRank);
 
 	u32 perDataSize = SIZE_TABLE[param.DataDes.dataType];
 	u64 singleRankDataSize = execMem.count * perDataSize;
@@ -160,7 +157,7 @@ HcclResult CollReduceScatterMeshGraphExecutor::KernelRun(const OpParam &param, E
 
     HcomCollOpInfo *opInfoPtr = nullptr;
 
-    if (topoMatcher_->GetExternalInputHcclDeterministic() == DETERMINISTIC_CONFIG_DISABLE &&
+    if (topoMatcher_->GetExternalInputHcclDeterministic() == DETERMINISTIC_DISABLE &&
         (param.DataDes.dataType != HCCL_DATA_TYPE_INT64) &&
         (topoAttr_.deviceType == DevType::DEV_TYPE_910B && param.reduceType != HCCL_REDUCE_PROD)) {
         CHK_RET(MultiStreamReduceScatterMeshAtomic(param.tag, reduceScatterMeshInput, reduceScatterMeshOutput, // 非确定性

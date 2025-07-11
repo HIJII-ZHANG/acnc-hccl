@@ -106,6 +106,7 @@ HcclResult CollReduceScatterVMeshOpbaseExecutor::CalcCurCountsAndCurDispls(const
 
 HcclResult CollReduceScatterVMeshOpbaseExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollReduceScatterVMeshOpbaseExecutor] reducescatterv mesh run");
     HcclDataType dataType = param.VDataDes.dataType;
     const u32 unitSize = SIZE_TABLE[dataType];
 

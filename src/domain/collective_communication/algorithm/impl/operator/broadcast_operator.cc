@@ -63,7 +63,7 @@ HcclResult BroadCastOperator::SelectAlg(const std::string& tag, const OpParam& p
         u32 rootId = param.root / deviceNumPerAggregation_;
         std::string appendTag = std::to_string((rootId >= part1Size) || ((rootId % 2) == 0));
         newTag = newTag + '_' + appendTag;
-        if (param.opBaseAtraceInfo != nullptr) {
+        if (GetExternalInputHcclEnableEntryLog() && param.opBaseAtraceInfo != nullptr) {
             CHK_RET(param.opBaseAtraceInfo->SavealgtypeTraceInfo(appendTag, param.tag));
         }
     } else if (Is310P3Common(isHaveCpuRank_, deviceType_)) {
@@ -77,6 +77,13 @@ HcclResult BroadCastOperator::SelectAlg(const std::string& tag, const OpParam& p
     }
     newTag += (param.aicpuUnfoldMode ? "_device" : "_host");
     HCCL_INFO("[SelectAlg] broadcast newTag is [%s]", newTag.c_str());
+
+    if (UNLIKELY(EnvConfig::GetExternalInputDebugConfig() & HCCL_ALG)) {
+        HCCL_CONFIG_INFO(HCCL_ALG, 
+            "[BroadCastOperator][SelectAlg]userRank_[%u], algName[%s] actual level1 algo[%d], level2 algo[%d]",
+            userRank_, algName.c_str(), algType_.algoLevel1, algType_.algoLevel2);
+    }
+
     return ret;
 }
 
@@ -172,10 +179,10 @@ HcclResult BroadCastOperator::SelectAlgfor91093(const OpParam& param, std::strin
         ((workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) ||
         (workflowMode_ != HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE && !param.aicpuUnfoldMode)) &&
         (deviceNumPerAggregation_ > HCCL_DEVICE_NUM_TWO) &&
-        (param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] <= HCCL_SMALL_COUNT_2_MB * userRankSize_);
+        (param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] <= HCCL_SMALL_COUNT_512_KB * userRankSize_);
     bool smallCountOptimMultiServer =
         (deviceNumPerAggregation_ > HCCL_DEVICE_NUM_TWO) && (serverNum_ != 1) && (superPodNum_ == 1) &&
-        (param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] <= HCCL_SMALL_COUNT_256_KB * userRankSize_);
+        (param.DataDes.count * SIZE_TABLE[param.DataDes.dataType] <= HCCL_SMALL_COUNT_1_MB * deviceNumPerAggregation_);
     if (multiModuleDiffDeviceNumMode_ || multiSuperPodDiffServerNumMode_) {
         algName = "BroadCastComm";
     } else if (smallCountOptimMultiServer) {
@@ -183,6 +190,8 @@ HcclResult BroadCastOperator::SelectAlgfor91093(const OpParam& param, std::strin
         algType_.algoLevel1 = AlgTypeLevel1::ALG_LEVEL1_NHR;
     } else if (smallCountOptimSingleServer) {
         algName = "BroadCastSmallCountExecutor";
+    } else if (param.supportZeroCopy) {
+        algName = "BroadCastRingZerocopyExecutor";
     } else if (topoType_ == TopoType::TOPO_TYPE_NP_SINGLE_RING || topoType_ == TopoType::TOPO_TYPE_NP_DOUBLE_RING) {
         algName = "BroadCastRingFor91093Executor";
     } else {

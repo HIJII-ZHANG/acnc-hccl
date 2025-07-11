@@ -36,8 +36,44 @@ TopoInfoExchangeServer::TopoInfoExchangeServer(HcclIpAddress &hostIP, u32 hostPo
 {
 }
 
+TopoInfoExchangeServer::TopoInfoExchangeServer(HcclIpAddress &hostIP, u32 hostPort,
+    const std::vector<HcclIpAddress> whitelist, HcclNetDevCtx netDevCtx, std::shared_ptr<HcclSocket> listenSocket,
+    std::shared_ptr<HcclSocket> grpLeaderToRoot, const std::string &identifier)
+    : hostIP_(hostIP),
+      hostPort_(hostPort),
+      whitelist_(whitelist),
+      netDevCtx_(netDevCtx),
+      listenSocket_(listenSocket),
+      grpLeaderToRoot_(grpLeaderToRoot),
+      identifier_(identifier)
+{
+}
+
 TopoInfoExchangeServer::~TopoInfoExchangeServer()
 {
+}
+
+HcclResult TopoInfoExchangeServer::FailedConnectionAgentIdString(u32 rankSize, std::string &failedAgentIdList)
+{
+    HcclResult result = HCCL_E_NOT_FOUND;
+    const u32 oriLength = failedAgentIdList.length();
+    std::vector<bool> connectedRank(rankSize, false);
+    for (auto it : connectSocketsWithRankID_) {
+        if (it.first >= rankSize) {
+            HCCL_ERROR("[TopoInfoExchangeServer][FailedConnectionAgentIdString] invalid rank id[%u] from agent.",
+                it.first);
+            return HCCL_E_INTERNAL;
+        }
+        connectedRank[it.first] = true;
+    }
+
+    for (u32 i = 0; i < rankSize; i++) {
+        if (!connectedRank[i]) {
+            failedAgentIdList += std::to_string(i) + ',';
+        }
+    }
+
+    return failedAgentIdList.length() > oriLength ? HCCL_SUCCESS : result;
 }
 
 HcclResult TopoInfoExchangeServer::Setup()
@@ -46,20 +82,183 @@ HcclResult TopoInfoExchangeServer::Setup()
     HcclResult error = HCCL_SUCCESS;
 
     do {
-        ret = Connect(connectSockets_);
+        u32 expectRankSize = 0;
+        std::string failedAgentIdList;
+        HcclResult connectRet = Connect(connectSockets_, expectRankSize);
+        if (connectRet != HCCL_SUCCESS) {
+            HcclResult result = FailedConnectionAgentIdString(expectRankSize, failedAgentIdList);
+            CHK_PRT_CONT(result == HCCL_SUCCESS, DisplayConnectionedRank(connectSockets_));
+        }
+        u32 rankSize = connectSockets_.size();
+        if (!isByMasterInfo_ && rankSize > TOPO_HIERARCHICAL_ENABLE_THRESHOLD) {
+            ret = HierarchicalSendRecv();
+            CHK_PRT_BREAK(ret != HCCL_SUCCESS,
+                HCCL_ERROR("[TopoInfoExchangeServer][Setup]HierarchicalSendRecv ranktable failed"), error = ret);
+            HCCL_INFO("cluster topo exchange server HierarchicalSendRecv ranktable success.");
+        } else {
+            RankTable_t rankTable;
+            ret = GetRanksBasicInfo(connectSockets_, rankTable);
+            CHK_PRT_BREAK(ret != HCCL_SUCCESS, HCCL_ERROR("[TopoInfoExchangeServer][Setup]GetRanksBasicInfo failed"),
+                error = ret);
+            HCCL_INFO("cluster topo exchange server get rank basic info from all agent success.");
+
+            g_broadcastStage.store(BroadcastStage::Started, std::memory_order_release);
+            TopoInfoExchangeDispather dispatcher(this);
+            ret = dispatcher.BroadcastRankTable(connectSockets_, rankTable, failedAgentIdList);
+            {
+                g_broadcastStage.store(BroadcastStage::Completed, std::memory_order_release);
+                std::lock_guard<std::mutex> lock(g_broadcast_stage_mutex);
+                g_broadcast_stage_cv.notify_all();
+            }
+            CHK_PRT_BREAK(ret != HCCL_SUCCESS,
+                HCCL_ERROR("[TopoInfoExchangeServer][Setup]Broadcast Rank Basic Infos failed，connectFailedAgentIdList[%s]", failedAgentIdList.c_str()),
+                error = ret);
+            HCCL_INFO("cluster topo exchange server send rank basic info to all agent success.");
+            CHK_PRT_BREAK(connectRet != HCCL_SUCCESS,
+                HCCL_ERROR("[TopoInfoExchangeServer][Setup]cluster topo exchange server connect client failed"),
+                error = connectRet);
+            HCCL_INFO("cluster topo exchange server connect with all agent success.");
+        }
+        ret = StopSocketListen(whitelist_, hostIP_, hostPort_);
+        CHK_PRT_BREAK(ret != HCCL_SUCCESS,
+            HCCL_ERROR("[TopoInfoExchangeServer][Setup]topo exchange server stop socket listen port[%u] failed.",
+                 hostPort_), error = ret);
+    } while (0);
+    if (error) {
+        CHK_RET(Disconnect(connectSockets_));
+        CHK_RET(StopNetwork(whitelist_, hostIP_, hostPort_));
+    }
+
+    HCCL_INFO("cluster topo exchange server completed, exit[%u].", error);
+    return error;
+}
+
+HcclResult TopoInfoExchangeServer::HierarchicalSendRecv()
+{
+    TopoInfoExchangeDispather dispatcherGrpLeader(this);
+    TopoInfoExchangeDispather dispatcherGrpLeaderPortInfo(this);
+    TopoInfoExchangeDispather dispatcherRankTable(this);
+
+    // get Group Leader info
+    GroupLeader_t groupLeader;
+    HcclResult ret = RecvGroupLeaderInfo(connectSockets_, groupLeader);
+    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[TopoInfoExchangeServer][Setup]RecvGroupLeaderInfo failed"), ret);
+
+    HCCL_INFO("cluster topo exchange server get group leader info.");
+    // BroadCast GroupLeader info
+    ret = dispatcherGrpLeader.BroadcastGroupLeaderInfo(connectSockets_, groupLeader);
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[TopoInfoExchangeServer][Setup]Broadcast Group Leader Infos No PortInfo failed"), ret);
+    HCCL_INFO("cluster topo exchange server send groupleader info to all agent success.");
+    
+    // root接收每个GroupLeader传上来的port
+    ret = RecvGroupLeaderPortInfo(grpLeaderSockets_,groupLeader);
+    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[TopoInfoExchangeServer][Setup]RecvGroupLeaderPortInfo failed"), ret);
+    
+    // BroadCast GroupLeader Port Info
+    ret = dispatcherGrpLeaderPortInfo.BroadcastGroupLeaderInfo(connectSockets_,groupLeader);
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[TopoInfoExchangeServer][Setup]Broadcast Group Leader Infos with PortInfo failed"), ret);
+    HCCL_INFO("cluster topo exchange server send groupleader info to all agent success.");
+    // root接收GroupLeader上传的ranktable
+    RankTable_t rankTable;
+
+    ret = GetRanksBasicInfo(grpLeaderSockets_, rankTable);
+    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[TopoInfoExchangeServer][Setup]RecvGroupClusterInfo failed"), ret);
+    HCCL_INFO("cluster topo exchange server get rank basic info from all group leader success.");
+
+    // root向GroupLeader广播全局ranktable
+    ret = dispatcherRankTable.BroadcastRankTable(grpLeaderSockets_, rankTable, "");
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[TopoInfoExchangeServer][Setup]Broadcast Rank Basic Infos failed"), ret);
+    HCCL_INFO("cluster topo exchange server send rank basic info to all group leader success.");
+
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoInfoExchangeServer::RecvGroupLeaderInfo(
+    const std::map<std::string, std::shared_ptr<HcclSocket>> &connectSockets, GroupLeader_t &groupLeader)
+{
+    u32 socketNumPerGrp = 0;
+    u32 socketIndex = 0; // socket已经经过rankid（or superPodId + serverip + deviceid排序）
+    bool isGroupLeader = true;
+    std::map<u32, HcclRootHandle> GroupLeaders;
+
+    for (auto &handle : connectSockets) {
+        HcclRankHandle rankHandle;
+        HcclResult ret = handle.second->Recv(&rankHandle, sizeof(HcclRankHandle));
+        CHK_PRT_RET(ret != HCCL_SUCCESS,
+            HCCL_ERROR("[Get][RecvGroupLeaderInfo]RecvGroupLeaderInfo from agentId[%s] failed, ret[%d]",
+            handle.first.c_str(), ret), ret);       
+        if(isGroupLeader) {
+            u32 GroupIndex = socketIndex / TOPO_MAX_GROUP_SIZE;
+            GroupLeaders.insert(pair<u32, HcclRootHandle>(GroupIndex, rankHandle));
+            grpLeaderSockets_.insert(handle);
+            isGroupLeader = false; 
+        }
+
+        socketNumPerGrp++;
+        socketIndex++;
+        if (socketNumPerGrp == TOPO_MAX_GROUP_SIZE) {
+            isGroupLeader = true;
+            socketNumPerGrp = 0;
+        }
+    }
+    // 把GroupLeader信息存放到GroupLeaderList中 方便广播 
+    for (auto iter : GroupLeaders) {
+        groupLeader.grpLeaderNum++;
+        groupLeader.GroupLeaderList.emplace_back(iter.second);
+    }
+
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoInfoExchangeServer::RecvGroupLeaderPortInfo(
+    const std::map<std::string, std::shared_ptr<HcclSocket>> &connectSockets, GroupLeader_t &groupLeader)
+{   
+    HcclResult ret;
+    groupLeader.GroupLeaderList.clear();
+    for(auto &handle : connectSockets) {
+         HcclRankHandle grpLeaderPortInfo;
+        ret = handle.second->Recv(&grpLeaderPortInfo, sizeof(HcclRankHandle));
+        CHK_PRT_RET(ret != HCCL_SUCCESS,
+            HCCL_ERROR("[Get][RecvGroupLeaderPortInfo]RecvGroupLeaderPortInfo from grpLeader[%s] failed, ret[%d]",
+            handle.first.c_str(), ret), ret); 
+        groupLeader.GroupLeaderList.emplace_back(grpLeaderPortInfo);      
+    }
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoInfoExchangeServer::SetupGroupLeader()
+{
+    HcclResult ret;
+    HcclResult error = HCCL_SUCCESS;
+
+    do {
+        TopoInfoExchangeDispather dispatcher(this);
+    
+        ret = GroupLeaderConnect(connectSockets_);
         CHK_PRT_BREAK(ret != HCCL_SUCCESS,
             HCCL_ERROR("[TopoInfoExchangeServer][Setup]cluster topo exchange server connect client failed"),
             error = ret);
         HCCL_INFO("cluster topo exchange server connect with all agent success.");
 
         RankTable_t rankTable;
+        // GroupLeader接收Group内rank上报的ranktable
         ret = GetRanksBasicInfo(connectSockets_, rankTable);
-        CHK_PRT_BREAK(ret != HCCL_SUCCESS, HCCL_ERROR("[TopoInfoExchangeServer][Setup]GetRanksBasicInfo failed"),
+        currentStep_--;
+        CHK_PRT_BREAK(ret != HCCL_SUCCESS, HCCL_ERROR("[TopoInfoExchangeServer][Setup]RecvGroupClusterInfo failed"),
             error = ret);
         HCCL_INFO("cluster topo exchange server get rank basic info from all agent success.");
 
-        TopoInfoExchangeDispather dispatcher(this);
-        ret = dispatcher.BroadcastRankTable(connectSockets_, rankTable);
+        HCCL_INFO("topo exchange client send rank basic info success.");
+        CHK_RET(SendClusterInfo(grpLeaderToRoot_, rankTable));
+
+        CHK_RET(RecvClusterInfo(grpLeaderToRoot_, rankTable_));
+        currentStep_--;
+        HCCL_INFO("topo exchange client get rank basic info success.");
+
+        ret = dispatcher.BroadcastRankTable(connectSockets_, rankTable_, "");
         CHK_PRT_BREAK(ret != HCCL_SUCCESS,
             HCCL_ERROR("[TopoInfoExchangeServer][Setup]Broadcast Rank Basic Infos failed"), error = ret);
         HCCL_INFO("cluster topo exchange server send rank basic info to all agent success.");
@@ -99,7 +298,8 @@ HcclResult TopoInfoExchangeServer::SetupByMasterInfo()
     CHK_RET(Setup());
     return HCCL_SUCCESS;
 }
-HcclResult TopoInfoExchangeServer::Connect(std::map<std::string, std::shared_ptr<HcclSocket>> &connectSockets)
+
+HcclResult TopoInfoExchangeServer::Connect(std::map<std::string, std::shared_ptr<HcclSocket>> &connectSockets, u32 &rankSize)
 {
     auto startTime = std::chrono::steady_clock::now();
     auto timeout = std::chrono::seconds(GetExternalInputHcclLinkTimeOut());
@@ -130,6 +330,7 @@ HcclResult TopoInfoExchangeServer::Connect(std::map<std::string, std::shared_ptr
             HCCL_INFO("listenSocket_->Accept completed.");
             u32 rankNum = 0;
             CHK_RET(GetRemoteFdAndRankSize(socket, connectSockets, rankNum));
+            rankSize = rankNum;
             expectSocketNum = (previousRankNum == 0) ? rankNum : expectSocketNum;
             CHK_RET(VerifyRemoteRankNum(previousRankNum, rankNum));
 
@@ -148,6 +349,63 @@ HcclResult TopoInfoExchangeServer::Connect(std::map<std::string, std::shared_ptr
             continue;
         }
     }
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoInfoExchangeServer::GroupLeaderConnect(std::map<std::string, std::shared_ptr<HcclSocket>> &connectSockets)
+{
+    auto startTime = std::chrono::steady_clock::now();
+    auto timeout = std::chrono::seconds(GetExternalInputHcclLinkTimeOut());
+
+    u32 groupMaxRankNum = TOPO_MAX_GROUP_SIZE;
+    bool isFirstAcceptTimeOut = false;
+
+    while (expectSocketNum_ > 0 && groupMaxRankNum > 0) {
+        auto topoExUsedTime = std::chrono::steady_clock::now() - startTime;
+        if (topoExUsedTime >= timeout) {
+            HCCL_ERROR("[Get][Connection]topo exchange server get socket timeout! timeout[%d s]",
+                GetExternalInputHcclLinkTimeOut());
+            DisplayConnectionedRank(connectSockets);
+            return HCCL_E_TIMEOUT;
+        }
+        auto topoExResTime =  timeout - topoExUsedTime;
+        u32 topoExRes_i = std::chrono::duration_cast<std::chrono::seconds>(topoExResTime).count();
+        u32 socketWaitTime = SOCKET_ACCEPT_TIMEOUT;
+        if (topoExRes_i != 0) {
+            socketWaitTime = topoExRes_i > SOCKET_ACCEPT_TIMEOUT ? SOCKET_ACCEPT_TIMEOUT : topoExRes_i;
+        } else {
+            continue;
+        }
+        std::shared_ptr<HcclSocket> socket;
+        std::string tag = TOPO_DETECT_TAG + "_" + identifier_ + "_" + std::to_string(hostPort_);
+
+        HcclResult ret = listenSocket_->Accept(tag, socket, socketWaitTime);
+        if (ret == HCCL_SUCCESS) {
+            HCCL_INFO("listenSocket_->Accept completed.");
+            u32 rankNum = 0;
+            CHK_RET(GetRemoteFdAndRankSize(socket, connectSockets, rankNum));
+            expectSocketNum_ = (previousRankNum_ == 0) ? rankNum : expectSocketNum_;
+            groupMaxRankNum = (rankNum > TOPO_HIERARCHICAL_ENABLE_THRESHOLD) ? 
+                groupMaxRankNum : expectSocketNum_;
+            CHK_RET(VerifyRemoteRankNum(previousRankNum_, rankNum));
+
+            expectSocketNum_ -= 1;
+            groupMaxRankNum -= 1;
+            isFirstAcceptTimeOut = false;
+        } else if (ret == HCCL_E_TIMEOUT) {
+            HCCL_ERROR("listenSocket_->Accept TimeOut[%lld s]", socketWaitTime);
+            if (isFirstAcceptTimeOut) {
+                continue;
+            }
+            isFirstAcceptTimeOut = true;
+
+            DisplayConnectingStatus(previousRankNum_, expectSocketNum_, connectSockets);
+        } else if (ret == HCCL_E_TCP_CONNECT) {
+            HCCL_INFO("listenSocket_->Accept E_TCP_CONNECT");
+            continue;
+        }
+    }
+
     return HCCL_SUCCESS;
 }
 

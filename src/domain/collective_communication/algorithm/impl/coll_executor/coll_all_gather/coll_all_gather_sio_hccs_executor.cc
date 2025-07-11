@@ -97,7 +97,7 @@ HcclResult CollAllGatherSioHccsExecutor::CalcLevel0CommInfo(TransportMemType inp
  
 HcclResult CollAllGatherSioHccsExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollAllGatherSioHccsExecutor][KernelRun] The AllGatherSioHccsExecutor starts.");
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollAllGatherSioHccsExecutor][KernelRun] The AllGatherSioHccsExecutor starts.");
  
     // step 1 先获取 comm inner \ comm outer 的value
     CHK_RET(CheckCommSize(COMM_COMBINE_ORDER, COMM_INDEX_0 + 1));

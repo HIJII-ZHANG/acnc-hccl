@@ -22,11 +22,25 @@ public:
 protected:
     // AllGather Loop Executor公共接口
     virtual u64 CalcLoopMaxCount(const u64 cclBuffSize, const u32 unitSize);
-    u64 CalcLoopMaxCountZeroCopy(const u32 unitSize, const bool isZeroCopy);
     virtual bool IsHugeData(const u64 curSize);
     virtual bool IsDataSplitForRdmaSdmaConcurrent(const u64 curSize);
-    HcclResult RunLoop(OpParam &param, AlgResourceResponse &algRes);
     virtual bool IsSmallData(const u64 size);
+    virtual u64 GetCount(const OpParam &param) const;
+    virtual HcclDataType GetDataType(const OpParam &param) const;
+    virtual u64 CalcTotalCount(const OpParam &param) const;
+    HcclResult RunLoop(OpParam &param, AlgResourceResponse &algRes);    // non-virtual
+
+    // agv
+    virtual std::vector<u64> GetCounts(const OpParam &param) const;
+    virtual std::vector<u64> GetDispls(const OpParam &param) const;
+    virtual u64 GetCurrentCount(const OpParam &param, const std::vector<u64> &curCounts) const;
+    virtual u64 CalcCurrentTotalCount(const OpParam &param, const std::vector<u64> &curCounts) const;
+    virtual HcclOpMetaInfoDef GetOpMetaInfo(u32 algTypeLevel1, bool hugeData, bool smallData, bool dataSplit) const;
+    virtual void UpdateOpParam(OpParam &param, std::vector<u64> &curCounts, std::vector<u64> &curDispls) const;
+    bool CalcCountsDispls(const u64 maxTotalCount, std::vector<u64> &countsLeft,
+        std::vector<u64> &displs, std::vector<u64> &curCounts, std::vector<u64> &curDispls);
+    void PrintCountsDispls(bool finished, const std::vector<u64> &curCounts, const std::vector<u64> &curDispls);
+    HcclResult RunLoopV(OpParam &param, AlgResourceResponse &algRes);    // non-virtual
 
     // 工具类
     HcclResult PrepareAllgatherSlice(u32 sliceNum, u64 inputMemSize, std::vector<Slice> &dataSegsSlice) const;
@@ -42,6 +56,7 @@ protected:
         u64 count, HcclDataType dataType, Stream &stream, HcomCollOpInfo *opInfo = nullptr);
 
     bool DMAReduceFlag_{false}; // 是否DMA消减的标志
+    bool isAllGatherV_{false};
 };
 
 } // namespace hccl

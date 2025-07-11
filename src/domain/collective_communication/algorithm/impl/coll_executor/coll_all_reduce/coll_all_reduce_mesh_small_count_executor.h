@@ -20,6 +20,7 @@ public:
     ~CollAllReduceMeshSmallCountExecutor() = default;
 
     HcclResult Orchestrate(OpParam& param, AlgResourceResponse& algRes);
+    HcclResult GetAdjInfo(AlgResourceResponse& algRes, AdjInfo& adjInfo) override;
 private:
     bool CalcScratchMemFlag(const u64 totalSize);
     void ParseParam(const OpParam& param) override;

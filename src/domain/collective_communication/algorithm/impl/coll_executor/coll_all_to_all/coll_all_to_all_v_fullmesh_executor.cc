@@ -88,7 +88,7 @@ HcclResult CollRunAlltoAllVFullMesh::CalcCommInfo(std::vector<LevelNSubCommTrans
 
 HcclResult CollRunAlltoAllVFullMesh::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollRunAlltoAllVFullMesh][KernelRun] alltoall fullmesh start");
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollRunAlltoAllVFullMesh][KernelRun] alltoall fullmesh start");
     bool opbaseCopyMode = workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE &&
         isAlltoAllZCopyMode_;
 
@@ -186,6 +186,7 @@ HcclResult CollRunAlltoAllVFullMesh::KernelRun(const OpParam &param, ExecMem &ex
         HCCL_ERROR("[hcclImpl][RunAlltoAllVFullMesh]work flow mode is invalid");
         return HCCL_E_PARA;
     }
+
     HCCL_INFO("[CollRunAlltoAllVFullMesh] excutor run success");
 
     return HCCL_SUCCESS;

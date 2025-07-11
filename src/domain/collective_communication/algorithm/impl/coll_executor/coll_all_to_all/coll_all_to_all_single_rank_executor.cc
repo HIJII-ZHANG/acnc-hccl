@@ -46,8 +46,14 @@ HcclResult CollAlltoAllSingleRankExecutor::Orchestrate(OpParam& param, AlgResour
     return HCCL_SUCCESS;
 }
 
+HcclResult CollAlltoAllSingleRankExecutor::GetAdjInfo(AlgResourceResponse& algRes, AdjInfo& adjInfo)
+{
+    return HCCL_SUCCESS;
+}
+
 HcclResult CollAlltoAllSingleRankExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollAlltoAllSingleRankExecutor][KernelRun] userRank[%u] starts.", topoAttr_.userRank);
     u64 sendCount  = 0 ;
     u64 totalSize = 0 ;
     u64 unitSize = SIZE_TABLE[param.All2AllDataDes.sendType] ;

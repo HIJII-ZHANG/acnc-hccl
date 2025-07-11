@@ -43,6 +43,7 @@ HcclResult CollScatterRingExecutor::CalcStreamNum(u32& streamNum)
 
 HcclResult CollScatterRingExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollScatterRingExecutor] scatter starts.");
     Stream& stream = const_cast<Stream&>(param.stream);
 
     u32 perDataSize = SIZE_TABLE[param.DataDes.dataType];

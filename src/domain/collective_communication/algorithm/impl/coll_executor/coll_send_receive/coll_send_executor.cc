@@ -43,6 +43,33 @@ HcclResult CollSendExecutor::Orchestrate(OpParam& param, AlgResourceResponse& al
     return HCCL_SUCCESS;
 }
 
+HcclResult CollSendExecutor::GetAdjInfo(AlgResourceResponse& algRes, AdjInfo& adjInfo)
+{
+    algResResp_ = &algRes;
+
+    SubCommInfo level1CommInfo = GetSubCommInfo(COMM_COMBINE, 0);
+    if (level1CommInfo.links.size() == 0) {
+        HCCL_ERROR("[CollSendExecutor]links size is 0");
+    }
+    u32 localRank= level1CommInfo.localRank;
+    u32 localRankSize = level1CommInfo.localRankSize;
+
+    if (localRankSize == 1) {
+        return HCCL_SUCCESS;
+    }
+    u32 ringNextRank = (localRank + 1) % localRankSize;
+
+    adjInfo.dstRankNum = 1;
+    NslbDpAdjInfo adjInfoStep = {0};
+    adjInfoStep.dstLocalRankId = ringNextRank;
+    adjInfoStep.phaseId = 1;
+    adjInfoStep.rev = 0;
+    adjInfo.nsAdjInfo.push_back(adjInfoStep);
+
+    HCCL_INFO("[nslbdp]GetAdjInfo localRank[%u], phaseId[%u].",localRank, ringNextRank);
+    return HCCL_SUCCESS;
+}
+
 HcclResult CollSendExecutor::CalcTransportMemType(TransportMemType &inputType, TransportMemType &outputType)
 {
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {

@@ -11,13 +11,12 @@ add_library(hccl  SHARED)
 set(hccl_include_list
     ${HCCL_BASE_DIR}/algorithm/base/inc
     ${HCCL_BASE_DIR}/algorithm/pub_inc
-    ${HCCL_BASE_DIR}/algorithm/alg_research/alg_template
     ${HCCL_BASE_DIR}/pub_inc
     ${HCCL_BASE_DIR}/pub_inc/hccl
     ${HCCL_BASE_DIR}/algorithm/base/alg_aiv_template
     ${HCCL_BASE_DIR}/algorithm/base/alg_template
     ${HCCL_BASE_DIR}/algorithm/base/mc2_handler
-    ${HCCL_BASE_DIR}/algorithm/base/alg_template/component/inc
+    ${HCCL_BASE_DIR}/algorithm/base/alg_template/component
     ${HCCL_BASE_DIR}/algorithm/base/communicator
     ${HCCL_BASE_DIR}/algorithm/base/communicator/legacy
     ${HCCL_BASE_DIR}/algorithm/impl
@@ -30,6 +29,7 @@ set(hccl_include_list
 
     ${HCCL_BASE_DIR}/framework/cluster_maintenance/health/heartbeat/
     ${HCCL_BASE_DIR}/framework/cluster_maintenance/recovery/operator_retry/
+    ${HCCL_BASE_DIR}/framework/cluster_maintenance/detect/detect_connect_anomalies/
     ${HCCL_BASE_DIR}/framework/common/src/
     ${HCCL_BASE_DIR}/framework/common/src/config
     ${HCCL_BASE_DIR}/framework/common/src/topo
@@ -43,6 +43,7 @@ set(hccl_include_list
     ${HCCL_BASE_DIR}/framework/communicator/impl/zero_copy_memory_agent
     ${HCCL_BASE_DIR}/framework/hcom/
     ${HCCL_BASE_DIR}/framework/inc/
+    ${HCCL_BASE_DIR}/framework/nslbdp/
     ${HCCL_BASE_DIR}/framework/op_base/src
     ${HCCL_BASE_DIR}/common/health/
     ${HCCL_BASE_DIR}/common/stream/
@@ -76,7 +77,7 @@ else()
     target_include_directories(hccl PRIVATE
         ${TOP_DIR}/ace/comop/inc/external/hccl/             # ${ASCEND_CANN_PACKAGE_PATH}/include
         ${TOP_DIR}/ace/comop/inc/hccl/                      # ${ASCEND_CANN_PACKAGE_PATH}/include
-        ${TOP_DIR}/ace/comop/hccl/whole/hccl/algorithm/alg_research/pub_inc
+        ${TOP_DIR}/ace/comop/hccl/whole/hccl/algorithm/pub_inc
         ${TOP_DIR}/abl/msprof/inc                           # experiment/msprof/
         ${TOP_DIR}/ace/npuruntime/inc                       # experiment/runtime/
         ${TOP_DIR}/inc/driver                               # experiment/ascend_hal/driver/
@@ -141,7 +142,6 @@ else()
             mmpa
             hccl_alg
             hccl_plf
-            hccl_v2
             -Wl,--as-needed
             -lrt
             -ldl
@@ -154,6 +154,7 @@ add_subdirectory(communicator)
 add_subdirectory(hcom)
 add_subdirectory(op_base)
 add_subdirectory(cluster_maintenance)
+add_subdirectory(nslbdp)
 
 install(TARGETS hccl
     LIBRARY DESTINATION ${INSTALL_LIBRARY_DIR} OPTIONAL

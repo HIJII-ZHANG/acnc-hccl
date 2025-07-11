@@ -55,6 +55,7 @@ HcclResult CollReduceScatterFor310PRingExecutor::CalcLevel0CommInfo(TransportMem
 
 HcclResult CollReduceScatterFor310PRingExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollReduceScatterFor310PRingExecutor][KernelRun] 310p reducescatter start");
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
     SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
 

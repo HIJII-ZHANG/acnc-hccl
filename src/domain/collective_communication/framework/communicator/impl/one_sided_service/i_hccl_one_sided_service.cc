@@ -15,7 +15,8 @@ using namespace std;
 
 IHcclOneSidedService::IHcclOneSidedService(unique_ptr<HcclSocketManager> &socketManager,
     unique_ptr<NotifyPool> &notifyPool)
-    : socketManager_(socketManager), notifyPool_(notifyPool)
+    : socketManager_(socketManager), notifyPool_(notifyPool),
+      trafficClass_(HCCL_COMM_TRAFFIC_CLASS_CONFIG_NOT_SET), serviceLevel_(HCCL_COMM_SERVICE_LEVEL_CONFIG_NOT_SET)
 {
 }
 
@@ -53,6 +54,12 @@ HcclResult IHcclOneSidedService::GetNetDevCtx(HcclNetDevCtx &netDevCtx, bool use
         netDevCtx = netDevIpcCtx_;
     }
     return HCCL_SUCCESS;
+}
+
+void IHcclOneSidedService::SetTCAndSL(u32 trafficClass, u32 serviceLevel)
+{
+    trafficClass_ = trafficClass;
+    serviceLevel_ = serviceLevel;
 }
 
 }

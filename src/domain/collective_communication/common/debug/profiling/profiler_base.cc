@@ -14,6 +14,7 @@
 #include "adapter_rts_common.h"
 #include "runtime/base.h"
 #include "externalinput_pub.h"
+#include "coll_alg_utils.h"
 
 using namespace hccl;
 std::array<std::map<s32, s32>, MAX_MODULE_DEVICE_NUM> ProfilerBase::streamPlaneMap_;
@@ -24,6 +25,7 @@ std::array<std::map<const std::string, const HcclWorkflowMode>, MAX_MODULE_DEVIC
 std::array<std::map<const std::string, GroupRankInfo>, MAX_MODULE_DEVICE_NUM> ProfilerBase::groupRankMap_;
 std::array<std::map<const std::string, OpDataInfo>, MAX_MODULE_DEVICE_NUM> ProfilerBase::tagOpDataMap_;
 std::array<std::map<const std::string, u32>, MAX_MODULE_DEVICE_NUM> ProfilerBase::groupIndexMap_;
+std::array<std::map<const std::string, u32>, MAX_MODULE_DEVICE_NUM> ProfilerBase::aivGroupIndexMap_;
 std::array<std::map<const std::string, u32>, MAX_MODULE_DEVICE_NUM> ProfilerBase::sendRecvGroupIndexMap_;
 std::array<std::map<const std::string, std::string>, MAX_MODULE_DEVICE_NUM> ProfilerBase::groupUdiMap_;
 std::array<std::mutex, MAX_MODULE_DEVICE_NUM> ProfilerBase::streamMutex_;
@@ -50,8 +52,10 @@ HcclResult ProfilerBase::AddStream(s32 streamID, const std::string &tag, s32 pla
     s32 deviceLogicId = -1;
     CHK_RET(hrtGetDevice(&deviceLogicId));
 
-    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= MAX_MODULE_DEVICE_NUM, HCCL_ERROR("[Add][Stream]deviceLogicId_[%d]"
-        "is bigger than HCCL_AISERVER_DEVICE_NUM[%u]", deviceLogicId, MAX_MODULE_DEVICE_NUM), HCCL_E_INTERNAL);
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
+    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= maxDeviceNum, HCCL_ERROR("[Add][Stream]deviceLogicId_[%d]"
+        "is bigger than HCCL_AISERVER_DEVICE_NUM[%u]", deviceLogicId, maxDeviceNum), HCCL_E_INTERNAL);
     HCCL_DEBUG("AddStream: streamID[%d], tag[%s], planeId[%d], algType[%s], deviceLogicId[%d]", streamID, tag.c_str(),
         planeID, AlgTypeToStr(algType).c_str(), deviceLogicId);
     {
@@ -82,8 +86,10 @@ HcclResult ProfilerBase::DelStream(s32 streamID)
     s32 deviceLogicId = -1;
     CHK_RET(hrtGetDevice(&deviceLogicId));
 
-    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= MAX_MODULE_DEVICE_NUM, HCCL_WARNING("deviceLogicId_[%d] is bigger"
-        "than MAX_MODULE_DEVICE_NUM[%u]", deviceLogicId, MAX_MODULE_DEVICE_NUM), HCCL_E_INTERNAL);
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
+    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= maxDeviceNum, HCCL_WARNING("deviceLogicId_[%d] is bigger"
+        "than maxDeviceNum[%u]", deviceLogicId, maxDeviceNum), HCCL_E_INTERNAL);
 
     HCCL_DEBUG("DelStream: streamID[%d] tag[%s], planeId[%d], algType[%s], deviceLogicId[%d]", streamID,
         streamTagMap_[deviceLogicId][streamID].c_str(), streamPlaneMap_[deviceLogicId][streamID],
@@ -98,26 +104,35 @@ HcclResult ProfilerBase::DelStream(s32 streamID)
 }
 
 HcclResult ProfilerBase::AddTag(const std::string &tag, const std::string &group, const HcclWorkflowMode &workFlowMode,
-    bool isSendRecv)
+    bool isSendRecv, bool isAiv)
 {
     s32 deviceLogicId = -1;
     HcclResult ret = hrtGetDevice(&deviceLogicId);
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("rts get device error"), ret);
-    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= MAX_MODULE_DEVICE_NUM, HCCL_ERROR("deviceLogicId_[%d] is bigger than"
-        " MAX_MODULE_DEVICE_NUM[%u]", deviceLogicId, MAX_MODULE_DEVICE_NUM), HCCL_E_INTERNAL);
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
+    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= maxDeviceNum, HCCL_ERROR("deviceLogicId_[%d] is bigger than"
+        " maxDeviceNum[%u]", deviceLogicId, maxDeviceNum), HCCL_E_INTERNAL);
     HCCL_DEBUG("AddTag: tag[%s] group[%s] deviceLogicId[%d]", tag.c_str(), group.c_str(), deviceLogicId);
     {
         std::unique_lock<std::mutex> lock(streamMutex_[deviceLogicId]);
         tagGroupMap_[deviceLogicId].insert(std::make_pair<const std::string &, const std::string &>(tag, group));
         tagModeMap_[deviceLogicId].insert(std::make_pair<const std::string &,
             const HcclWorkflowMode &>(tag, workFlowMode));
-        if (isSendRecv == false) {
+        if (isAiv) {
+            aivGroupIndexMap_[deviceLogicId][group]++;
+        } else if (isSendRecv == false) {
             groupIndexMap_[deviceLogicId][group]++;
         } else {
             sendRecvGroupIndexMap_[deviceLogicId][group]++;
         }
         isSendRecv_[deviceLogicId] = isSendRecv;
-        index_[deviceLogicId] = isSendRecv ? sendRecvGroupIndexMap_[deviceLogicId][group] : groupIndexMap_[deviceLogicId][group];
+        if (isAiv) {
+            index_[deviceLogicId] = aivGroupIndexMap_[deviceLogicId][group];
+        } else {
+            index_[deviceLogicId] =
+                isSendRecv ? sendRecvGroupIndexMap_[deviceLogicId][group] : groupIndexMap_[deviceLogicId][group];
+        }
         HCCL_DEBUG("IndexMap: tag[%s] group[%s] groupIndexMap_[%d]:%u sendRecvGroupIndexMap_[%d]:%u", tag.c_str(), group.c_str(),
             deviceLogicId, groupIndexMap_[deviceLogicId][group], deviceLogicId, sendRecvGroupIndexMap_[deviceLogicId][group]);
     }
@@ -129,8 +144,10 @@ HcclResult ProfilerBase::DelTag(const std::string &tag)
     s32 deviceLogicId = -1;
     HcclResult ret = hrtGetDevice(&deviceLogicId);
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("rts get device error"), ret);
-    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= MAX_MODULE_DEVICE_NUM, HCCL_WARNING("deviceLogicId_[%d] is bigger"
-        "than MAX_MODULE_DEVICE_NUM[%u]", deviceLogicId, MAX_MODULE_DEVICE_NUM), HCCL_E_INTERNAL);
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
+    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= maxDeviceNum, HCCL_WARNING("deviceLogicId_[%d] is bigger"
+        "than maxDeviceNum[%u]", deviceLogicId, maxDeviceNum), HCCL_E_INTERNAL);
     HCCL_DEBUG("DelTag: tag[%s] group[%s] deviceLogicId[%d]", tag.c_str(), tagGroupMap_[deviceLogicId][tag].c_str(),
         deviceLogicId);
     {
@@ -147,8 +164,10 @@ HcclResult ProfilerBase::AddOpData(const std::string &tag, u64 count, const void
     s32 deviceLogicId = -1;
     HcclResult ret = hrtGetDevice(&deviceLogicId);
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("rts get device error"), ret);
-    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= MAX_MODULE_DEVICE_NUM, HCCL_ERROR("deviceLogicId_[%d] is bigger than"
-        " MAX_MODULE_DEVICE_NUM[%u]", deviceLogicId, MAX_MODULE_DEVICE_NUM), HCCL_E_INTERNAL);
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
+    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= maxDeviceNum, HCCL_ERROR("deviceLogicId_[%d] is bigger than"
+        " maxDeviceNum[%u]", deviceLogicId, maxDeviceNum), HCCL_E_INTERNAL);
     HCCL_DEBUG("AddOpData: tag[%s] count[%u] src[%p] dst[%p] dataType[%s] deviceLogicId[%d] group[%s]",
         tag.c_str(), count, src, dst, GetDataTypeEnumStr(dataType).c_str(), deviceLogicId, group.c_str());
     {
@@ -173,8 +192,10 @@ HcclResult ProfilerBase::DelOpData(const std::string &tag)
     s32 deviceLogicId = -1;
     HcclResult ret = hrtGetDevice(&deviceLogicId);
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("rts get device error"), ret);
-    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= MAX_MODULE_DEVICE_NUM, HCCL_WARNING("deviceLogicId_[%d] is bigger"
-        "than MAX_MODULE_DEVICE_NUM[%u]", deviceLogicId, MAX_MODULE_DEVICE_NUM), HCCL_E_INTERNAL);
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
+    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= maxDeviceNum, HCCL_WARNING("deviceLogicId_[%d] is bigger"
+        "than maxDeviceNum[%u]", deviceLogicId, maxDeviceNum), HCCL_E_INTERNAL);
     HCCL_DEBUG("DelOpData: tag[%s] deviceLogicId[%d]", tag.c_str(), deviceLogicId);
     {
         std::unique_lock<std::mutex> lock(streamMutex_[deviceLogicId]);
@@ -189,8 +210,10 @@ HcclResult ProfilerBase::AddGroupRankInfo(const std::string &group, u32 rankSize
     s32 deviceLogicId = -1;
     HcclResult ret = hrtGetDevice(&deviceLogicId);
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("rts get device error"), ret);
-    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= MAX_MODULE_DEVICE_NUM, HCCL_ERROR("deviceLogicId_[%d] is bigger than"
-        " MAX_MODULE_DEVICE_NUM[%u]", deviceLogicId, MAX_MODULE_DEVICE_NUM), HCCL_E_INTERNAL);
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
+    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= maxDeviceNum, HCCL_ERROR("deviceLogicId_[%d] is bigger than"
+        " maxDeviceNum[%u]", deviceLogicId, maxDeviceNum), HCCL_E_INTERNAL);
     HCCL_DEBUG("AddGroupRankInfo: group[%s] rankSize[%u] rankId[%u] deviceLogicId[%d]", group.c_str(), rankSize,
         rankId, deviceLogicId);
     {
@@ -209,8 +232,10 @@ HcclResult ProfilerBase::DelGroupRankInfo(const std::string &group)
     s32 deviceLogicId = -1;
     HcclResult ret = hrtGetDevice(&deviceLogicId);
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("rts get device error"), ret);
-    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= MAX_MODULE_DEVICE_NUM, HCCL_WARNING("deviceLogicId_[%d] is bigger"
-        "than MAX_MODULE_DEVICE_NUM[%u]", deviceLogicId, MAX_MODULE_DEVICE_NUM), HCCL_E_INTERNAL);
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
+    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= maxDeviceNum, HCCL_WARNING("deviceLogicId_[%d] is bigger"
+        "than maxDeviceNum[%u]", deviceLogicId, maxDeviceNum), HCCL_E_INTERNAL);
     HCCL_DEBUG("DelGroupRankInfo: group[%s] deviceLogicId[%d]", group.c_str(), deviceLogicId);
     {
         std::unique_lock<std::mutex> lock(streamMutex_[deviceLogicId]);
@@ -224,8 +249,10 @@ HcclResult ProfilerBase::GetTagByStream(u32 &streamID, std::string &tag)
     s32 deviceLogicId = -1;
     HcclResult ret = hrtGetDevice(&deviceLogicId);
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("rts get device error"), ret);
-    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= MAX_MODULE_DEVICE_NUM, HCCL_WARNING("deviceLogicId_[%d] is bigger"
-        "than MAX_MODULE_DEVICE_NUM[%u]", deviceLogicId, MAX_MODULE_DEVICE_NUM), HCCL_E_INTERNAL);
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
+    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= maxDeviceNum, HCCL_WARNING("deviceLogicId_[%d] is bigger"
+        "than maxDeviceNum[%u]", deviceLogicId, maxDeviceNum), HCCL_E_INTERNAL);
 
     std::unique_lock<std::mutex> lock(streamMutex_[deviceLogicId]);
     CHK_PRT_RET(streamTagMap_[deviceLogicId].find(streamID) == streamTagMap_[deviceLogicId].end(),
@@ -239,8 +266,10 @@ HcclResult ProfilerBase::GetAlgTypeByStream(u32 &streamID, AlgType &algType)
     s32 deviceLogicId = -1;
     HcclResult ret = hrtGetDevice(&deviceLogicId);
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[GetAlgTypeByStream]rts get device error"), ret);
-    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= MAX_MODULE_DEVICE_NUM, HCCL_WARNING("[GetAlgTypeByStream] "
-        "deviceLogicId_[%d] is bigger than MAX_MODULE_DEVICE_NUM[%u]", deviceLogicId, MAX_MODULE_DEVICE_NUM),
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
+    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= maxDeviceNum, HCCL_WARNING("[GetAlgTypeByStream] "
+        "deviceLogicId_[%d] is bigger than maxDeviceNum[%u]", deviceLogicId, maxDeviceNum),
         HCCL_E_INTERNAL);
 
     std::unique_lock<std::mutex> lock(streamMutex_[deviceLogicId]);
@@ -255,8 +284,10 @@ HcclResult ProfilerBase::GetGroupNameByTag(const std::string &tag, std::string &
     s32 deviceLogicId = -1;
     HcclResult ret = hrtGetDevice(&deviceLogicId);
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[GetGroupNameByTag]rts get device error"), ret);
-    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= MAX_MODULE_DEVICE_NUM, HCCL_WARNING("[GetGroupNameByTag] "
-        "deviceLogicId_[%d] is bigger than MAX_MODULE_DEVICE_NUM[%u]", deviceLogicId, MAX_MODULE_DEVICE_NUM),
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
+    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= maxDeviceNum, HCCL_WARNING("[GetGroupNameByTag] "
+        "deviceLogicId_[%d] is bigger than maxDeviceNum[%u]", deviceLogicId, maxDeviceNum),
         HCCL_E_INTERNAL);
 
     std::unique_lock<std::mutex> lock(streamMutex_[deviceLogicId]);
@@ -271,8 +302,10 @@ HcclResult ProfilerBase::GetRankInfoByGroup(const std::string &group, GroupRankI
     s32 deviceLogicId = -1;
     HcclResult ret = hrtGetDevice(&deviceLogicId);
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[GetRankInfoByGroup]rts get device error"), ret);
-    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= MAX_MODULE_DEVICE_NUM, HCCL_WARNING("[GetRankInfoByGroup] "
-        "deviceLogicId_[%d] is bigger than MAX_MODULE_DEVICE_NUM[%u]", deviceLogicId, MAX_MODULE_DEVICE_NUM),
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
+    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= maxDeviceNum, HCCL_WARNING("[GetRankInfoByGroup] "
+        "deviceLogicId_[%d] is bigger than maxDeviceNum[%u]", deviceLogicId, maxDeviceNum),
         HCCL_E_INTERNAL);
 
     std::unique_lock<std::mutex> lock(streamMutex_[deviceLogicId]);
@@ -287,8 +320,10 @@ HcclResult ProfilerBase::GetOpDataInfoByTag(const std::string &tag, OpDataInfo &
     s32 deviceLogicId = -1;
     HcclResult ret = hrtGetDevice(&deviceLogicId);
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[GetOpDataInfoByTag]rts get device error"), ret);
-    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= MAX_MODULE_DEVICE_NUM, HCCL_WARNING("[GetOpDataInfoByTag] "
-        "deviceLogicId_[%d] is bigger than MAX_MODULE_DEVICE_NUM[%u]", deviceLogicId, MAX_MODULE_DEVICE_NUM),
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
+    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= maxDeviceNum, HCCL_WARNING("[GetOpDataInfoByTag] "
+        "deviceLogicId_[%d] is bigger than maxDeviceNum[%u]", deviceLogicId, maxDeviceNum),
         HCCL_E_INTERNAL);
 
     std::unique_lock<std::mutex> lock(streamMutex_[deviceLogicId]);
@@ -307,9 +342,15 @@ void ProfilerBase::GetSubmittedOpCnt(u32 &index)
         HCCL_ERROR("[GetSubmittedOpCnt]rts get device error");
         return;
     }
-    if (static_cast<u32>(deviceLogicId) >= MAX_MODULE_DEVICE_NUM) {
+    u32 maxDeviceNum;
+    ret = GetMaxDevNum(maxDeviceNum);
+    if (ret != HCCL_SUCCESS) {
+        HCCL_ERROR("[GetMaxDevNum] get maxDeviceNum error");
+        return;
+    }
+    if (static_cast<u32>(deviceLogicId) >= maxDeviceNum) {
         HCCL_WARNING("[GetSubmittedOpCnt] "
-        "deviceLogicId_[%d] is bigger than MAX_MODULE_DEVICE_NUM[%u]", deviceLogicId, MAX_MODULE_DEVICE_NUM);
+        "deviceLogicId_[%d] is bigger than maxDeviceNum[%u]", deviceLogicId, maxDeviceNum);
         return;
     }
 
@@ -324,8 +365,10 @@ HcclResult ProfilerBase::AddGroupUdi(const std::string &group, const std::string
     s32 deviceLogicId = -1;
     HcclResult ret = hrtGetDevice(&deviceLogicId);
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("rts get device error"), ret);
-    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= MAX_MODULE_DEVICE_NUM, HCCL_ERROR("deviceLogicId_[%d] is bigger than"
-        " MAX_MODULE_DEVICE_NUM[%u]", deviceLogicId, MAX_MODULE_DEVICE_NUM), HCCL_E_INTERNAL);
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
+    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= maxDeviceNum, HCCL_ERROR("deviceLogicId_[%d] is bigger than"
+        " maxDeviceNum[%u]", deviceLogicId, maxDeviceNum), HCCL_E_INTERNAL);
     HCCL_RUN_INFO("AddGroupUdi: group[%s] udi[%s] deviceLogicId[%d]", group.c_str(), udi.c_str(),
         deviceLogicId);
     std::lock_guard<std::mutex> lock(streamMutex_[deviceLogicId]);
@@ -339,8 +382,10 @@ HcclResult ProfilerBase::DelGroupUdi(const std::string &group)
     s32 deviceLogicId = -1;
     HcclResult ret = hrtGetDevice(&deviceLogicId);
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("rts get device error"), ret);
-    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= MAX_MODULE_DEVICE_NUM, HCCL_ERROR("deviceLogicId_[%d] is bigger than"
-        " MAX_MODULE_DEVICE_NUM[%u]", deviceLogicId, MAX_MODULE_DEVICE_NUM), HCCL_E_INTERNAL);
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
+    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= maxDeviceNum, HCCL_ERROR("deviceLogicId_[%d] is bigger than"
+        " maxDeviceNum[%u]", deviceLogicId, maxDeviceNum), HCCL_E_INTERNAL);
     HCCL_DEBUG("DelGroupUdi: group[%s] deviceLogicId[%d]", group.c_str(), deviceLogicId);
     std::lock_guard<std::mutex> lock(streamMutex_[deviceLogicId]);
     groupUdiMap_[deviceLogicId].erase(group);
@@ -352,8 +397,10 @@ HcclResult ProfilerBase::GetUdiByGroup(const std::string &group, std::string &ud
     s32 deviceLogicId = -1;
     HcclResult ret = hrtGetDevice(&deviceLogicId);
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("rts get device error"), ret);
-    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= MAX_MODULE_DEVICE_NUM, HCCL_ERROR("deviceLogicId_[%d] is bigger than"
-        " MAX_MODULE_DEVICE_NUM[%u]", deviceLogicId, MAX_MODULE_DEVICE_NUM), HCCL_E_INTERNAL);
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
+    CHK_PRT_RET(static_cast<u32>(deviceLogicId) >= maxDeviceNum, HCCL_ERROR("deviceLogicId_[%d] is bigger than"
+        " maxDeviceNum[%u]", deviceLogicId, maxDeviceNum), HCCL_E_INTERNAL);
     HCCL_DEBUG("GetUdiByGroup: group[%s] deviceLogicId[%d]", group.c_str(), deviceLogicId);
     std::lock_guard<std::mutex> lock(streamMutex_[deviceLogicId]);
     CHK_PRT_RET(groupUdiMap_[deviceLogicId].find(group) == groupUdiMap_[deviceLogicId].end(),

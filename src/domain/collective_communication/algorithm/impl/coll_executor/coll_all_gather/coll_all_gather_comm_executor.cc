@@ -66,6 +66,7 @@ HcclResult CollAllGatherCommExecutor::CalcCombinedCommInfo(TransportMemType inpu
 
 HcclResult CollAllGatherCommExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollAllGatherCommExecutor][KernelRun]AllGather enter");
     CommPlane commPlane = COMM_COMBINE;
     if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
         commPlane = COMM_COMBINE_ORDER;
@@ -98,7 +99,41 @@ HcclResult CollAllGatherCommExecutor::KernelRun(const OpParam &param, ExecMem &e
 
     return HCCL_SUCCESS;
 }
+HcclResult CollAllGatherCommExecutor::Getlevel1CommRank(SubCommInfo& level1CommInfo)
+{
+    HCCL_INFO("[nslbdp] Entry Getlevel1CommRank.");
+    CommPlane commPlane = COMM_COMBINE;
+    if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
+        commPlane = COMM_COMBINE_ORDER;
+        HCCL_INFO("nslbdp allgather comm: Getlevel1CommRank.");
+    }
+    CHK_RET(CheckCommSize(commPlane, COMM_INDEX_0 + 1));
+    level1CommInfo = GetSubCommInfo(commPlane, COMM_INDEX_0);
 
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollAllGatherCommExecutor::SelectTempAlg(std::unique_ptr<AlgTemplateBase> &level1TempAlg, u32 level1RankSize)
+{
+    HCCL_INFO("[nslbdp] Entry SelectTempAlg, algoLevel1 = [%u].", algType_.algoLevel1);
+    if (level1RankSize > 1) {
+        if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_GATHER_NHR, dispatcher_);
+            HCCL_INFO("algather comm: using nhr algo inter-server.");
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_GATHER_NHRV1, dispatcher_);
+            HCCL_INFO("algather comm: using nhr_v1 algo inter-server.");
+        } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_GATHER_NB, dispatcher_);
+            HCCL_INFO("algather comm: using nonuniform-bruck algo inter-server.");
+        } else {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_GATHER_RING, dispatcher_);
+            HCCL_INFO("algather comm: ring algo inter-server.");
+        }
+        return HCCL_SUCCESS;
+    }
+    return HCCL_E_UNAVAIL;
+}
 REGISTER_EXEC("AllGatherComm", AllGatherComm, CollAllGatherCommExecutor);
 
 } // namespace hccl

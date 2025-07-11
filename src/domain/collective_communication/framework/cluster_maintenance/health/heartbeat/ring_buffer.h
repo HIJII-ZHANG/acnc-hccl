@@ -47,7 +47,7 @@ public:
     HcclResult PushSeg(u8* src, u32 count)
     {
         CHK_PTR_NULL(src);
-        if (size_ + count > capacity_) {
+        if (size_ > capacity_ || count > (capacity_ - size_)) {
             HCCL_ERROR("[RingBuffer] Not Enough Space");
             return HCCL_E_PARA;
         }

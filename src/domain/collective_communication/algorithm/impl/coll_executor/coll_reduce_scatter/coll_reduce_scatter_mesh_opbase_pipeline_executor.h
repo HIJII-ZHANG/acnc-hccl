@@ -37,6 +37,8 @@ private:
     bool IsHugeData(const u64 curSize, OpParam *param = nullptr) override;
 
     HcclResult RunLoop(OpParam &param, AlgResourceResponse &algRes) override;
+    HcclResult Getlevel1CommRank(SubCommInfo& level1CommInfo) override;
+    HcclResult SelectTempAlg(std::unique_ptr<AlgTemplateBase> &level1TempAlg, u32 level1RankSize) override;
 };
 
 } // namespace hccl

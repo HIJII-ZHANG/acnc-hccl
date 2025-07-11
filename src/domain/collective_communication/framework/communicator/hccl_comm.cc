@@ -21,7 +21,9 @@
 #include "task_abort_handler_pub.h"
 #include "coll_alg_utils.h"
 #include "env_config.h"
+#if (!defined(HCCD)) && (!defined(CCL_KERNEL_AICPU))
 #include "i_hccl_one_sided_service.h"
+#endif
 
 namespace hccl {
 RankTable_t g_hcclDefaultRankTable;
@@ -364,6 +366,7 @@ HcclResult hcclComm::AllGatherVOutPlace(const std::string &tag, void *inputPtr, 
     return HCCL_SUCCESS;
 }
 
+#ifndef CCL_KERNEL_AICPU
 HcclResult hcclComm::AllReduce(const std::string &tag, void *inputPtr, void *outputPtr, u64 count,
     HcclDataType dataType, HcclReduceOp op, HcclRtStream stream, SyncMode syncMode)
 {
@@ -412,6 +415,7 @@ HcclResult hcclComm::AllReduceOutPlace(const std::string &tag, void *inputPtr, v
 
     return HCCL_SUCCESS;
 }
+#endif
 
 HcclResult hcclComm::AlltoAllV(const void *sendBuf, const void *sendCounts, const void *sdispls, HcclDataType sendType,
                                const void *recvBuf, const void *recvCounts, const void *rdispls, HcclDataType recvType,
@@ -989,6 +993,7 @@ HcclResult hcclComm::CreateBarrierMemory()
     return HCCL_SUCCESS;
 }
 
+#if (!defined(HCCD)) && (!defined(CCL_KERNEL_AICPU))
 HcclResult hcclComm::GetOneSidedService(IHcclOneSidedService** service)
 {
     CHK_RET(communicator_->GetOneSidedService(service));
@@ -1001,6 +1006,7 @@ HcclResult hcclComm::InitOneSidedServiceNetDevCtx(u32 remoteRankId)
     CHK_RET(communicator_->InitOneSidedServiceNetDevCtx(remoteRankId));
     return HCCL_SUCCESS;
 }
+#endif
 
 HcclResult hcclComm::GetInCCLbuffer(void* &buffer, u64 &size)
 {
@@ -1034,6 +1040,26 @@ HcclResult hcclComm::GetRankSize(u32 &rankSize)
     rankSize = communicator_->GetRankSize();
 
     return HCCL_SUCCESS;
+}
+
+HcclResult hcclComm::HcclSelectAlg(HcclCMDType opType, u64 count, HcclDataType dataType,
+    HcclReduceOp op, bool &ifAiv, std::string &algName, bool isSuperKernel)
+{
+    return communicator_->HcclSelectAlg(opType, count, dataType, op, ifAiv, algName, isSuperKernel);
+}
+
+HcclResult hcclComm::HcclCalcBlockDim(HcclCMDType opType, u64 count, HcclDataType dataType,
+        std::string &algName, u32 &blockDim)
+{
+    return communicator_->HcclCalcBlockDim(opType, count, dataType, algName, blockDim);
+}
+
+HcclResult hcclComm::HcclGetAlgExecParam(const std::string &tag, u64 count, void *inputPtr, void *outputPtr,
+    HcclCMDType opType, bool clearEnable, HcclDataType dataType, HcclReduceOp op, 
+    void *&commContext, u64 &len, u32 aivCoreLimit)
+{
+    return communicator_->HcclGetAlgExecParam(tag, opType,  count, inputPtr, outputPtr, clearEnable, dataType, op,
+        commContext, len, aivCoreLimit);
 }
 
 HcclResult hcclComm::GetWorkspaceSubStreamNum(u64 &streamNum, u64 dataSize, HcclCMDType optype) const
@@ -1244,14 +1270,10 @@ HcclCommState hcclComm::GetState()
     return HcclCommState::IDLE;
 }
 
-HcclResult hcclComm::AllocComResourceByTiling(const std::string &algConfig,
-    const std::string &tag, uint32_t opType, uint32_t reduceType, rtStream_t stream)
+HcclResult hcclComm::AllocComResourceByTiling(const std::string &algConfig, void *param)
 {
-    /* 增加输出日志关键字 */
-    HCCL_INFO("HCCL_KEY_INFO: AllocComResourceByTiling algConfig[%s], tag[%s], opType[%u], reduceType[%u]",
-        algConfig.c_str(), tag.c_str(), opType, reduceType);
-
-    return communicator_->AllocComResourceByTiling(algConfig, tag, opType, reduceType, stream);
+    HCCL_INFO("HCCL_KEY_INFO: AllocComResourceByTiling algConfig[%s].", algConfig.c_str());
+    return communicator_->AllocComResourceByTiling(algConfig, param);
 }
 
 HcclResult hcclComm::CreateCommResource(const std::string &tag, rtStream_t aiCpuStream, bool isOpbaseMode,
@@ -1360,17 +1382,21 @@ HcclResult hcclComm::GetCommRankTable(RankTable_t &rankTable)
 
 HcclResult hcclComm::RegistTaskAbortHandler() const
 {
+#if (!defined(HCCD)) && (!defined(CCL_KERNEL_AICPU))
     HCCL_INFO("RegistTaskAbortHandler begin");
     CHK_RET(TaskAbortHandler::Init(communicator_.get()));
 
+#endif
     return HCCL_SUCCESS;
 }
 
 HcclResult hcclComm::UnRegistTaskAbortHandler() const
 {
+#if (!defined(HCCD)) && (!defined(CCL_KERNEL_AICPU))
     HCCL_INFO("UnRegistTaskAbortHandler begin");
     CHK_RET(TaskAbortHandler::DeInit(communicator_.get()));
 
+#endif
     return HCCL_SUCCESS;
 }
 
@@ -1432,4 +1458,18 @@ HcclResult hcclComm::GetBlockDim(u32& blockDim)
 {
     return communicator_->GetBlockDim(blockDim);
 }
+
+HcclResult hcclComm::SwitchNic(uint32_t nRanks, uint32_t *ranks, bool *useBackup)
+{
+    CHK_SMART_PTR_NULL(communicator_);
+    CHK_RET(communicator_->SwitchNic(nRanks, ranks, useBackup));
+    return HCCL_SUCCESS;
+}
+HcclResult hcclComm::InitHccp()
+{
+    /* 增加输出日志关键字 */
+    HCCL_INFO("NslbDp try to init hccp ");
+    return communicator_->InitHccp();
+}
+
 }  // namespace hccl

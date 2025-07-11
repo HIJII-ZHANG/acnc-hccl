@@ -16,41 +16,14 @@ class AivAllGatherSmall91093 : public AivCommBase {
 public:
     __aicore__ inline AivAllGatherSmall91093() {}
 
-    __aicore__ inline void Init(GM_ADDR buffIn0, GM_ADDR buffIn1, GM_ADDR buffIn2, GM_ADDR buffIn3, GM_ADDR buffIn4,
-                                GM_ADDR buffIn5, GM_ADDR buffIn6, GM_ADDR buffIn7, GM_ADDR buffIn8, GM_ADDR buffIn9,
-                                GM_ADDR buffIn10, GM_ADDR buffIn11, GM_ADDR buffIn12, GM_ADDR buffIn13,
-                                GM_ADDR buffIn14, GM_ADDR buffIn15, GM_ADDR buffOut0, GM_ADDR buffOut1,
-                                GM_ADDR buffOut2, GM_ADDR buffOut3, GM_ADDR buffOut4, GM_ADDR buffOut5,
-                                GM_ADDR buffOut6, GM_ADDR buffOut7, GM_ADDR buffOut8, GM_ADDR buffOut9,
-                                GM_ADDR buffOut10, GM_ADDR buffOut11, GM_ADDR buffOut12, GM_ADDR buffOut13,
-                                GM_ADDR buffOut14, GM_ADDR buffOut15, uint32_t rank, uint32_t rankSize,
-                                uint32_t dataType, uint32_t reduceOp, uint32_t root, GM_ADDR headCountMem, GM_ADDR tailCountMem,
-                                GM_ADDR addOneMem, uint32_t counterMemSize, bool isEnableCounter)
-    {
-        InitBuffArray(buffIn0, buffIn1, buffIn2, buffIn3, buffIn4,
-                buffIn5, buffIn6, buffIn7, buffIn8, buffIn9,
-                buffIn10, buffIn11, buffIn12, buffIn13,
-                buffIn14, buffIn15, buffOut0, buffOut1,
-                buffOut2, buffOut3, buffOut4, buffOut5,
-                buffOut6, buffOut7, buffOut8, buffOut9,
-                buffOut10, buffOut11, buffOut12, buffOut13,
-                buffOut14, buffOut15);
-
-        rank_ = rank;
-        rankSize_ = rankSize;
-
-        useDoubleBuffer_ = true;
-
-        pipe.InitBuffer(localFlagBuf, UB_FLAG_SIZE_4);
-        localFlagTensor = localFlagBuf.Get<int32_t>();
-
-        pipe.InitBuffer(inOutQue, DOUBLE, UB_DB_DATA_BATCH_SIZE); // double buffer
-        InitOpCounter(headCountMem, tailCountMem, addOneMem, counterMemSize, isEnableCounter);
-    }
-
     template<typename T>
     __aicore__ inline void Process(GM_ADDR input, GM_ADDR output, uint64_t len, int32_t tag);
 
+    template<typename T>
+    __aicore__ inline void ProcessSmall(GM_ADDR input, GM_ADDR output, uint64_t len, int32_t tag);
+
+    template<typename T>
+    __aicore__ inline void ProcessBig(GM_ADDR input, GM_ADDR output, uint64_t len, int32_t tag);
 private:
     LocalTensor<int32_t> localFlagTensor;
 };
@@ -58,8 +31,19 @@ private:
 template<typename T>
 __aicore__ inline void AivAllGatherSmall91093::Process(GM_ADDR input, GM_ADDR output, uint64_t len, int32_t tag)
 {
-    uint32_t blockNumPerGroup = block_num / rankSize_; // block_num需要能被rankSize_整除
-    uint32_t blockIdxInGroup = block_idx % blockNumPerGroup;
+    if (len * sizeof(T) <= AIV_A3_ALL_GATHER_GRAPH_GUIYI_SIZE) {
+        ProcessSmall<T>(input, output, len, tag);
+    } else {
+        ProcessBig<T>(input, output, len, tag);
+    }
+}
+
+template<typename T>
+__aicore__ inline void AivAllGatherSmall91093::ProcessSmall(GM_ADDR input, GM_ADDR output, uint64_t len, int32_t tag)
+{
+    uint32_t blockNumPerGroup = blockdim_ / rankSize_; // blockdim_需要能被rankSize_整除
+    uint32_t blockIdxInGroup = GetBlockIdx() % blockNumPerGroup;
+    localFlagTensor = localFlagBuf.Get<int32_t>();
 
     uint32_t padCount = UB_ALIGN_SIZE / sizeof(T);
     uint64_t avgLengthPerBlock = CeilDiv(len, blockNumPerGroup);
@@ -69,7 +53,7 @@ __aicore__ inline void AivAllGatherSmall91093::Process(GM_ADDR input, GM_ADDR ou
 
     uint64_t count = CalActualCount(blockIdxInGroup, sliceCount, avgLengthPerSlice, tailLength);
     uint64_t blockOffset = blockIdxInGroup * avgLengthPerSlice;
-    uint32_t dstRank = block_idx / blockNumPerGroup;
+    uint32_t dstRank = GetBlockIdx() / blockNumPerGroup;
 
     // 共用2个flag
     uint32_t flagOffsetBase = BASE_FLAG_OFFSET * AIV_ALL_GATHER_91093_SMALLDATA;
@@ -82,15 +66,8 @@ __aicore__ inline void AivAllGatherSmall91093::Process(GM_ADDR input, GM_ADDR ou
     __gm__ T *outputGM = (__gm__ T *)output;
 
     if (dstRank != rank_) {
-        GlobalTensor<int32_t> globalCheck;
-        globalCheck.SetGlobalBuffer((__gm__ int32_t *)(GM_OUT[dstRank] + flagOffset + blockIdxInGroup * FLAG_SIZE), UB_FLAG_PAD_COUNT);
-        while (true) {
-            DataCopy(localFlagTensor[8], globalCheck, UB_FLAG_PAD_COUNT);
-            SyncFunc<HardEvent::MTE2_S>();
-            if (localFlagTensor[8].GetValue(0) == tag) {
-                break;
-            }
-        }
+        LocalTensor<int32_t> localFlag = localFlagTensor[8];
+        WaitSignalValue((__gm__ int32_t *)(GM_OUT[dstRank] + flagOffset + blockIdxInGroup * FLAG_SIZE), localFlag, tag);
         SyncFunc<HardEvent::S_MTE2>();
 
         CpGM2GM(outputGM + dstRank * len + blockOffset, cclGMOther + blockOffset, count);
@@ -109,12 +86,90 @@ __aicore__ inline void AivAllGatherSmall91093::Process(GM_ADDR input, GM_ADDR ou
     }
 }
 
+template <typename T>
+__aicore__ inline void AivAllGatherSmall91093::ProcessBig(GM_ADDR input, GM_ADDR output, uint64_t len, int32_t tag)
+{
+    localSetTensor.SetValue(0, tag);
+    __gm__ T *inputGM = (__gm__ T *)input;
+    __gm__ T *outputGM = (__gm__ T *)output;
+
+    uint32_t blockNumPerGroup = blockdim_ / rankSize_; // blockdim_需要能被rankSize_整除
+    uint32_t blockIdxInGroup = GetBlockIdx() % blockNumPerGroup;
+
+    uint32_t padCount = UB_ALIGN_SIZE / sizeof(T);
+    uint64_t avgLengthPerBlock = CeilDiv(len, blockNumPerGroup);
+    uint64_t avgLengthPerSlice = CeilDiv(avgLengthPerBlock, padCount) * padCount; // 32B对齐
+    uint64_t sliceCount = CeilDiv(len, avgLengthPerSlice);
+    uint64_t tailLength = len - (sliceCount - 1) * avgLengthPerSlice;
+
+    uint64_t count = CalActualCount(blockIdxInGroup, sliceCount, avgLengthPerSlice, tailLength);
+    uint64_t blockOffset = blockIdxInGroup * avgLengthPerSlice;
+    uint32_t dstRank = GetBlockIdx() / blockNumPerGroup;
+
+    uint32_t flagOffsetBase = BASE_FLAG_OFFSET  * AIV_ALL_GATHER_91093_SMALLDATA_GRAPH;
+    uint32_t flagXOffset = blockIdxInGroup * FLAG_SIZE + rank_ * blockNumPerGroup * FLAG_SIZE + flagOffsetBase;
+    uint32_t flagOffset = GetBlockIdx() * FLAG_SIZE + flagOffsetBase;
+
+    __gm__ int32_t *ctrlFlagsGMX = (__gm__ int32_t *)(GM_OUT[dstRank] + flagXOffset);
+    __gm__ int32_t *ctrlFlagsGM = (__gm__ int32_t *)(GM_OUT[rank_] + flagOffset);
+    GlobalTensor<int32_t> globalSet;
+ 
+    if (dstRank == rank_) {
+        CpGM2GM(outputGM + rank_ * len + blockOffset, (__gm__ T *)(inputGM + blockOffset), count);
+    } else {
+        globalSet.SetGlobalBuffer(ctrlFlagsGMX, UB_FLAG_PAD_COUNT);
+        DataCopy(globalSet, localSetTensor, UB_FLAG_PAD_COUNT);
+        WaitSignalValue(ctrlFlagsGM, localCheckTensor, tag);
+        PipeBarrier<PIPE_ALL>();
+
+        CpGM2GM(outputGM + dstRank * len + blockOffset, (__gm__ T *)(GM_IN[dstRank]) + blockOffset, count);
+        
+        ctrlFlagsGMX = (__gm__ int32_t *)(GM_OUT[dstRank] + blockdim_ * FLAG_SIZE + flagXOffset);
+        ctrlFlagsGM = (__gm__ int32_t *)(GM_OUT[rank_] + blockdim_ * FLAG_SIZE + flagOffset);
+        PipeBarrier<PIPE_MTE3>();
+        globalSet.SetGlobalBuffer(ctrlFlagsGMX, UB_FLAG_PAD_COUNT);
+        DataCopy(globalSet, localSetTensor, UB_FLAG_PAD_COUNT);
+        WaitSignalValue(ctrlFlagsGM, localCheckTensor, tag);
+    }
+    return;
+}
+
 template<typename T>
 __aicore__ inline void aiv_all_gather_91093_smalldata(KERNEL_ARGS_DEF)
 {
     AivAllGatherSmall91093 op;
-    op.Init(KERNEL_CLASS_INIT);
+    if (len * sizeof(T) > AIV_A3_ALL_GATHER_GRAPH_GUIYI_SIZE) {
+        op.Init(KERNEL_CLASS_INIT,true);
+    } else {
+        op.Init(KERNEL_CLASS_INIT,false);
+    }
     op.HeadCounter();
     op.Process<T>(input, output, len, tag);
     op.TailCounter();
+}
+
+__aicore__ inline void sk_all_gather_91093_smalldata(SUPERKERNEL_ARGS_DEF)
+{
+    AivAllGatherSmall91093 op;
+    op.Init(SUPERKERNEL_CLASS_INIT,AIV_A3_ALL_GATHER_GRAPH_GUIYI_SIZE);
+    #ifdef HCCL_DTYPE_INT8
+        op.Process<int8_t>(input, output, op.len_, op.tag_);
+    #elif defined HCCL_DTYPE_INT16
+        op.Process<int16_t>(input, output, op.len_, op.tag_);
+    #elif defined HCCL_DTYPE_INT32
+        op.Process<int32_t>(input, output, op.len_, op.tag_);
+    #elif defined HCCL_DTYPE_FP16
+        op.Process<half>(input, output, op.len_, op.tag_);
+    #elif defined HCCL_DTYPE_FP32
+        op.Process<float>(input, output, op.len_, op.tag_);
+    #elif defined HCCL_DTYPE_BFP16
+        op.Process<bfloat16_t>(input, output, op.len_, op.tag_);
+    #elif defined HCCL_DTYPE_UINT8
+        op.Process<uint8_t>(input, output, op.len_, op.tag_);
+    #elif defined HCCL_DTYPE_UINT16
+        op.Process<uint16_t>(input, output, op.len_, op.tag_);
+    #elif defined HCCL_DTYPE_UINT32
+        op.Process<uint32_t>(input, output, op.len_, op.tag_);
+    #else
+    #endif
 }

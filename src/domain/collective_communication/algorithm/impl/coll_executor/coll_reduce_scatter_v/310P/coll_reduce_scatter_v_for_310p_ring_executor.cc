@@ -103,6 +103,7 @@ HcclResult CollReduceScatterVFor310PRingExecutor::CalcCurCountsAndCurDispls(cons
 
 HcclResult CollReduceScatterVFor310PRingExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollReduceScatterVFor310PRingExecutor][KernelRun] 310p aiv reducescatterv start");
     const auto *displsPtr = static_cast<const u64*>(param.VDataDes.displs);
     HcclDataType dataType = param.VDataDes.dataType;
     const u32 unitSize = SIZE_TABLE[dataType];

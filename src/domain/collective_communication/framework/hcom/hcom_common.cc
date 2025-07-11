@@ -174,6 +174,18 @@ HcclResult HcomGetCommHandleByGroup(const char *group, HcclComm *commHandle)
     CHK_PTR_NULL(group);
     std::shared_ptr<hcclComm> hcclComm;
     CHK_RET(HcclDeviceRefresh());
+
+    // MC2单算子和动态图下发性能优化，优先查询返回
+    HcclOpInfoCtx &opBaseHcom = GetHcclExistDeviceOpInfoCtx();
+    std::unique_lock<std::mutex> lock(opBaseHcom.opGroupMapMutex);
+    auto iter = opBaseHcom.opGroup2CommMap.find(std::string(group));
+    if (iter != opBaseHcom.opGroup2CommMap.end()) {
+        hcclComm = iter->second;
+        CHK_PRT_RET(hcclComm == nullptr, HCCL_WARNING("[HcomGetCommHandleByGroup]opBaseHcom.comm is null"), HCCL_E_PTR);
+        *commHandle = static_cast<HcclComm>(hcclComm.get());
+        return HCCL_SUCCESS;
+    }
+
     CHK_RET(HcomGetCommByGroup(group, hcclComm));
     *commHandle = static_cast<HcclComm>(hcclComm.get());
     return HCCL_SUCCESS;
@@ -203,7 +215,6 @@ HcclResult HcomGetCommByGroup(const char *group, std::shared_ptr<hccl::hcclComm>
 
     return HCCL_SUCCESS;
 }
-
 
 void HcomTopoInfoFuncInstall(HcclResult (*p1)(const char *, uint32_t), void (*p2)(const char *))
 {

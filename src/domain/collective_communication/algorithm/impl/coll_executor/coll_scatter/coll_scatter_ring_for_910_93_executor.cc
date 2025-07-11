@@ -94,7 +94,7 @@ HcclResult CollScatterRingFor91093Executor::CalcLevel2CommInfo(TransportMemType 
 
 HcclResult CollScatterRingFor91093Executor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollScatterRingFor91093Executor][KernelRun] starts.");
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollScatterRingFor91093Executor][KernelRun] starts.");
     Stream& stream = const_cast<Stream&>(param.stream);
 
     CHK_RET(SalGetDataTypeSize(param.DataDes.dataType, perDataSize_));
@@ -262,6 +262,35 @@ HcclResult CollScatterRingFor91093Executor::KernelRunLevel0(const OpParam &param
         mulRingSlice, subRoot_, stream, scatterOpInfoPtr, serverSliceOffset_));
     return HCCL_SUCCESS;
 }
+HcclResult CollScatterRingFor91093Executor::Getlevel1CommRank(SubCommInfo& level1CommInfo)
+{
+    if (CheckCommSize(COMM_LEVEL2, COMM_INDEX_0 + 1) != HCCL_SUCCESS) {
+        return HCCL_E_UNAVAIL;
+    }
+    level1CommInfo = GetSubCommInfo(COMM_LEVEL2, COMM_INDEX_0);
 
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollScatterRingFor91093Executor::SelectTempAlg(std::unique_ptr<AlgTemplateBase> &level1TempAlg, u32 level1RankSize)
+{
+    if (level1RankSize > 1) {
+        if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NB) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_SCATTER_NB, dispatcher_);
+            CHK_SMART_PTR_NULL(level1TempAlg);
+        } else if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NHR) {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_SCATTER_NHR, dispatcher_);
+            CHK_SMART_PTR_NULL(level1TempAlg);
+        } else {
+            level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_SCATTER_RING, dispatcher_);
+            CHK_SMART_PTR_NULL(level1TempAlg);
+        }
+        return HCCL_SUCCESS;
+    }
+    return HCCL_E_UNAVAIL;
+}
 REGISTER_EXEC("ScatterRingFor91093Executor", ScatterRingFor91093, CollScatterRingFor91093Executor);
 }

@@ -65,7 +65,7 @@ __aicore__ inline void AivAllReduceRdmaSmallGraph910B::ReduceScatterForGraph(__g
  
         // 卡内同步，本卡目的分片已经在output中
         pipe_barrier(PIPE_ALL);
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetIn), (rankSize_ - 1) * tag);
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetIn), localSetTensor, (rankSize_ - 1) * tag);
     } else {
         int64_t curCount = CalActualCount(block_idx, rankSize_, avgLengthPerRank, tailLength);
  
@@ -77,14 +77,14 @@ __aicore__ inline void AivAllReduceRdmaSmallGraph910B::ReduceScatterForGraph(__g
         // 从input搬运到buffer
         CpGM2GM(cclGMSelf + avgLengthPerRank * block_idx, inputGM + avgLengthPerRank * block_idx, curCount);
         pipe_barrier(PIPE_ALL);
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetOut), tag); // 本卡该片数据已经可以被跨片读取
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetOut), localSetTensor, tag); // 本卡该片数据已经可以被跨片读取
  
         // 对端数据就绪后先搬到自己的UB
         curCount = CalActualCount(rank_, rankSize_, avgLengthPerRank, tailLength);
  
-        CheckFlagNew((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffsetRemote), tag);
+        WaitSignalValue((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffsetRemote), localCheckTensor, tag);
         pipe_barrier(PIPE_ALL);
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffsetRemote), 0);
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffsetRemote), localSetTensor, 0);
         pipe_barrier(PIPE_ALL);
         LocalTensor<T> localIn = inOutQue.AllocTensor<T>();
         DataCopyGM2UB(localIn, cclGTOther[avgLengthPerRank * rank_], curCount);
@@ -92,9 +92,9 @@ __aicore__ inline void AivAllReduceRdmaSmallGraph910B::ReduceScatterForGraph(__g
         LocalTensor<T> localOut = inOutQue.DeQue<T>();
  
         // 本端数据在output就绪后从UB中搬入
-        CheckFlagGE((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetIn), tag);
+        WaitSignalGEValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetIn), localCheckGETensor, tag);
         pipe_barrier(PIPE_ALL);
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetIn), -tag, true);
+        AddSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetIn), localSetTensor, -tag);
         SetAtomicOp<T>(reduceOp_);
         DataCopyUB2GM(outputGT, localOut, curCount);
         SetAtomicNone();
@@ -119,21 +119,21 @@ __aicore__ inline void AivAllReduceRdmaSmallGraph910B::AllReduceForGraph(__gm__ 
  
     if (block_idx == 0) {
         // 本端数据已就绪
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetStart), tag);
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetStart), localSetTensor, tag);
         CpGM2GM(outputGM, cclGMSelf, count);
  
         // 起始同步，检查对端数据是否就绪
-        CheckFlagNew((__gm__ int32_t *)(GM_OUT[peerRank] + flagOffsetStart), tag);
+        WaitSignalValue((__gm__ int32_t *)(GM_OUT[peerRank] + flagOffsetStart), localCheckTensor, tag);
         pipe_barrier(PIPE_ALL);
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[peerRank] + flagOffsetStart), 0);
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[peerRank] + flagOffsetStart), localSetTensor, 0);
         CpGM2GM(outputGM, cclGMPeer, count, true, 0);
  
         // 末尾同步
         pipe_barrier(PIPE_ALL);
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetEnd), tag);
-        CheckFlagNew((__gm__ int32_t *)(GM_OUT[peerRank] + flagOffsetEnd), tag);
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetEnd), localSetTensor, tag);
+        WaitSignalValue((__gm__ int32_t *)(GM_OUT[peerRank] + flagOffsetEnd), localCheckTensor, tag);
         pipe_barrier(PIPE_ALL);
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[peerRank] + flagOffsetEnd), 0);
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[peerRank] + flagOffsetEnd), localSetTensor, 0);
     }
     return;
 }
@@ -166,15 +166,15 @@ __aicore__ inline void AivAllReduceRdmaSmallGraph910B::AllGatherForGraph(__gm__ 
  
         // 卡间同步
         pipe_barrier(PIPE_ALL);
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetOut), (rankSize_ - 1) * tag); // 本卡该片数据已经可以被跨片读取
+        SetSignalValue((__gm__ int32_t *)(GM_OUT[rank_] + flagOffsetOut), localSetTensor, (rankSize_ - 1) * tag); // 本卡该片数据已经可以被跨片读取
         DataCopyUB2GM(outputGT[avgLengthPerRank * block_idx], localOut, curCount);
         inOutQue.FreeTensor(localOut);
     } else {
         int64_t curCount = CalActualCount(block_idx, rankSize_, avgLengthPerRank, tailLength);
  
-        CheckFlagGE((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffsetRemote), tag);
+        WaitSignalGEValue((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffsetRemote), localCheckGETensor, tag);
         pipe_barrier(PIPE_ALL);
-        SetFlagNew((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffsetRemote), -tag, true);
+        AddSignalValue((__gm__ int32_t *)(GM_OUT[block_idx] + flagOffsetRemote), localSetTensor, -tag);
         CpGM2GM(outputGM + (block_idx * avgLengthPerRank), cclGMOther + block_idx * avgLengthPerRank, curCount);
     }
  

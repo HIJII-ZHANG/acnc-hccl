@@ -180,6 +180,28 @@ HcclResult CollNativeExecutorBase::CalcLevel2CommInfo(TransportMemType inputType
     TransportMemType outputType,
     std::vector<LevelNSubCommTransport>& opTransport)
 {
+    if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC ||
+        algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_AHC_BROKE) {
+        HCCL_INFO("[%s] select AHC bypass level2 comm calulate", __func__);
+        return HCCL_SUCCESS;
+    }
+
+    CommParaInfo commParaLevel2(COMM_LEVEL2, CommType::COMM_TAG_MAX);
+    if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NHR) {
+        commParaLevel2.commType = CommType::COMM_TAG_NONUNIFORM_HIERARCHICAL_RING;
+        HCCL_INFO("[%s] Calc NHRCommInfo", __func__);
+    } else if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_NB) {
+        commParaLevel2.commType = CommType::COMM_TAG_NONUNIFORM_BRUCK;
+        HCCL_INFO("[%s] Calc NBCommInfo", __func__);
+    } else if (algType_.algoLevel2 == AlgTypeLevel2::ALG_LEVEL2_HD) {
+        commParaLevel2.commType = CommType::COMM_TAG_HALVING_DOUBLING;
+        HCCL_INFO("[%s] Calc RingCommInfo", __func__);
+    } else {
+        commParaLevel2.commType = CommType::COMM_TAG_RING_INNER;
+        HCCL_INFO("[%s] Calc HDCommInfo", __func__);
+    }
+    CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel2, opTransport[COMM_LEVEL2], inputType, outputType));
+    
     return HCCL_SUCCESS;
 }
 
@@ -194,9 +216,10 @@ HcclResult CollNativeExecutorBase::PrintTransportRequest(AlgResourceRequest& res
             for (u32 rankIndex = 0; rankIndex < rankSize; rankIndex++) {
                 if (subCommTransport.transportRequests[rankIndex].isValid == true) {
                     HCCL_INFO("[CollNativeExecutorBase][CalcResRequest]" \
-                        "levelIndex[%u], ringIndex[%u], rankIndex[%u], userRank[%u], remoteRank[%u]",
+                        "levelIndex[%u], ringIndex[%u], rankIndex[%u], userRank[%u], remoteRank[%u], isUsedRdma[%d]",
                         levelIndex, ringIndex, rankIndex, subCommTransport.transportRequests[rankIndex].localUserRank,
-                        subCommTransport.transportRequests[rankIndex].remoteUserRank);
+                        subCommTransport.transportRequests[rankIndex].remoteUserRank,
+                        subCommTransport.transportRequests[rankIndex].isUsedRdma);
                 }
             }
         }
@@ -394,6 +417,48 @@ HcclResult CollNativeExecutorBase::InplaceOpSync(OpParam &param, ExecMem &execMe
     HCCL_INFO("[CollNativeExecutorBase][InplaceOpSync] The op with algOpContext_.opRetryHandler.isInplacePreSync[%d] "
         "or algOpContext_.opRetryHandler.isPostSync[%d] ends.",
         algOpContext_.opRetryHandler.isInplacePreSync, algOpContext_.opRetryHandler.isPostSync);
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollNativeExecutorBase::CopyAivCommInfoToDevice(const CommPlane levelIndex, const u32 subLevelIndex,
+    AlgResourceResponse& algResource)
+{
+    algResResp_ = &algResource;
+    CHK_RET(CheckCommSize(levelIndex, subLevelIndex + 1));
+    SubCommInfo commInfo = GetSubCommInfo(levelIndex, subLevelIndex);
+    u32 localRank = commInfo.localRank;
+    u32 localRankSize = commInfo.localRankSize;
+
+    void* buffersInOut[MAX_RANK_SIZE_A3 * 2] = {};
+    bool isOpbaseMode = GetWorkflowMode() == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE;
+
+    for (u32 i = 0; i < localRankSize; i++) {
+        u32 idx = (i << 1);
+        if (i != localRank) {
+            CHK_RET(commInfo.links[i]->GetRemoteMem(UserMemType::INPUT_MEM, &(buffersInOut[idx])));
+            CHK_RET(commInfo.links[i]->GetRemoteMem(UserMemType::OUTPUT_MEM, &(buffersInOut[idx + 1])));
+        } else {
+            buffersInOut[idx] = isOpbaseMode ? algResource.cclInputMem.ptr() : algResource.paramInputMem.ptr();
+            buffersInOut[idx + 1] = algResource.aivOutputMem.ptr();
+        }
+    }
+    const u32 bufferNum = 2;
+    CHK_RET(hrtMemSyncCopy(static_cast<u8 *>(algResource.aivOutputMem.ptr()) + (AIV_FLAG_SIZE - COMM_INFO_OFFSET),
+        sizeof(u64) * localRankSize * bufferNum, buffersInOut, sizeof(u64) * localRankSize * bufferNum,
+        HcclRtMemcpyKind::HCCL_RT_MEMCPY_KIND_HOST_TO_DEVICE));
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollNativeExecutorBase::Getlevel1CommRank(SubCommInfo& level1CommInfo)
+{
+    return HCCL_SUCCESS;
+}
+HcclResult CollNativeExecutorBase::SelectTempAlg(std::unique_ptr<AlgTemplateBase> &level1TempAlg, u32 level1RankSize)
+{
+    return HCCL_SUCCESS;
+}
+HcclResult CollNativeExecutorBase::GetDevNumInlocalPod(u32& devNumInlocalPod)
+{
     return HCCL_SUCCESS;
 }
 }

@@ -67,7 +67,7 @@ class OpRetryServerRunning : public OpRetryServerBase {
 public:
     HcclResult ProcessEvent(RetryContext* retryCtx) override;
     HcclResult ParaseErrorCode(RetryContext* retryCtx, HcclAgentRetryInfo &agentInfo, RetryState &nextState);
-private:
+protected:
     std::map<u32, std::chrono::steady_clock::time_point> lastRecvTimes_;
     std::unordered_set<u32> disableAgent_; // 记录已经关闭的对端, 不再轮询, 避免刷屏
 };
@@ -118,6 +118,25 @@ public:
 class OpRetryServerRetryFail : public OpRetryServerBase {
 public:
     HcclResult ProcessEvent(RetryContext* retryCtx) override;
+};
+
+// 强制终止NPU后的状态，等待通信域恢复
+class OpRetryServerWaitResume : public OpRetryServerRunning {
+public:
+    HcclResult ProcessEvent(RetryContext* retryCtx) override;
+};
+
+class SwitchNicServerCheckAllSwitchRanks : public OpRetryServerBase {
+public:
+    HcclResult ProcessEvent(RetryContext* retryCtx) override;
+private:
+    bool CompareSwitchRankList(const u32* firstSwitchRankList, const u32* switchRankList, const u32 switchRankNum);
+    bool CompareUseBackupLists(const bool* firstArray, const bool* secondArray, const u32 switchRankNum);
+    bool CheckRemotePorts(const u32 rankId, const ActiveSwitchInfo &switchRankInfo);
+    HcclResult CollectSingleAgentActiveSwitchInfo(RetryContext *retryCtx, const u32 rankId,
+        HcclAgentRetryInfo &agentInfo);
+    HcclResult CollectAgentActiveSwitchInfo(RetryContext *retryCtx);
+    HcclResult CheckAgentActiveSwitchInfo(RetryContext *retryCtx);
 };
 }
 #endif

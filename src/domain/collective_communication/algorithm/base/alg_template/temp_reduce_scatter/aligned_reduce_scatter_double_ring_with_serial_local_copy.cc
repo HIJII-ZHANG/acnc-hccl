@@ -241,6 +241,7 @@ HcclResult AlignedReduceScatterDoubleRingWithSerialLocalCopy::RunAllStreams(cons
 HcclResult AlignedReduceScatterDoubleRingWithSerialLocalCopy::RunReduceScatter(const u32 rank, const u32 rankSize)
 {
     HCCL_INFO("AlignedReduceScatterDoubleRingWithSerialLocalCopy starts, the input param rank[%u]", rank);
+    // 空拷贝用于后续操作附着
     CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
     // 先完成主环主流操作
     CHK_RET(RunMainRingSubStream(rank, rankSize));

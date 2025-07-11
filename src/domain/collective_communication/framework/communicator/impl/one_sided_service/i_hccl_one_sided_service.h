@@ -34,6 +34,7 @@ public:
 
     virtual HcclResult SetNetDevCtx(const HcclNetDevCtx &netDevCtx, bool useRdma);
     virtual HcclResult GetNetDevCtx(HcclNetDevCtx &netDevCtx, bool useRdma);
+    void SetTCAndSL(u32 trafficClass, u32 serviceLevel);
 
 protected:
     HcclNetDevCtx netDevRdmaCtx_{};
@@ -44,6 +45,8 @@ protected:
     const RankTable_t *rankTable_{};
     std::unique_ptr<HcclSocketManager> &socketManager_;
     std::unique_ptr<NotifyPool> &notifyPool_;
+    u32 trafficClass_;
+    u32 serviceLevel_;
 };
 }
 

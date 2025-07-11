@@ -18,6 +18,7 @@ public:
     ~CollRunAlltoAllDirectFullmesh() = default;
 
     HcclResult Orchestrate(OpParam& param, AlgResourceResponse& algRes) override;
+    HcclResult GetAdjInfo(AlgResourceResponse& algRes, AdjInfo& adjInfo) override;
 
 private:
     HcclOpMetaInfo GetOpMeta(HcclCMDType opType, const u64 size) override;
@@ -26,6 +27,9 @@ private:
         std::vector<LevelNSubCommTransport>& opTransport) override;
     HcclResult CalcCommInfo(std::vector<LevelNSubCommTransport>& opTransport) override;
     HcclResult KernelRun(const OpParam &param, ExecMem &execMem) override;
+    HcclResult Getlevel1CommRank(SubCommInfo& level1CommInfo) override;
+    HcclResult SelectTempAlg(std::unique_ptr<AlgTemplateBase> &level1TempAlg, u32 level1RankSize) override;
+    HcclResult GetDevNumInlocalPod(u32& devNumInlocalPod) override;
     HcclResult GetAlltoAllvTmpRankSendRecvInfo(const OpParam &param);
     HcclResult GetLocalSendRecvInfoforAlltoall(const OpParam &param);
     HcclResult GetLocalSendRecvInfoforAlltoallV(const OpParam &param);

@@ -64,7 +64,8 @@ HcclResult CollAllGatherSemiRingExecutor::DoubleRingMidCountAllGather(
     const Stream &stream, s32 profStage, const u64 baseOffset, const HcomCollOpInfo *opInfo,
     const std::vector<std::vector<Slice>> &multRingsUserMemSlice)
 {
-    HCCL_INFO("[CollAllGatherSemiRingExecutor][KernelRun]AllGatherDoubleRingConcurrentExecutor starts.");
+    HCCL_CONFIG_INFO(HCCL_ALG,
+        "[CollAllGatherSemiRingExecutor][KernelRun]AllGatherDoubleRingConcurrentExecutor starts.");
     
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
     SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
@@ -75,8 +76,8 @@ HcclResult CollAllGatherSemiRingExecutor::DoubleRingMidCountAllGather(
     CHK_SMART_PTR_NULL(executor);
 
     CHK_RET(executor->Prepare(stream, level0CommInfo, algResResp_->paramInputMem, algResResp_->paramOutputMem,
-        inputMem, outputMem, count, algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
-        multRingsUserMemSlice));
+        inputMem, outputMem, count * SIZE_TABLE[dataType], algResResp_->slaveStreams, algResResp_->notifiesMain,
+        algResResp_->notifiesAux, multRingsUserMemSlice));
 
     HcclResult ret = executor->RegisterProfiler(
         ((COMM_INDEX_0 + 1) << PROF_RINGINDEX_OFFSET_OF_PLANEID) +

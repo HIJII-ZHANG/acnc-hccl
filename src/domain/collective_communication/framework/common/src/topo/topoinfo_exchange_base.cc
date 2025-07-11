@@ -17,6 +17,11 @@
 #include "json_utils.h"
 
 namespace hccl {
+
+std::atomic<BroadcastStage> g_broadcastStage(BroadcastStage::Idle);
+std::mutex g_broadcast_stage_mutex;
+std::condition_variable g_broadcast_stage_cv;
+
 TopoInfoExchangeBase::TopoInfoExchangeBase()
     : currentStep_(0)
 {
@@ -46,6 +51,18 @@ HcclResult TopoInfoExchangeBase::SendClusterInfoMsg(std::shared_ptr<HcclSocket> 
         HCCL_ERROR("[Send][ClusterInfoMsg]errNo[0x%016llx] ra send failed! size[%u], ret[%u]",
             HCCL_ERROR_CODE(HCCL_E_TCP_TRANSFER), msgLen, ret), ret);
 
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoInfoExchangeBase::SendClusterInfo(std::shared_ptr<HcclSocket> socket, const RankTable_t &clusterInfo)
+{
+    nlohmann::json basicJson;
+    CHK_RET(Struct2Json(clusterInfo, basicJson));
+    basicJson[PROP_STEP] = currentStep_;  // add step to verify.
+    std::string buffer = basicJson.dump();
+    u32 msgLen = buffer.length();
+    CHK_RET(SendClusterInfoMsg(socket, clusterInfo, buffer, msgLen));
+    currentStep_++;
     return HCCL_SUCCESS;
 }
 
@@ -79,9 +96,80 @@ HcclResult TopoInfoExchangeBase::RecvClusterInfoMsg(std::shared_ptr<HcclSocket> 
     CHK_PRT_RET(step != currentStep_, HCCL_ERROR("[Recv][ClusterInfoMsg]RecvClusterInfo step failed "\
         "step[%u] vs currentStep_[%u]", step, currentStep_), HCCL_E_INTERNAL);
 
+    s32 logicDevId = 0;
+    u32 devPhyId = 0;
+    CHK_RET(hrtGetDevice(&logicDevId));
+    CHK_RET(hrtGetDevicePhyIdByIndex(static_cast<u32>(logicDevId), devPhyId));
+    HcclIpAddress localHostIp;
+    CHK_RET(GetLocalHostIP(localHostIp, devPhyId));
+
+    bool isRoot = (localHostIp == GetExternalInputMasterInfo().serverIp &&
+        logicDevId == static_cast<s32>(GetExternalInputMasterInfo().serverDeviceId));
+    if (!isRoot && jClusterJson.find("fault_type") != jClusterJson.end() && jClusterJson.find("fault_info") != jClusterJson.end()) {
+        HCCL_ERROR("[Recv][ClusterInfoMsg] TopoDetect ERROR occur !!! fault_type[%s], fault_info[%s]", jClusterJson["fault_type"].dump().c_str(), jClusterJson["fault_info"].dump().c_str());
+    }
+
     ret = Json2Struct(jClusterJson, clusterInfo);
     CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[Recv][ClusterInfoMsg]step[%u] json to struct failed!", currentStep_),
         HCCL_E_INTERNAL);
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoInfoExchangeBase::RecvClusterInfo(std::shared_ptr<HcclSocket> socket, RankTable_t &clusterInfo)
+{
+    CHK_RET(RecvClusterInfoMsg(socket, clusterInfo));
+    if (isByMasterInfo_) {
+        u32 indentify = 0;
+        CHK_PRT_RET(socket->Recv(reinterpret_cast<char *>(&indentify), sizeof(indentify)) != HCCL_SUCCESS,
+            HCCL_ERROR("[Recv][ClusterInfoMsg]receive indentify from fdhandle failed"), HCCL_E_INTERNAL);
+        identifierNum_ = indentify;
+    }
+    currentStep_++;
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoInfoExchangeBase::RecvClusterJson(std::shared_ptr<HcclSocket> socket, nlohmann::json &jClusterJson)
+{
+    const u32 recvBufferLimit = 10 * 1024 * 1024; // 10 * 1024 * 1024 = 10MB
+    u32 msgLen = 0;
+    HcclResult ret = socket->Recv(reinterpret_cast<char *>(&msgLen), sizeof(msgLen));
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[Recv][ClusterInfoMsg]receive msg length from fdhandle failed, ret[%d]", ret), HCCL_E_INTERNAL);
+    CHK_PRT_RET(((msgLen == 0) || (msgLen > recvBufferLimit)), HCCL_ERROR("[Recv][ClusterInfoMsg]receive msg length "\
+        "from fdhandle failed, msg length is beyond [1 ~ %u].", recvBufferLimit), HCCL_E_INTERNAL);
+
+    u32 recvBufferLen = msgLen + 1;
+    HostMem recvMsg = HostMem::alloc(recvBufferLen);
+    CHK_PTR_NULL(recvMsg.ptr());
+    char *recvMsgBuf = static_cast<char *>(recvMsg.ptr());
+
+    s32 sRet = memset_s(recvMsgBuf, recvBufferLen, 0, recvBufferLen);
+    CHK_PRT_RET(sRet != EOK, HCCL_ERROR("[Recv][ClusterInfoMsg]sockBuff memset falied"), HCCL_E_MEMORY);
+    ret = socket->Recv(recvMsgBuf, msgLen);
+    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[Recv][ClusterInfoMsg]receive from fdhandle failed ,ret[%d]",
+        ret), HCCL_E_INTERNAL);
+
+    CHK_RET(parseJsonBuff(recvMsgBuf, recvBufferLen, jClusterJson));
+
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoInfoExchangeBase::RecvGrpLeaderInfoMsg(std::shared_ptr<HcclSocket> socket, GroupLeader_t &LeaderInfo)
+{
+    nlohmann::json jClusterJson;
+    CHK_RET(RecvClusterJson(socket, jClusterJson));
+
+    // Verify json basic info
+    u32 step;
+    CHK_RET(JsonUtils::GetJsonProperty(jClusterJson, PROP_STEP, step));
+
+    CHK_PRT_RET(step != currentStep_, HCCL_ERROR("[Recv][ClusterInfoMsg]RecvClusterInfo step failed "\
+        "step[%u] vs currentStep_[%u]", step, currentStep_), HCCL_E_INTERNAL);
+
+    HcclResult ret = Json2GrpLeader(jClusterJson, LeaderInfo);
+    CHK_PRT_RET(ret != HCCL_SUCCESS, HCCL_ERROR("[Recv][ClusterInfoMsg]step[%u] json to struct failed!", currentStep_),
+        HCCL_E_INTERNAL);
+
     return HCCL_SUCCESS;
 }
 
@@ -110,6 +198,27 @@ HcclResult TopoInfoExchangeBase::parseJsonBuff(const char buff[], u32 buffLen, n
     return HCCL_SUCCESS;
 }
 
+HcclResult TopoInfoExchangeBase::Json2GrpLeader(const nlohmann::json& jClusterJson, GroupLeader_t &GrpLeaderInfo) const
+{
+    GrpLeaderInfo.grpLeaderNum = jClusterJson[PROP_RANK_NUM];
+    for (auto& leaderInfoJson : jClusterJson[PROP_GROUP_LEADER_LIST]) {
+        HcclRankHandle rankHandle;
+        std::string strTmp = leaderInfoJson[PROP_NETWORK_IPADDR];
+        s32 sRet = memcpy_s(rankHandle.ip, IP_ADDRESS_BUFFER_LEN, strTmp.c_str(), strTmp.size());
+        CHK_PRT_RET(sRet != EOK, HCCL_ERROR("[Json2GrpLeader]memcpy_s failed, errorno[%d]", sRet), HCCL_E_MEMORY);
+        rankHandle.ip[strTmp.size()] = '\0';
+        rankHandle.port = leaderInfoJson[PROP_NETWORK_NETWORKPORT];
+        strTmp = leaderInfoJson[PROP_NETWORK_IDENTIFIER];
+        sRet = memcpy_s(rankHandle.identifier, ROOTINFO_INDENTIFIER_MAX_LENGTH, strTmp.c_str(), strTmp.size());
+        CHK_PRT_RET(sRet != EOK, HCCL_ERROR("[Json2GrpLeader]memcpy_s failed, errorno[%d]", sRet), HCCL_E_MEMORY);
+        rankHandle.identifier[strTmp.size()] = '\0';
+        rankHandle.nicDeploy = leaderInfoJson[PROP_DEPLOY_MODE];
+        rankHandle.rankId = leaderInfoJson[PROP_RANK_ID];
+        GrpLeaderInfo.GroupLeaderList.emplace_back(rankHandle);
+    }
+ 
+    return HCCL_SUCCESS;
+}
 
 HcclResult TopoInfoExchangeBase::Json2Struct(const nlohmann::json& jClusterJson, RankTable_t &clusterInfo) const
 {
@@ -213,6 +322,29 @@ HcclResult TopoInfoExchangeBase::Struct2Json(const RankTable_t &clusterInfo, nlo
     ClusterJson[PROP_SERVER_LIST] = serverListJson;
     return HCCL_SUCCESS;
 }
+
+HcclResult TopoInfoExchangeBase::GrpLeader2Json(const GroupLeader_t &GrpLeaderInfo, nlohmann::json& GroupLeaderJson)
+{
+    nlohmann::json leaderListJson;
+ 
+    for (auto& leaderInfo : GrpLeaderInfo.GroupLeaderList) {
+        nlohmann::json leaderJson;
+ 
+        leaderJson[PROP_NETWORK_IPADDR] = std::string(leaderInfo.ip);
+        leaderJson[PROP_NETWORK_NETWORKPORT] = leaderInfo.port;
+        leaderJson[PROP_NETWORK_IDENTIFIER] = std::string(leaderInfo.identifier);
+        leaderJson[PROP_DEPLOY_MODE] = leaderInfo.nicDeploy;
+        leaderJson[PROP_RANK_ID] = leaderInfo.rankId;
+ 
+        leaderListJson.push_back(leaderJson);
+    }
+ 
+    GroupLeaderJson[PROP_RANK_NUM] = GrpLeaderInfo.grpLeaderNum;
+    GroupLeaderJson[PROP_GROUP_LEADER_LIST] = leaderListJson;
+ 
+    return HCCL_SUCCESS;
+}
+
 HcclResult TopoInfoExchangeBase::TransformRankListToJson(const RankTable_t &clusterInfo, nlohmann::json& rankListJson)
     const
 {

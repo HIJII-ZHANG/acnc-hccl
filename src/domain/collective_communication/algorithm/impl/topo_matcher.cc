@@ -43,7 +43,11 @@ HcclResult TopoMatcher::CalcCommPlaneInfo(const std::string &tag, const CommPara
 
     u32 subUserRankRoot = INVALID_VALUE_RANKID;
     if (commParaInfo.root != INVALID_VALUE_RANKID) {
-        subUserRankRoot = GetSubRootUserRank(userRank_, commParaInfo.root);
+        if (commParaInfo.commPlane == COMM_LEVEL2) {
+            subUserRankRoot = GetSubRootUserRankWithSuperPod(userRank_, commParaInfo.root);
+        } else {
+            subUserRankRoot = GetSubRootUserRank(userRank_, commParaInfo.root);
+        }
         if (subUserRankRoot == INVALID_VALUE_RANKID) {
             HCCL_ERROR("[TopoMatcher][CalcCommPlaneInfo]get sub root userrank value[%u] invalid.", subUserRankRoot);
             return HCCL_E_PARA;
@@ -511,8 +515,8 @@ HcclResult TopoMatcher::GetLocalServerRankSize(const u32 userRank, u32& devNumIn
 
 HcclResult TopoMatcher::SetDeterministicConfig(const u8 deterministic)
 {
-    if (deterministic > 1) {
-        HCCL_ERROR("[SetDeterministicConfig] deterministic should be 0 or 1.");
+    if (deterministic > DETERMINISTIC_STRICT) {
+        HCCL_ERROR("[SetDeterministicConfig] deterministic should be 0, 1 or 2.");
         return HCCL_E_PARA;
     }
     externalEnable_.deterministic = deterministic;

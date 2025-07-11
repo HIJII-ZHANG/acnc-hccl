@@ -41,7 +41,7 @@ class OpRetryAgentRunning : public OpRetryAgentBase {
 public:
     OpRetryAgentRunning();
     HcclResult ProcessEvent(RetryContext* retryCtx) override;
-private:
+protected:
     HcclResult ParseKfcErr(RetryContext* retryCtx, RetryState &nextState); // 轮询aicpu状态
     HcclResult ParseRdmaErr(RetryContext* retryCtx, RetryState &nextState);// 轮询RDMA状态
     std::chrono::steady_clock::time_point lastRecvCmdTime_; // 上一次收到server端命令的时间
@@ -89,6 +89,26 @@ private:
 
 // RETRY_STATE_AGENT_RETRY_FAIL 重执行失败
 class OpRetryAgentRetryFail : public OpRetryAgentBase {
+public:
+    HcclResult ProcessEvent(RetryContext* retryCtx) override;
+};
+
+class SwitchNicAgentSendSwitchInfo : public OpRetryAgentBase {
+public:
+    HcclResult ProcessEvent(RetryContext* retryCtx) override;
+private:
+    HcclResult ChangeAicpuStatus(RetryContext* retryCtx);
+    HcclResult CheckLocalPortStatus(RetryContext* retryCtx);
+};
+class SwitchNicAgentWaitCmd : public OpRetryAgentBase {
+public:
+    HcclResult ProcessEvent(RetryContext* retryCtx) override;
+private:
+    HcclResult ParseCommand(RetryContext* retryCtx, RetryCommand &command, RetryState &nextState);
+};
+
+// 强制终止NPU后的状态，等待通信域恢复
+class OpRetryAgentWaitResume : public OpRetryAgentRunning {
 public:
     HcclResult ProcessEvent(RetryContext* retryCtx) override;
 };

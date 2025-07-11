@@ -263,6 +263,7 @@ HcclResult ScatterRingConcurrentDirect::RunSubStream(const u32 step, const Slice
 HcclResult ScatterRingConcurrentDirect::RunScatter(const u32 rank, const u32 rankSize)
 {
     HCCL_INFO("ScatterRingConcurrentDirect starts, the input param rank[%u]", rank);
+    // 空拷贝用于后续操作附着
     CHK_RET(ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
 
     CHK_RET(RunInitStep(rank, rankSize));
@@ -283,6 +284,7 @@ HcclResult ScatterRingConcurrentDirect::RunScatter(const u32 rank, const u32 ran
         CHK_RET(MainRecordSub()); // 主流通知从流开始通信
         CHK_RET(SubWaitMain());   // 从流等待主流通知
 
+        // 空拷贝用于主从流任务并发
         CHK_RET(ExecEmptyTask(inputMem_, outputMem_, stream_, dispatcher_));
         CHK_RET(AlgTemplateBase::ExecEmptyTask(inputMem_, outputMem_, subStreams_[0], dispatcher_));
 

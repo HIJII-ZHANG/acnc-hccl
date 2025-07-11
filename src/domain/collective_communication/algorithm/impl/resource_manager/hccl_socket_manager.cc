@@ -14,6 +14,7 @@
 #include "hccl_socket.h"
 #include "hccl_socket_manager.h"
 #include "sal_pub.h"
+#include "detect_connect_anomalies.h"
 
 namespace hccl {
 HcclSocketManager::HcclSocketManager(NICDeployment nicDeployment, s32 deviceLogicId, u32 devicePhyId, u32 userRank)
@@ -50,7 +51,6 @@ HcclResult HcclSocketManager::ServerInit(const HcclNetDevCtx netDevCtx, u32 port
     EXECEPTION_CATCH((tempSocket = std::make_shared<HcclSocket>(
         netDevCtx, port)), return HCCL_E_PTR);
     CHK_RET(tempSocket->Init());
-
     CHK_RET(tempSocket->Listen());
 
     HCCL_INFO("[Init][Server]ip[%s] port[%u]", localIp.GetReadableAddress(), port);
@@ -442,8 +442,7 @@ HcclResult HcclSocketManager::CreateSingleLinkSocket(const std::string &commTag,
     const HcclNetDevCtx netDevCtx,
     HcclRankLinkInfo remoteRankInfo,
     std::vector<std::shared_ptr<HcclSocket> > &connectSockets,
-    bool isWaitEstablished,
-    bool isSupportReuse)
+    bool isWaitEstablished, bool isSupportReuse)
 {
     NicType socketType;
     CHK_RET(HcclNetDevGetNicType(netDevCtx, &socketType));
@@ -476,7 +475,6 @@ HcclResult HcclSocketManager::CreateSingleLinkSocket(const std::string &commTag,
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[Create][Sockets]Create connection failed, local role is server."
             " ret[%d]", ret), ret);
- 
     if (isWaitEstablished) {
         ret = WaitLinksEstablishCompleted(role, socketsMap);
         if (ret != HCCL_SUCCESS) {
@@ -806,12 +804,17 @@ HcclResult HcclSocketManager::WaitLinkEstablish(std::shared_ptr<HcclSocket> sock
 }
 
 HcclResult HcclSocketManager::WaitLinksEstablishCompleted(HcclSocketRole localRole,
-    std::map <u32, std::vector<std::shared_ptr<HcclSocket> > > &socketsMap, std::map<u32, u32> &dstRankToUserRank)
+    std::map <u32, std::vector<std::shared_ptr<HcclSocket> > > &socketsMap, std::map<u32, u32> &dstRankToUserRank,
+    RankInfo &loaclRankInfo, RankInfo &remoteRankInfo)
 {
     HcclResult ret = WaitLinksEstablishCompleted(localRole, socketsMap);
     if (ret != HCCL_SUCCESS) {
-        HCCL_ERROR("[Create][Sockets]Wait links establish completed failed, local role is client. ret[%d]", ret);
         PrintErrorConnection(localRole, socketsMap, dstRankToUserRank);
+        // 只有多qp场景才会出现同一个src + dst出现多个socket，但是socket链路类型一致
+        // vnic多server场景下，需要添加nic白名单，loaclRankInfo，remoteRankInfo保存的ip为nicIp
+        NicType nicType = socketsMap[remoteRankInfo.userRank][0]->GetSocketType();
+        DetectConnectionAnomalies::GetInstance(deviceLogicId_).AddIpQueue(loaclRankInfo, remoteRankInfo, nicType);
+        HCCL_ERROR("[Create][Sockets]Wait links establish completed failed, local role is client. ret[%d]", ret);
         return ret;
     }
     return HCCL_SUCCESS;

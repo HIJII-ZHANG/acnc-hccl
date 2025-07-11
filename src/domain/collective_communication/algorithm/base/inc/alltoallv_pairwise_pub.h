@@ -34,7 +34,8 @@ public:
         std::map<u32, std::vector<u64>> &rankSendDisplsMap, 
         std::map<u32, std::vector<u64>> &rankRecvDisplsMap) override;
     HcclResult RunAsync(const u32 rank, const u32 rankSize, const std::vector<LINK> &links) override;
-
+    HcclResult GetNslbAdjInfo(const u32 rank, const u32 rankSize,
+                              const std::vector<LINK> &links, AdjInfo& nslbAdjInfo) override;
 protected:
 private:
     HcclResult LocalCopy(const u32 rank);

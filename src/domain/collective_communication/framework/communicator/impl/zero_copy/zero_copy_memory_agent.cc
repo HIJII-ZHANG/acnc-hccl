@@ -72,14 +72,15 @@ HcclResult ZeroCopyMemoryAgent::Init()
     CHK_PRT_RET(isSingleRank_, HCCL_INFO("[ZeroCopyMemoryAgent][Init] single rank communicator"), HCCL_SUCCESS);
     std::unique_lock<std::mutex> lock(commRefCntLock_);
 
-    CHK_RET(EstablishSockets());
-
-    CHK_RET(InitRecvThread());
     if (!ZeroCopyMemoryAgent::IsAddressMgrInited()) {
         addressMgr_ = std::make_unique<ZeroCopyAddressMgr>();
         HCCL_RUN_INFO("[ZeroCopyMemoryAgent][%s]init addressMgr_ success.", __func__);
     }
     CHK_RET(addressMgr_->IncreCommRefCnt());
+
+    CHK_RET(EstablishSockets());
+    CHK_RET(InitRecvThread());
+
     return HCCL_SUCCESS;
 }
 
@@ -97,7 +98,6 @@ HcclResult ZeroCopyMemoryAgent::EstablishSockets()
         HCCL_ERROR("[ZeroCopyMemoryAgent][Init] already initd"), HCCL_E_PARA);
     CHK_RET(HcclNetOpenDev(&vnicPortCtx_, NicType::VNIC_TYPE, devicePhyId_, deviceLogicId_, localVnicIp_));
     CHK_PTR_NULL(vnicPortCtx_);
-    CHK_RET(socketManager_->ServerInit(vnicPortCtx_, HETEROG_CCL_PORT));
 
     for (size_t i = 0; i < rankInfoList_.size(); i++) {
         if (rankInfoList_[i].devicePhyId == devicePhyId_) {
@@ -115,7 +115,9 @@ HcclResult ZeroCopyMemoryAgent::EstablishSockets()
             CHK_RET(hrtRaGetSingleSocketVnicIpInfo(devicePhyId_, DeviceIdType::DEVICE_ID_TYPE_PHY_ID,
                 dstRankInfo.devicePhyId, remoteLinkInfo.ip));
         }
-        remoteLinkInfo.port = HETEROG_CCL_PORT;
+        // 通信域未分配端口则使用默认端口
+        remoteLinkInfo.port =
+            dstRankInfo.deviceVnicPort == HCCL_INVALID_PORT ? HETEROG_CCL_PORT : dstRankInfo.deviceVnicPort;
         remoteLinkInfo.socketsPerLink = 1;
         string newTag = GenerateSocketTag(devicePhyId_, rankInfoList_[i].devicePhyId);
         std::vector<std::shared_ptr<HcclSocket> > tmpSockets;
@@ -216,7 +218,6 @@ HcclResult ZeroCopyMemoryAgent::DeInit()
     recvThread_ = nullptr;
 
     if (vnicPortCtx_ != nullptr) {
-        socketManager_->ServerDeInit(vnicPortCtx_, HETEROG_CCL_PORT);
         HcclNetCloseDev(vnicPortCtx_);
         vnicPortCtx_ = nullptr;
     }
@@ -231,8 +232,8 @@ HcclResult ZeroCopyMemoryAgent::DeInit()
 HcclResult ZeroCopyMemoryAgent::SetMemoryRange(void *virPtr, size_t size, size_t alignment, uint64_t flags)
 {
     CHK_PRT_RET(isSingleRank_, HCCL_INFO("[ZeroCopyMemoryAgent][SetMemoryRange] single rank communicator"), HCCL_SUCCESS);
-    CHK_PRT_RET(!ZeroCopyMemoryAgent::IsAddressMgrInited(), HCCL_INFO("[ZeroCopyMemoryAgent][%s]ZeroCopyMemoryAgent "
-        "is not init.", __func__), HCCL_SUCCESS);
+    CHK_PRT_RET(!ZeroCopyMemoryAgent::IsAddressMgrInited(), HCCL_ERROR("[ZeroCopyMemoryAgent][%s]ZeroCopyMemoryAgent "
+        "is not init.", __func__), HCCL_E_INTERNAL);
     CHK_PRT_RET(addressMgr_->SetMemoryRange(devicePhyId_, virPtr, size) != HCCL_SUCCESS,
         HCCL_ERROR("[ZeroCopyMemoryAgent][SetMemoryRange] invalid set ptr[%p] size[%lu] alignment[%lu] flags[%lu]",
         virPtr, size, alignment, flags), HCCL_E_PARA);
@@ -267,8 +268,8 @@ HcclResult ZeroCopyMemoryAgent::SetMemoryRange(void *virPtr, size_t size, size_t
 HcclResult ZeroCopyMemoryAgent::UnsetMemoryRange(void *virPtr)
 {
     CHK_PRT_RET(isSingleRank_, HCCL_INFO("[ZeroCopyMemoryAgent][UnsetMemoryRange] single rank communicator"), HCCL_SUCCESS);
-    CHK_PRT_RET(!ZeroCopyMemoryAgent::IsAddressMgrInited(), HCCL_INFO("[ZeroCopyMemoryAgent][%s]ZeroCopyMemoryAgent "
-        "is not init.", __func__), HCCL_SUCCESS);
+    CHK_PRT_RET(!ZeroCopyMemoryAgent::IsAddressMgrInited(), HCCL_ERROR("[ZeroCopyMemoryAgent][%s]ZeroCopyMemoryAgent "
+        "is not init.", __func__), HCCL_E_INTERNAL);
     CHK_PRT_RET(!addressMgr_->IsAddressSet(devicePhyId_, virPtr),
         HCCL_ERROR("[ZeroCopyMemoryAgent][UnsetMemoryRange] ptr[%p] is not set memory", virPtr), HCCL_E_PARA);
     CHK_RET(addressMgr_->UnsetMemoryRange(devicePhyId_, virPtr));
@@ -294,9 +295,10 @@ HcclResult ZeroCopyMemoryAgent::UnsetMemoryRange(void *virPtr)
 
 HcclResult ZeroCopyMemoryAgent::ActivateCommMemory(void *virPtr, size_t size, size_t offset, void *memHandle, uint64_t flags)
 {
+#if (!defined(HCCD)) && (!defined(CCL_KERNEL_AICPU))
     CHK_PRT_RET(isSingleRank_, HCCL_INFO("[ZeroCopyMemoryAgent][ActivateCommMemory] single rank communicator"), HCCL_SUCCESS);
-    CHK_PRT_RET(!ZeroCopyMemoryAgent::IsAddressMgrInited(), HCCL_INFO("[ZeroCopyMemoryAgent][%s]ZeroCopyMemoryAgent "
-        "is not init.", __func__), HCCL_SUCCESS);
+    CHK_PRT_RET(!ZeroCopyMemoryAgent::IsAddressMgrInited(), HCCL_ERROR("[ZeroCopyMemoryAgent][%s]ZeroCopyMemoryAgent "
+        "is not init.", __func__), HCCL_E_INTERNAL);
     CHK_PRT_RET(!addressMgr_->IsInSetAddressRange(devicePhyId_, virPtr, size),
         HCCL_ERROR("[ZeroCopyMemoryAgent][ActivateCommMemory] input ptr[%p] size[%lu] is not in set address range", virPtr, size), HCCL_E_PARA);
     CHK_PRT_RET(addressMgr_->IsOverlapWithActivateAddr(virPtr, size),
@@ -343,13 +345,17 @@ HcclResult ZeroCopyMemoryAgent::ActivateCommMemory(void *virPtr, size_t size, si
     CHK_RET(addressMgr_->ActivateCommMemoryAddr(virPtr, size));
 
     return HCCL_SUCCESS;
+#else
+     HCCL_ERROR("[ZeroCopyMemoryAgent][ActivateCommMemory] not support in aicpu or hccd");
+     return HCCL_E_NOT_SUPPORT;
+#endif
 }
 
 HcclResult ZeroCopyMemoryAgent::DeactivateCommMemory(void *virPtr)
 {
     CHK_PRT_RET(isSingleRank_, HCCL_INFO("[ZeroCopyMemoryAgent][DeactivateCommMemory] single rank communicator"), HCCL_SUCCESS);
-    CHK_PRT_RET(!ZeroCopyMemoryAgent::IsAddressMgrInited(), HCCL_INFO("[ZeroCopyMemoryAgent][%s]ZeroCopyMemoryAgent "
-        "is not init.", __func__), HCCL_SUCCESS);
+    CHK_PRT_RET(!ZeroCopyMemoryAgent::IsAddressMgrInited(), HCCL_ERROR("[ZeroCopyMemoryAgent][%s]ZeroCopyMemoryAgent "
+        "is not init.", __func__), HCCL_E_INTERNAL);
     CHK_PRT_RET(!addressMgr_->IsActivateCommMemoryAddr(virPtr, 1),
         HCCL_ERROR("[ZeroCopyMemoryAgent][DeactivateCommMemory] input ptr[%p] is not activate", virPtr), HCCL_E_PARA);
 
@@ -405,8 +411,8 @@ bool ZeroCopyMemoryAgent::IsActivateCommMemoryAddr(void *virPtr, u64 length)
 
 HcclResult ZeroCopyMemoryAgent::GetRingBufferAddr(u64 &bufferPtr, u64 &headPtr, u64 &tailPtr)
 {
-    CHK_PRT_RET(!ZeroCopyMemoryAgent::IsAddressMgrInited(), HCCL_INFO("[ZeroCopyMemoryAgent][%s]ZeroCopyMemoryAgent "
-        "is not init.", __func__), HCCL_SUCCESS);
+    CHK_PRT_RET(!ZeroCopyMemoryAgent::IsAddressMgrInited(), HCCL_ERROR("[ZeroCopyMemoryAgent][%s]ZeroCopyMemoryAgent "
+        "is not init.", __func__), HCCL_E_INTERNAL);
     addressMgr_->GetRingBufferAddr(bufferPtr, headPtr, tailPtr);
     return HCCL_SUCCESS;
 }
@@ -506,8 +512,9 @@ void ZeroCopyMemoryAgent::DealWithIpcMemoryRequest()
 
 HcclResult ZeroCopyMemoryAgent::ParseSetMemoryRange(u8* &exchangeDataPtr, u32 &exchangeDataBlankSize)
 {
-    CHK_PRT_RET(!ZeroCopyMemoryAgent::IsAddressMgrInited(), HCCL_INFO("[ZeroCopyMemoryAgent][%s]ZeroCopyMemoryAgent "
-        "is not init.", __func__), HCCL_SUCCESS);
+#if (!defined(HCCD)) && (!defined(CCL_KERNEL_AICPU))
+    CHK_PRT_RET(!ZeroCopyMemoryAgent::IsAddressMgrInited(), HCCL_ERROR("[ZeroCopyMemoryAgent][%s]ZeroCopyMemoryAgent "
+        "is not init.", __func__), HCCL_E_INTERNAL);
     u32 devicePhyId;
     CHK_RET(ParseData(exchangeDataPtr, exchangeDataBlankSize, devicePhyId));
 
@@ -523,8 +530,10 @@ HcclResult ZeroCopyMemoryAgent::ParseSetMemoryRange(u8* &exchangeDataPtr, u32 &e
     uint64_t flags;
     CHK_RET(ParseData(exchangeDataPtr, exchangeDataBlankSize, flags));
 
-    CHK_PRT_RET(devicePhyId >= MAX_MODULE_DEVICE_NUM,
-        HCCL_ERROR("[ZeroCopyMemoryAgent][ParseSetMemoryRange] devicePhyId[%u] is exceed max device num[%u]", devicePhyId, MAX_MODULE_DEVICE_NUM),
+    u32 maxDeviceNum;
+    CHK_RET(GetMaxDevNum(maxDeviceNum));
+    CHK_PRT_RET(devicePhyId >= maxDeviceNum,
+        HCCL_ERROR("[ZeroCopyMemoryAgent][ParseSetMemoryRange] devicePhyId[%u] is exceed max device num[%u]", devicePhyId, maxDeviceNum),
         HCCL_E_PARA);
 
     void *remoteAddrBase = reinterpret_cast<void *>(addr);
@@ -543,6 +552,10 @@ HcclResult ZeroCopyMemoryAgent::ParseSetMemoryRange(u8* &exchangeDataPtr, u32 &e
     CHK_RET(SendAckAfterParse(RequestType::SET_MEMORY_RANGE, RequestType::SET_MEMORY_RANGE_ACK, devicePhyId));
 
     return HCCL_SUCCESS;
+#else
+    HCCL_ERROR("[ZeroCopyMemoryAgent][ParseSetMemoryRange] not support in aicpu or hccd");
+    return HCCL_E_NOT_SUPPORT;
+#endif
 }
 
 HcclResult ZeroCopyMemoryAgent::SendAckAfterParse(RequestType requestType, RequestType ackType, u32 remoteDevicePhyId,
@@ -599,8 +612,9 @@ HcclResult ZeroCopyMemoryAgent::ParseRemoteAck(RequestType requestType, u32 remo
 
 HcclResult ZeroCopyMemoryAgent::ParseUnsetMemoryRange(u8* &exchangeDataPtr, u32 &exchangeDataBlankSize)
 {
-    CHK_PRT_RET(!ZeroCopyMemoryAgent::IsAddressMgrInited(), HCCL_INFO("[ZeroCopyMemoryAgent][%s]ZeroCopyMemoryAgent "
-        "is not init.", __func__), HCCL_SUCCESS);
+#if (!defined(HCCD)) && (!defined(CCL_KERNEL_AICPU))
+    CHK_PRT_RET(!ZeroCopyMemoryAgent::IsAddressMgrInited(), HCCL_ERROR("[ZeroCopyMemoryAgent][%s]ZeroCopyMemoryAgent "
+        "is not init.", __func__), HCCL_E_INTERNAL);
     u32 devicePhyId;
     CHK_RET(ParseData(exchangeDataPtr, exchangeDataBlankSize, devicePhyId));
 
@@ -620,10 +634,15 @@ HcclResult ZeroCopyMemoryAgent::ParseUnsetMemoryRange(u8* &exchangeDataPtr, u32 
 
     CHK_RET(SendAckAfterParse(RequestType::UNSET_MEMORY_RANGE, RequestType::UNSET_MEMORY_RANGE_ACK, devicePhyId));
     return HCCL_SUCCESS;
+#else
+    HCCL_ERROR("[ZeroCopyMemoryAgent][ParseUnsetMemoryRange] not support in aicpu or hccd");
+    return HCCL_E_NOT_FOUND;
+#endif
 }
 
 HcclResult ZeroCopyMemoryAgent::ParseBareTgid(u8* &exchangeDataPtr, u32 &exchangeDataBlankSize)
 {
+#if (!defined(HCCD)) && (!defined(CCL_KERNEL_AICPU))
     u32 devicePhyId;
     CHK_RET(ParseData(exchangeDataPtr, exchangeDataBlankSize, devicePhyId));
 
@@ -636,6 +655,10 @@ HcclResult ZeroCopyMemoryAgent::ParseBareTgid(u8* &exchangeDataPtr, u32 &exchang
     CHK_RET(SendAckAfterParse(RequestType::SET_REMOTE_BARE_TGID, RequestType::SET_REMOTE_BARE_TGID_ACK, devicePhyId,
         &tgid, sizeof(tgid)));
     return HCCL_SUCCESS;
+#else
+    HCCL_ERROR("[ZeroCopyMemoryAgent][ParseBareTgid] not support in aicpu or hccd");
+    return HCCL_E_NOT_SUPPORT;
+#endif
 }
 
 HcclResult ZeroCopyMemoryAgent::ParseBareTgidAck(u8* &exchangeDataPtr, u32 &exchangeDataBlankSize)
@@ -667,8 +690,9 @@ HcclResult ZeroCopyMemoryAgent::ParseBarrierCloseAck(u8* &exchangeDataPtr, u32 &
 
 HcclResult ZeroCopyMemoryAgent::ParseActivateCommMemory(u8* &exchangeDataPtr, u32 &exchangeDataBlankSize)
 {
-    CHK_PRT_RET(!ZeroCopyMemoryAgent::IsAddressMgrInited(), HCCL_INFO("[ZeroCopyMemoryAgent][%s]ZeroCopyMemoryAgent "
-        "is not init.", __func__), HCCL_SUCCESS);
+#if (!defined(HCCD)) && (!defined(CCL_KERNEL_AICPU))
+    CHK_PRT_RET(!ZeroCopyMemoryAgent::IsAddressMgrInited(), HCCL_ERROR("[ZeroCopyMemoryAgent][%s]ZeroCopyMemoryAgent "
+        "is not init.", __func__), HCCL_E_INTERNAL);
     u32 devicePhyId;
     CHK_RET(ParseData(exchangeDataPtr, exchangeDataBlankSize, devicePhyId));
 
@@ -717,12 +741,17 @@ HcclResult ZeroCopyMemoryAgent::ParseActivateCommMemory(u8* &exchangeDataPtr, u3
     CHK_RET(SendAckAfterParse(RequestType::ACTIVATE_COMM_MEMORY, RequestType::ACTIVATE_COMM_MEMORY_ACK, devicePhyId));
 
     return HCCL_SUCCESS;
+#else
+    HCCL_ERROR("[ZeroCopyMemoryAgent][ParseActivateCommMemory] is not support in aicpu or hccd");
+    return HCCL_E_NOT_SUPPORT;
+#endif
 }
 
 HcclResult ZeroCopyMemoryAgent::ParseDeactivateCommMemory(u8* &exchangeDataPtr, u32 &exchangeDataBlankSize)
 {
-    CHK_PRT_RET(!ZeroCopyMemoryAgent::IsAddressMgrInited(), HCCL_INFO("[ZeroCopyMemoryAgent][%s]ZeroCopyMemoryAgent "
-        "is not init.", __func__), HCCL_SUCCESS);
+#if (!defined(HCCD)) && (!defined(CCL_KERNEL_AICPU))
+    CHK_PRT_RET(!ZeroCopyMemoryAgent::IsAddressMgrInited(), HCCL_ERROR("[ZeroCopyMemoryAgent][%s]ZeroCopyMemoryAgent "
+        "is not init.", __func__), HCCL_E_INTERNAL);
     u32 devicePhyId;
     CHK_RET(ParseData(exchangeDataPtr, exchangeDataBlankSize, devicePhyId));
 
@@ -755,6 +784,10 @@ HcclResult ZeroCopyMemoryAgent::ParseDeactivateCommMemory(u8* &exchangeDataPtr, 
     CHK_RET(SendAckAfterParse(RequestType::DEACTIVATE_COMM_MEMORY, RequestType::DEACTIVATE_COMM_MEMORY_ACK, devicePhyId));
 
     return HCCL_SUCCESS;
+#else
+    HCCL_ERROR("[ZeroCopyMemoryAgent][ParseDeactivateCommMemory] not support in aicpu or hccd");
+    return HCCL_E_NOT_SUPPORT;
+#endif
 }
 
 HcclResult ZeroCopyMemoryAgent::ParseBarrierClose(u8* &exchangeDataPtr, u32 &exchangeDataBlankSize)

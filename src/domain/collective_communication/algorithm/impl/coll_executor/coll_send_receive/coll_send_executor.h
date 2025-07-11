@@ -21,6 +21,7 @@ public:
     ~CollSendExecutor() = default;
 
     HcclResult Orchestrate(OpParam& param, AlgResourceResponse& algRes) override;
+    HcclResult GetAdjInfo(AlgResourceResponse& algRes, AdjInfo& adjInfo) override;
 
 private:
     /* *************** 资源计算 *************** */

@@ -65,7 +65,9 @@ struct OpDataInfo {
     HcclReduceOp reduceType{HcclReduceOp::HCCL_REDUCE_RESERVED};
     struct timeval tv{0};
 };
-
+#ifdef CCL_KERNEL_AICPU
+#define HCCL_PROFILER_ADD_STREAM_BY_STREAMID(streamId, tag, planeID, algType)
+#else
 #define HCCL_PROFILER_ADD_STREAM_BY_STREAMID(streamId, tag, planeID, algType)                    \
     do {                                                                             \
         HcclResult __ret = ProfilerBase::AddStream(streamId, tag, planeID, algType); \
@@ -74,7 +76,11 @@ struct OpDataInfo {
             return HCCL_E_INTERNAL;                                                  \
         }                                                                            \
     } while (0)
+#endif
 
+#ifdef CCL_KERNEL_AICPU
+#define HCCL_PROFILER_DEL_STREAM_BY_STREAMID(streamId)
+#else
 #define HCCL_PROFILER_DEL_STREAM_BY_STREAMID(streamId)                                             \
     do {                                                                               \
         HcclResult __ret = ProfilerBase::DelStream(streamId);                          \
@@ -83,7 +89,11 @@ struct OpDataInfo {
             return HCCL_E_INTERNAL;                                                    \
         }                                                                              \
     } while (0)
+#endif
 
+#ifdef CCL_KERNEL_AICPU
+#define HCCL_PROFILER_ADD_STREAM(stream, tag, planeID, algType)
+#else
 #define HCCL_PROFILER_ADD_STREAM(stream, tag, planeID, algType)                     \
     do {                                                                            \
         s32 streamId = 0;                                                           \
@@ -94,7 +104,11 @@ struct OpDataInfo {
             return HCCL_E_INTERNAL;                                                 \
         }                                                                           \
     } while (0)
+#endif
 
+#ifdef CCL_KERNEL_AICPU
+#define HCCL_PROFILER_DEL_STREAM(stream)
+#else
 #define HCCL_PROFILER_DEL_STREAM(stream)                                                    \
     do {                                                                                    \
         s32 streamId = 0;                                                                   \
@@ -105,7 +119,11 @@ struct OpDataInfo {
             return HCCL_E_INTERNAL;                                                         \
         }                                                                                   \
     } while (0)
+#endif
 
+#ifdef CCL_KERNEL_AICPU
+#define HCCL_PROFILER_ADD_TAG(tag, group, workFlowMode)
+#else
 #define HCCL_PROFILER_ADD_TAG(tag, group, workFlowMode)                        \
     do {                                                                       \
         HcclResult __ret = ProfilerBase::AddTag(tag, group, workFlowMode); \
@@ -114,7 +132,24 @@ struct OpDataInfo {
             return HCCL_E_INTERNAL;                                        \
         }                                                                  \
     } while (0)
+#endif
 
+#ifdef CCL_KERNEL_AICPU
+#define HCCL_PROFILER_ADD_TAG_AIV(tag, group, workFlowMode)
+#else
+#define HCCL_PROFILER_ADD_TAG_AIV(tag, group, workFlowMode)                             \
+    do {                                                                                \
+        HcclResult __ret = ProfilerBase::AddTag(tag, group, workFlowMode, false, true); \
+        if (UNLIKELY(__ret != 0)) {                                                     \
+            HCCL_ERROR("profiler add tag error[%d]", __ret);                            \
+            return HCCL_E_INTERNAL;                                                     \
+        }                                                                               \
+    } while (0)
+#endif
+
+#ifdef CCL_KERNEL_AICPU
+#define HCCL_PROFILER_ADD_TAG_SENDRECV(tag, group, workFlowMode)
+#else
 #define HCCL_PROFILER_ADD_TAG_SENDRECV(tag, group, workFlowMode)               \
     do {                                                                       \
         HcclResult __ret = ProfilerBase::AddTag(tag, group, workFlowMode, true); \
@@ -123,7 +158,11 @@ struct OpDataInfo {
             return HCCL_E_INTERNAL;                                        \
         }                                                                  \
     } while (0)
+#endif
 
+#ifdef CCL_KERNEL_AICPU
+#define HCCL_PROFILER_DEL_TAG(tag)
+#else
 #define HCCL_PROFILER_DEL_TAG(tag)                                  \
     do {                                                            \
         HcclResult __ret = ProfilerBase::DelTag(tag);           \
@@ -132,6 +171,7 @@ struct OpDataInfo {
             return HCCL_E_INTERNAL;                             \
         }                                                       \
     } while (0)
+#endif
 
 // 兼容性考虑，需保留
 #define HCCL_PROFILER_ADD_OPDATA(tag, count, src, dst, dataType, rootId, group)                \
@@ -143,6 +183,9 @@ struct OpDataInfo {
         }                                                                  \
     } while (0)
 
+#ifdef CCL_KERNEL_AICPU
+#define HCCL_PROFILER_ADD_OPDATA_OP(tag, count, src, dst, dataType, rootId, group, reduceType)
+#else
 #define HCCL_PROFILER_ADD_OPDATA_OP(tag, count, src, dst, dataType, rootId, group, reduceType)                \
     do {                                                                       \
         HcclResult __ret = ProfilerBase::AddOpData(tag, count, src, dst, dataType, rootId, group, reduceType); \
@@ -151,7 +194,11 @@ struct OpDataInfo {
             return HCCL_E_INTERNAL;                                        \
         }                                                                  \
     } while (0)
+#endif
 
+#ifdef CCL_KERNEL_AICPU
+#define HCCL_PROFILER_DEL_OPDATA(tag)
+#else
 #define HCCL_PROFILER_DEL_OPDATA(tag)                                  \
     do {                                                            \
         HcclResult __ret = ProfilerBase::DelOpData(tag);           \
@@ -160,7 +207,11 @@ struct OpDataInfo {
             return HCCL_E_INTERNAL;                             \
         }                                                       \
     } while (0)
+#endif
 
+#ifdef CCL_KERNEL_AICPU
+#define HCCL_PROFILER_ADD_GROUPRANK(group, rankSize, rankId)
+#else
 #define HCCL_PROFILER_ADD_GROUPRANK(group, rankSize, rankId)                        \
     do {                                                                       \
         HcclResult __ret = ProfilerBase::AddGroupRankInfo(group, rankSize, rankId); \
@@ -169,7 +220,11 @@ struct OpDataInfo {
             return HCCL_E_INTERNAL;                                        \
         }                                                                  \
     } while (0)
+#endif
 
+#ifdef CCL_KERNEL_AICPU
+#define HCCL_PROFILER_ADD_GROUPRANK_SENDRECV(group, rankSize, rankId, remoteRankId)
+#else
 #define HCCL_PROFILER_ADD_GROUPRANK_SENDRECV(group, rankSize, rankId, remoteRankId)                        \
     do {                                                                       \
         HcclResult __ret = ProfilerBase::AddGroupRankInfo(group, rankSize, rankId, true, remoteRankId); \
@@ -178,7 +233,11 @@ struct OpDataInfo {
             return HCCL_E_INTERNAL;                                        \
         }                                                                  \
     } while (0)
+#endif
 
+#ifdef CCL_KERNEL_AICPU
+#define HCCL_PROFILER_DEL_GROUPRANK(group)
+#else
 #define HCCL_PROFILER_DEL_GROUPRANK(group)                                  \
     do {                                                            \
         HcclResult __ret = ProfilerBase::DelGroupRankInfo(group);           \
@@ -187,7 +246,11 @@ struct OpDataInfo {
             return HCCL_E_INTERNAL;                             \
         }                                                       \
     } while (0)
+#endif
 
+#ifdef CCL_KERNEL_AICPU
+#define HCCL_PROFILER_ADD_GROUP_UDI(group, udi)
+#else
 #define HCCL_PROFILER_ADD_GROUP_UDI(group, udi)                   \
     do {                                                            \
         HcclResult __ret = ProfilerBase::AddGroupUdi(group, udi);           \
@@ -196,7 +259,11 @@ struct OpDataInfo {
             return HCCL_E_INTERNAL;                             \
         }                                                       \
     } while (0)
+#endif
 
+#ifdef CCL_KERNEL_AICPU
+#define HCCL_PROFILER_DEL_GROUP_UDI(group)
+#else
 #define HCCL_PROFILER_DEL_GROUP_UDI(group)                          \
     do {                                                            \
         HcclResult __ret = ProfilerBase::DelGroupUdi(group);           \
@@ -205,6 +272,7 @@ struct OpDataInfo {
             return HCCL_E_INTERNAL;                             \
         }                                                       \
     } while (0)
+#endif
 
 class ProfilerBase {
 public:
@@ -221,7 +289,7 @@ public:
     static HcclResult AddStream(s32 streamID, const std::string &tag, s32 planeID, AlgType algType);
     static HcclResult DelStream(s32 streamID);
     static HcclResult AddTag(const std::string &tag, const std::string &group, const HcclWorkflowMode &workFlowMode,
-        bool isSendRecv = false);
+        bool isSendRecv = false, bool isAiv = false);
     static HcclResult DelTag(const std::string &tag);
     static HcclResult AddOpData(const std::string &tag, u64 count, const void *src, const void *dst,
         HcclDataType dataType, u32 rootId, const std::string &group, HcclReduceOp reduceType = HCCL_REDUCE_RESERVED);
@@ -259,6 +327,7 @@ protected:
     static std::array<std::map<const std::string, GroupRankInfo>, MAX_MODULE_DEVICE_NUM> groupRankMap_;
     static std::array<std::map<const std::string, OpDataInfo>, MAX_MODULE_DEVICE_NUM> tagOpDataMap_;
     static std::array<std::map<const std::string, u32>, MAX_MODULE_DEVICE_NUM> groupIndexMap_;
+    static std::array<std::map<const std::string, u32>, MAX_MODULE_DEVICE_NUM> aivGroupIndexMap_;
     static std::array<std::map<const std::string, u32>, MAX_MODULE_DEVICE_NUM> sendRecvGroupIndexMap_;
     static std::array<std::map<const std::string, std::string>, MAX_MODULE_DEVICE_NUM> groupUdiMap_;
     const u32 deviceLogicId_;

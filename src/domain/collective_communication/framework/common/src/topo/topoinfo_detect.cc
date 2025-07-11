@@ -48,12 +48,6 @@ HcclResult TopoInfoDetect::GetServerConnections(std::map<u32, std::shared_ptr<Hc
     }
 }
 
-HcclResult TopoInfoDetect::GetAgentConnection(std::shared_ptr<HcclSocket> &connectSocket)
-{
-    CHK_SMART_PTR_NULL(pTopoExchangeAgent_);
-    return pTopoExchangeAgent_->GetConnection(connectSocket);
-}
-
 HcclResult TopoInfoDetect::GetAgentListenSocket(HcclSocketPortConfig &commPortConfig)
 {
     // 将抢占的端口传入comm connection参数中
@@ -61,9 +55,70 @@ HcclResult TopoInfoDetect::GetAgentListenSocket(HcclSocketPortConfig &commPortCo
     return HCCL_SUCCESS;
 }
 
-void TopoInfoDetect::SetupTopoExchangeServer(s32 devicePhysicID, s32 deviceLogicID, HcclIpAddress hostIP, u32 hostPort,
+HcclResult TopoInfoDetect::GetAgentConnection(std::shared_ptr<HcclSocket> &connectSocket)
+{
+    CHK_SMART_PTR_NULL(pTopoExchangeAgent_);
+    return pTopoExchangeAgent_->GetConnection(connectSocket);
+}
+
+HcclResult TopoInfoDetect::SendGroupLeaderPort(std::shared_ptr<HcclSocket> &connectSocket, HcclRankHandle &rankHandle)
+{
+    HcclResult ret = pTopoExchangeAgent_->SendGroupLeaderPortInfo(connectSocket, rankHandle);
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[Seup][SendGroupLeaderPortInfo]SendGroupLeaderPortInfo to root failed, ret[%d]",
+             ret), ret); 
+    return HCCL_SUCCESS;
+}
+
+void TopoInfoDetect::SetupTopoGroupLeader(s32 devicePhysicID, s32 deviceLogicID, HcclIpAddress hostIP, u32 hostPort,
     vector<HcclIpAddress> whitelist, HcclNetDevCtx netDevCtx, std::shared_ptr<HcclSocket> listenSocket,
-    bool isMasterInfo)
+    std::shared_ptr<HcclSocket> grpLeaderToRoot, bool isMasterInfo)
+{
+    //给当前线程添加名字
+    SetThreadName("Hccl_TopoDetect_GroupLeader");
+ 
+    HcclResult ret = hrtSetDevice(deviceLogicID);
+    if (ret != HCCL_SUCCESS) {
+        g_topoExchangeServerStatus_.EmplaceAndUpdate(hostPort, [] (volatile u32 &status) {
+            status = TOPO_EXCHANGE_SERVER_STATUS_ERROR;
+        });
+        HCCL_ERROR("[Setup][TopoExchangeServer]set device[%d] failed, ret[%u]", deviceLogicID, ret);
+        return;
+    }
+ 
+    pTopoExchangeServer_.reset(new (nothrow) TopoInfoExchangeServer(hostIP, hostPort, whitelist, netDevCtx,
+        listenSocket, grpLeaderToRoot, rootInfo_.identifier));
+    if (!pTopoExchangeServer_) {
+        g_topoExchangeServerStatus_.EmplaceAndUpdate(hostPort, [] (volatile u32 &status) {
+            status = TOPO_EXCHANGE_SERVER_STATUS_ERROR;
+        });
+        HCCL_ERROR("[Setup][TopoExchangeServer]build topoExchangeServer failed. ");
+    } else {
+        ret = isMasterInfo ? pTopoExchangeServer_->SetupByMasterInfo() : pTopoExchangeServer_->SetupGroupLeader();
+        if (ret != HCCL_SUCCESS) {
+            g_topoExchangeServerStatus_.EmplaceAndUpdate(hostPort, [] (volatile u32 &status) {
+                status = TOPO_EXCHANGE_SERVER_STATUS_ERROR;
+            });
+            HCCL_ERROR("[Setup][TopoExchangeServer]setup topoExchangeServer failed, ret[%u]", ret);
+        }
+    }
+ 
+    ret = hrtResetDevice(deviceLogicID);
+    if (ret != HCCL_SUCCESS) {
+        g_topoExchangeServerStatus_.EmplaceAndUpdate(hostPort, [] (volatile u32 &status) {
+            status = TOPO_EXCHANGE_SERVER_STATUS_ERROR;
+        });
+        HCCL_ERROR("[Setup][TopoExchangeServer]reset device[%d] failed, ret[%u]", deviceLogicID, ret);
+        return;
+    }
+    g_topoExchangeServerStatus_.EmplaceAndUpdate(hostPort, [] (volatile u32 &status) {
+        status = TOPO_EXCHANGE_SERVER_STATUS_IDLE;
+    });
+}
+
+void TopoInfoDetect::SetupTopoExchangeServer(s32 devicePhysicID, s32 deviceLogicID, HcclIpAddress hostIP, u32 hostPort,
+    vector<HcclIpAddress> whitelist, HcclNetDevCtx netDevCtx,
+    std::shared_ptr<HcclSocket> listenSocket, bool isMasterInfo)
 {
     //给当前线程添加名字
     SetThreadName("Hccl_TopoDetect");
@@ -78,7 +133,7 @@ void TopoInfoDetect::SetupTopoExchangeServer(s32 devicePhysicID, s32 deviceLogic
     }
 
     pTopoExchangeServer_.reset(new (nothrow) TopoInfoExchangeServer(hostIP, hostPort, whitelist, netDevCtx,
-        listenSocket, rootInfo_.identifier));
+         listenSocket, rootInfo_.identifier));
     if (!pTopoExchangeServer_) {
         g_topoExchangeServerStatus_.EmplaceAndUpdate(hostPort, [] (volatile u32 &status) {
             status = TOPO_EXCHANGE_SERVER_STATUS_ERROR;
@@ -169,7 +224,6 @@ HcclResult TopoInfoDetect::SetupServer(HcclRootHandle &rootInfo)
     }
     CHK_RET(StartRootNetwork(hostIP, hostPort));
     CHK_RET(GenerateRootInfo(hostIP, hostPort, devicePhysicID_, rootInfo_));
-
     if (GetExternalInputHcclEnableWhitelist() == HCCL_WHITELIST_ON) {
         CHK_RET(AddSocketWhiteList(hostPort, whitelist));
     }
@@ -183,6 +237,59 @@ HcclResult TopoInfoDetect::SetupServer(HcclRootHandle &rootInfo)
 
     rootInfo = rootInfo_;
     HCCL_INFO("setup topo exchange server complete, identifier[%s]", rootInfo.identifier);
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoInfoDetect::GroupLeaderListen(u32 myrank, HcclRankHandle &rankHandle, vector<HcclIpAddress> &whitelist)
+{
+    CHK_RET(hrtGetDevice(&deviceLogicID_));
+ 
+    if (GetExternalInputHcclEnableWhitelist() == HCCL_WHITELIST_ON) {
+        CHK_RET(ReadHostSocketWhitelist(whitelist));
+    }
+    HcclIpAddress hostIP = GetBootstrapHostIP();
+    CHK_RET(hrtGetDevicePhyIdByIndex(deviceLogicID_, devicePhysicID_, true));
+    HCCL_INFO("[Setup][hcclIfBasePort]deviceLogicID_[%u], devicePhysicID_[%u]", deviceLogicID_, devicePhysicID_);
+ 
+    // true代表感知白名单disable配置
+    CHK_RET(HcclNetInit(NICDeployment::NIC_DEPLOYMENT_HOST, devicePhysicID_, deviceLogicID_, true));
+ 
+    CHK_RET(GetRootHostIP(whitelist, hostIP, devicePhysicID_));
+    SetBootstrapHostIP(hostIP);
+ 
+    s32 deviceNum = INVALID_INT;
+    CHK_RET(hrtGetDeviceCount(&deviceNum));
+    CHK_PRT_RET((deviceLogicID_ >= deviceNum),
+        HCCL_ERROR("[Setup][GroupLeader]deviceLogicID[%d] is invalid,deviceNum[%d].", deviceLogicID_, deviceNum),
+        HCCL_E_PARA);
+    
+    u32 hostPort = HCCL_INVALID_PORT ;
+    if (!GetExternalInputHostPortSwitch()) {
+        // 不开启host侧端口范围配置, 则使用默认端口
+        if (GetExternalInputHcclIfBasePort() == HCCL_INVALID_PORT) {
+            hostPort = devicePhysicID_ + HOST_CONTROL_BASE_PORT + TOPO_GROUPLEADER_PORT_OFFSET;
+        } else {
+            hostPort = devicePhysicID_ + GetExternalInputHcclIfBasePort() + TOPO_GROUPLEADER_PORT_OFFSET;
+        }
+    }
+
+    CHK_RET(StartGroupLeaderNetwork(whitelist, hostIP, hostPort));
+    CHK_RET(GenerateRootInfo(hostIP, hostPort, devicePhysicID_, rankHandle));
+ 
+    HCCL_INFO("rank bind port complete, port[%u]", hostPort);
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoInfoDetect::GroupLeaderAccept(HcclRankHandle &grpLeaderInfo, vector<HcclIpAddress> whitelist,
+    std::shared_ptr<HcclSocket> grpLeaderToRoot)
+{
+    rootInfo_ = grpLeaderInfo;
+    exchangeServerThreadPtr_.reset(new (nothrow) thread(&TopoInfoDetect::SetupTopoGroupLeader, this, devicePhysicID_,
+        deviceLogicID_, bootstrapHostIP_, rootInfo_.port, whitelist, serverPortCtx_, listenSocket_,
+        grpLeaderToRoot, false));
+    CHK_SMART_PTR_NULL(exchangeServerThreadPtr_);
+
+    HCCL_INFO("setup group leader server complete, identifier[%s]", grpLeaderInfo.identifier);
     return HCCL_SUCCESS;
 }
 
@@ -211,6 +318,63 @@ HcclResult TopoInfoDetect::GenerateRootInfo(const HcclIpAddress &hostIP, u32 hos
     rootInfo.nicDeploy = NICDeployment::NIC_DEPLOYMENT_DEVICE;
 
     HCCL_INFO("rootInfo: ip[%s] port[%u] identifier[%s]", rootInfo.ip, rootInfo.port, rootInfo.identifier);
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoInfoDetect::CalcGroupSizeAndRank(const u32 nRanks, const u32 rank, u32 &groupSize, u32 &groupRank)
+{
+    u32 groupIndex = rank / TOPO_MAX_GROUP_SIZE;
+    u32 groupNum = nRanks / TOPO_MAX_GROUP_SIZE;
+    groupSize = groupIndex < groupNum ? TOPO_MAX_GROUP_SIZE : (nRanks - (TOPO_MAX_GROUP_SIZE * groupNum));
+    groupRank = rank == 0 ? 0 : rank % TOPO_MAX_GROUP_SIZE;
+ 
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoInfoDetect::SetupGroupMember(u32 rankSize, u32 myrank, const HcclRootHandle &rootInfo)
+{
+    CHK_RET(hrtGetDevice(&deviceLogicID_));
+ 
+    HcclIpAddress rootIP(rootInfo.ip);
+    CHK_PRT_RET(rootIP.IsInvalid(), HCCL_ERROR("string[%s] is invalid ip", rootInfo.ip), HCCL_E_PARA);
+    CHK_RET(hrtGetDevicePhyIdByIndex(deviceLogicID_, devicePhysicID_, true));
+ 
+    CHK_RET(HcclNetInit(NICDeployment::NIC_DEPLOYMENT_HOST, devicePhysicID_, deviceLogicID_, true));
+ 
+    HcclIpAddress hostIP = GetBootstrapHostIP();
+    CHK_RET(GetLocalHostIP(hostIP, devicePhysicID_));
+ 
+    SetBootstrapHostIP(hostIP);
+ 
+    bool bInitDevNic = rankSize != 1 ? true : false;
+    HcclResult ret = StartNetwork(hostIP, bInitDevNic);
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[Setup][GroupMember]topo detect GroupMember start network failed! rank[%u]", myrank), ret);
+ 
+    u32 groupSize = 0;
+    u32 groupRank = 0;
+    ret = CalcGroupSizeAndRank(rankSize, myrank, groupSize, groupRank);
+ 
+    ret = GenerateLocalRankInfo(rankSize, myrank, localRankInfo_);
+    CHK_PRT_RET(ret != HCCL_SUCCESS,
+        HCCL_ERROR("[Setup][GroupMember]topo detect generate local rank info failed! rank[%u]", myrank), ret);
+ 
+    /* 首节点日志，建链失败属常见问题，在建链前记录相关信息 */
+    HCCL_RUN_INFO("[HCCL_TRACE]SetupGroupMember rankNum[%u], rank[%u], rootInfo identifier[%s], server[%s], "
+        "deviceType[%d], logicDevId[%d], phydevId[%d], deviceIp[%s]", rankSize, myrank, rootInfo.identifier,
+        localRankInfo_.hostIP.GetReadableAddress(), localRankInfo_.deviceType, localRankInfo_.deviceLogicID,
+        localRankInfo_.devicePhysicID, localRankInfo_.deviceIP[0].GetReadableIP()) ;
+ 
+    pTopoExchangeAgent_.reset(new (nothrow) TopoInfoExchangeAgent(rootIP, rootInfo.port,
+        rootInfo.identifier, agentPortCtx_, localRankInfo_, groupSize, groupRank));
+    CHK_SMART_PTR_NULL(pTopoExchangeAgent_);
+    CHK_RET(pTopoExchangeAgent_->SetupMember());
+    CHK_RET(pTopoExchangeAgent_->GetClusterTopoInfo(clusterTopoInfo_));
+ 
+    rootInfo_ = rootInfo;
+ 
+    HCCL_INFO("topo detect completed. myrank[%u], totalranks[%u], myhost[%s], totalservers[%u].",
+        myrank, rankSize, localRankInfo_.hostIP.GetReadableAddress(), clusterTopoInfo_.serverNum);
     return HCCL_SUCCESS;
 }
 
@@ -265,7 +429,37 @@ HcclResult TopoInfoDetect::WaitTopoExchangeServerCompelte(u32 idx) const
     return HCCL_SUCCESS;
 }
 
-HcclResult TopoInfoDetect::SetupAgent(u32 rankSize, u32 myrank, const HcclRootHandle &rootInfo)
+HcclResult TopoInfoDetect::PrepareHandle(HcclRankHandle &rankHandle, std::vector<HcclIpAddress> &whitelist)
+{
+    CHK_RET(hrtGetDevice(&deviceLogicID_));
+ 
+    if (GetExternalInputHcclEnableWhitelist() == HCCL_WHITELIST_ON) {
+        CHK_RET(ReadHostSocketWhitelist(whitelist));
+    }
+    HcclIpAddress hostIP = GetBootstrapHostIP();
+    CHK_RET(hrtGetDevicePhyIdByIndex(deviceLogicID_, devicePhysicID_, true));
+    HCCL_INFO("[Setup][hcclIfBasePort]deviceLogicID_[%u], devicePhysicID_[%u]", deviceLogicID_, devicePhysicID_);
+ 
+    // true代表感知白名单disable配置
+    CHK_RET(HcclNetInit(NICDeployment::NIC_DEPLOYMENT_HOST, devicePhysicID_, deviceLogicID_, true));
+ 
+    CHK_RET(GetRootHostIP(whitelist, hostIP, devicePhysicID_));
+    SetBootstrapHostIP(hostIP);
+ 
+    s32 deviceNum = 0;
+    CHK_RET(hrtGetDeviceCount(&deviceNum));
+    CHK_PRT_RET((deviceLogicID_ >= deviceNum),
+        HCCL_ERROR("[Setup][GroupLeader]deviceLogicID[%d] is invalid,deviceNum[%d].", deviceLogicID_, deviceNum),
+        HCCL_E_PARA);
+    
+    u32 hostPort = HCCL_INVALID_PORT ;
+    CHK_RET(GenerateRootInfo(hostIP, hostPort, devicePhysicID_, rankHandle));
+ 
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoInfoDetect::SetupAgent(u32 rankSize, u32 myrank, const HcclRootHandle &rootInfo,
+    const HcclRankHandle &rankHandle)
 {
     CHK_PRT_RET((rootInfo.nicDeploy == NICDeployment::NIC_DEPLOYMENT_HOST),
         HCCL_ERROR("[Setup][Agent]hcclDeviceNicDisable is [%u] when nicDeploy form root is NIC_DEPLOYMENT_HOST",
@@ -291,21 +485,43 @@ HcclResult TopoInfoDetect::SetupAgent(u32 rankSize, u32 myrank, const HcclRootHa
     ret = GenerateLocalRankInfo(rankSize, myrank, localRankInfo_);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[Setup][Agent]topo detect generate local rank info failed! rank[%u]", myrank), ret);
+    
+    if (rankSize > TOPO_HIERARCHICAL_ENABLE_THRESHOLD) {
+        /* 首节点日志，建链失败属常见问题，在建链前记录相关信息 */
+        HCCL_RUN_INFO("[HCCL_TRACE][Hierarchical]SetupAgent rankNum[%u], rank[%u], rootInfo identifier[%s], server[%s], serverPort[%u]"
+            "deviceType[%d], logicDevId[%d], phydevId[%d], deviceIp[%s]", rankSize, myrank, rootInfo.identifier,
+            localRankInfo_.hostIP.GetReadableAddress(), rootInfo.port, localRankInfo_.deviceType,
+            localRankInfo_.deviceLogicID, localRankInfo_.devicePhysicID, localRankInfo_.deviceIP[0].GetReadableIP()) ;
 
-    /* 首节点日志，建链失败属常见问题，在建链前记录相关信息 */
-    HCCL_RUN_INFO("[HCCL_TRACE]SetupAgent rankNum[%u], rank[%u], rootInfo identifier[%s], server[%s], serverPort[%u]"
-        "deviceType[%d], logicDevId[%d], phydevId[%d], deviceIp[%s]", rankSize, myrank, rootInfo.identifier,
-        localRankInfo_.hostIP.GetReadableAddress(), rootInfo.port, localRankInfo_.deviceType,
-        localRankInfo_.deviceLogicID, localRankInfo_.devicePhysicID, localRankInfo_.deviceIP[0].GetReadableIP()) ;
+        pTopoExchangeAgent_.reset(new (nothrow) TopoInfoExchangeAgent(rootIP, rootInfo.port,
+            rootInfo.identifier, agentPortCtx_, localRankInfo_, rankHandle));
+        CHK_SMART_PTR_NULL(pTopoExchangeAgent_);
+        CHK_RET(pTopoExchangeAgent_->Setup());
+        CHK_RET(pTopoExchangeAgent_->GetGroupLeader(grpLeader_));
+    } else {
+        /* 首节点日志，建链失败属常见问题，在建链前记录相关信息 */
+        HCCL_RUN_INFO("[HCCL_TRACE][Flat]SetupAgent rankNum[%u], rank[%u], rootInfo identifier[%s], server[%s], serverPort[%u]"
+            "deviceType[%d], logicDevId[%d], phydevId[%d], deviceIp[%s]", rankSize, myrank, rootInfo.identifier,
+            localRankInfo_.hostIP.GetReadableAddress(), rootInfo.port, localRankInfo_.deviceType,
+            localRankInfo_.deviceLogicID, localRankInfo_.devicePhysicID, localRankInfo_.deviceIP[0].GetReadableIP()) ;
 
-    pTopoExchangeAgent_.reset(new (nothrow) TopoInfoExchangeAgent(rootIP, rootInfo.port,
-        rootInfo.identifier, agentPortCtx_, localRankInfo_));
-    CHK_SMART_PTR_NULL(pTopoExchangeAgent_);
-    CHK_RET(pTopoExchangeAgent_->Setup());
-    CHK_RET(pTopoExchangeAgent_->GetClusterTopoInfo(clusterTopoInfo_));
+        pTopoExchangeAgent_.reset(new (nothrow) TopoInfoExchangeAgent(rootIP, rootInfo.port,
+            rootInfo.identifier, agentPortCtx_, localRankInfo_));
+        CHK_SMART_PTR_NULL(pTopoExchangeAgent_);
+        CHK_RET(pTopoExchangeAgent_->Setup());
+        CHK_RET(pTopoExchangeAgent_->GetClusterTopoInfo(clusterTopoInfo_));
+    }
+
     rootInfo_ = rootInfo;
+
     HCCL_INFO("topo detect completed. myrank[%u], totalranks[%u], myhost[%s], totalservers[%u].",
         myrank, rankSize, localRankInfo_.hostIP.GetReadableAddress(), clusterTopoInfo_.serverNum);
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoInfoDetect::SetupRank(std::shared_ptr<HcclSocket> &agentConnRoot) {
+    CHK_RET(pTopoExchangeAgent_->SetupRank(agentConnRoot));
+    CHK_RET(pTopoExchangeAgent_->GetGroupLeader(grpLeader_));
     return HCCL_SUCCESS;
 }
 
@@ -466,7 +682,14 @@ HcclResult TopoInfoDetect::GetRootHostIP(const vector<HcclIpAddress> &whitelist,
     return HCCL_SUCCESS;
 }
 
-HcclResult TopoInfoDetect::StartRootNetwork(const HcclIpAddress& hostIP, u32 &usePort)
+HcclResult TopoInfoDetect::GetGroupLeader(HcclRankHandle &rankHandle)
+{
+    rankHandle = grpLeader_;
+    return HCCL_SUCCESS;
+}
+
+
+HcclResult TopoInfoDetect::StartRootNetwork( const HcclIpAddress& hostIP, u32 &usePort)
 {
     CHK_RET(HcclNetOpenDev(&serverPortCtx_, NicType::HOST_NIC_TYPE, devicePhysicID_, deviceLogicID_, hostIP));
     CHK_PTR_NULL(serverPortCtx_);
@@ -492,6 +715,40 @@ HcclResult TopoInfoDetect::StartRootNetwork(const HcclIpAddress& hostIP, u32 &us
     }
 
     HCCL_INFO("topo info exchange server start with host ip[%s] and port[%u]", hostIP.GetReadableAddress(), usePort);
+
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoInfoDetect::StartGroupLeaderNetwork(const vector<HcclIpAddress> &whitelist, const HcclIpAddress& hostIP,
+    u32 &bindPort)
+{    
+    CHK_RET(HcclNetOpenDev(&serverPortCtx_, NicType::HOST_NIC_TYPE, devicePhysicID_, deviceLogicID_, hostIP));
+    CHK_PTR_NULL(serverPortCtx_);
+    if (bindPort == HCCL_INVALID_PORT) {
+        // 通过抢占的方式获得Root节点监听的host端口
+        listenSocket_.reset(new (nothrow) HcclSocket(serverPortCtx_));
+        CHK_SMART_PTR_NULL(listenSocket_);
+        CHK_RET(listenSocket_->Init());
+        HcclResult ret = PreemptPortManager::GetInstance(deviceLogicID_).ListenPreempt(listenSocket_,
+            GetExternalInputHostSocketPortRange(), bindPort);
+        CHK_PRT_RET(ret != HCCL_SUCCESS,
+            HCCL_ERROR("[TopoInfoDetect][StartRootNetwork] devPhyId[%u], devLogicId[%u], host ip[%s], "
+            "try to preempt port on host nic fail.",
+            devicePhysicID_, deviceLogicID_, hostIP.GetReadableAddress()), ret);
+    } else {
+        // 1. 使用MasterInfo初始化时，不支持抢占master节点的监听端口
+        // 2. 未配置port range时，不支持抢占监听端口
+        listenSocket_.reset(new (nothrow) HcclSocket(serverPortCtx_, bindPort));
+        CHK_SMART_PTR_NULL(listenSocket_);
+        CHK_RET(listenSocket_->Init());
+        CHK_RET(listenSocket_->Listen());
+    }
+
+    HCCL_INFO("group leader start with host ip[%s] and port[%u]", hostIP.GetReadableAddress(), bindPort);
+
+    if (GetExternalInputHcclEnableWhitelist() == HCCL_WHITELIST_ON) {
+        CHK_RET(AddSocketWhiteList(bindPort, whitelist));
+    }
 
     return HCCL_SUCCESS;
 }
@@ -587,9 +844,10 @@ HcclResult TopoInfoDetect::FilterDevIPs(std::vector<HcclIpAddress> &sourceDevice
 HcclResult TopoInfoDetect::PreemptDeviceNicPort(const u32 devPhyId, const s32 devLogicId,
     const HcclIpAddress &deviceIp, u32 &usePort)
 {
+    HcclIpAddress devIp(std::string(deviceIp.GetReadableIP()));
     HcclNetDevCtx netCtx{nullptr};
     CHK_RET(HcclNetInit(NICDeployment::NIC_DEPLOYMENT_DEVICE, devPhyId, devLogicId, false, false));
-    CHK_RET(HcclNetOpenDev(&netCtx, NicType::DEVICE_NIC_TYPE, devPhyId, devLogicId, deviceIp));
+    CHK_RET(HcclNetOpenDev(&netCtx, NicType::DEVICE_NIC_TYPE, devPhyId, devLogicId, devIp));
     CHK_PTR_NULL(netCtx);
     commPortConfig_.devNicListen = std::make_pair(nullptr, netCtx);
 
@@ -601,10 +859,10 @@ HcclResult TopoInfoDetect::PreemptDeviceNicPort(const u32 devPhyId, const s32 de
         GetExternalInputNpuSocketPortRange(), usePort);
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[TopoInfoDetect][PreemptDeviceNicPort] devPhyId[%u], devLogicId[%u], device ip[%s], "
-        "try to preempt port on device nic fail.", devPhyId, devLogicId, deviceIp.GetReadableAddress()), ret);
+        "try to preempt port on device nic fail.", devPhyId, devLogicId, devIp.GetReadableAddress()), ret);
 
     HCCL_INFO("[TopoInfoDetect][PreemptDeviceNicPort]devPhyId[%u], devLogicId[%d], "
-        "preempt port[%u] on ip[%s] success.", devPhyId, devLogicId, usePort, deviceIp.GetReadableAddress());
+        "preempt port[%u] on ip[%s] success.", devPhyId, devLogicId, usePort, devIp.GetReadableAddress());
     return HCCL_SUCCESS;
 }
 
@@ -652,9 +910,11 @@ HcclResult TopoInfoDetect::PreemptDeviceVnicPort(HcclBasicRankInfo &localRankInf
 HcclResult TopoInfoDetect::PreemptBackupDeviceNicPort(const u32 devPhyId, const s32 devLogicId,
     const HcclIpAddress &deviceIp, const HcclIpAddress &backupDeviceIp, u32 &usePort)
 {
+    HcclIpAddress devIp(std::string(deviceIp.GetReadableIP()));
+    HcclIpAddress backupDevIp(std::string(backupDeviceIp.GetReadableIP()));
     HcclNetDevCtx netCtx{nullptr};
     CHK_RET(HcclNetInit(NICDeployment::NIC_DEPLOYMENT_DEVICE, devPhyId, devLogicId, false, true));
-    CHK_RET(HcclNetOpenDev(&netCtx, NicType::DEVICE_NIC_TYPE, devPhyId, devLogicId, backupDeviceIp, deviceIp));
+    CHK_RET(HcclNetOpenDev(&netCtx, NicType::DEVICE_NIC_TYPE, devPhyId, devLogicId, backupDevIp, devIp));
     CHK_PTR_NULL(netCtx);
     commPortConfig_.backupDevNicListen = std::make_pair(nullptr, netCtx);
 
@@ -667,11 +927,11 @@ HcclResult TopoInfoDetect::PreemptBackupDeviceNicPort(const u32 devPhyId, const 
     CHK_PRT_RET(ret != HCCL_SUCCESS,
         HCCL_ERROR("[TopoInfoDetect][PreemptBackupDeviceNicPort] devPhyId[%u], devLogicId[%u], device ip[%s], "
         "backup device ip[%s], try to preempt port on device nic fail.",
-        devPhyId, devLogicId, deviceIp.GetReadableAddress(), backupDeviceIp.GetReadableAddress()), ret);
+        devPhyId, devLogicId, devIp.GetReadableAddress(), backupDevIp.GetReadableAddress()), ret);
 
     HCCL_INFO("[TopoInfoDetect][PreemptBackupDeviceNicPort]devPhyId[%u], devLogicId[%d], local ip[%s]"
         "preempt port[%u] on backup device ip[%s] success[%u].",
-        devPhyId, devLogicId, deviceIp.GetReadableAddress(), usePort, backupDeviceIp.GetReadableAddress());
+        devPhyId, devLogicId, devIp.GetReadableAddress(), usePort, backupDevIp.GetReadableAddress());
     return HCCL_SUCCESS;
 }
 

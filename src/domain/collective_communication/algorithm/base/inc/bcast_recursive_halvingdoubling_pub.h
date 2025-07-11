@@ -21,7 +21,8 @@ public:
 
     HcclResult RunAsync(const u32 rank, const u32 rankSize,
         const std::vector<std::shared_ptr<Transport> > &links) override;
-
+    HcclResult GetNslbAdjInfo(const u32 rank, const u32 rankSize,
+                              const std::vector<LINK> &links, AdjInfo& nslbAdjInfo) override;
 protected:
 private:
     HcclResult SendData(const u32 destRank, const std::vector<std::shared_ptr<Transport> > &links);

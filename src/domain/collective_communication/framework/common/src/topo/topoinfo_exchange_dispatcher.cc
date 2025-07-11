@@ -27,11 +27,21 @@ TopoInfoExchangeDispather::~TopoInfoExchangeDispather()
 }
 
 HcclResult TopoInfoExchangeDispather::BroadcastRankTable(
-    const std::map<std::string, std::shared_ptr<HcclSocket>> connectSockets, const RankTable_t &clusterInfo)
+    const std::map<std::string, std::shared_ptr<HcclSocket>> connectSockets, const RankTable_t &clusterInfo, const std::string &failedAgentIdList)
 {
-    CHK_RET(PrepareResource(connectSockets, clusterInfo));
+    CHK_RET(PrepareResource(connectSockets, clusterInfo, failedAgentIdList));
     CHK_RET(ProcessSend());
     HCCL_INFO("cluster topo exchange worker broadcast topoinfo success, rankNum[%d], "\
+        "threadNum[%u]", rankNum_, threadNum_);
+    return HCCL_SUCCESS;
+}
+
+HcclResult TopoInfoExchangeDispather::BroadcastGroupLeaderInfo(
+    const std::map<std::string, std::shared_ptr<HcclSocket>> connectSockets, const GroupLeader_t &leaderInfo)
+{
+    CHK_RET(PrepareLeaderResource(connectSockets, leaderInfo));
+    CHK_RET(ProcessSend());
+    HCCL_INFO("cluster topo exchange worker broadcast GroupLeaderInfo success, rankNum[%d], "\
         "threadNum[%u]", rankNum_, threadNum_);
     return HCCL_SUCCESS;
 }
@@ -91,7 +101,7 @@ void TopoInfoExchangeDispather::RunWorkerThread(int workId)
 }
 
 HcclResult TopoInfoExchangeDispather::PrepareResource(
-    const std::map<std::string, std::shared_ptr<HcclSocket>> connectSockets, const RankTable_t &clusterInfo)
+    const std::map<std::string, std::shared_ptr<HcclSocket>> connectSockets, const RankTable_t &clusterInfo, const std::string &failedAgentIdList)
 {
     rankNum_ = connectSockets.size();
     InitWorkerThread();
@@ -106,6 +116,10 @@ HcclResult TopoInfoExchangeDispather::PrepareResource(
     nlohmann::json basicJson;
     CHK_RET(topoInfoExchangeServer_->TopoInfoExchangeBase::Struct2Json(clusterInfo, basicJson));
     basicJson[PROP_STEP] = topoInfoExchangeServer_->TopoInfoExchangeBase::currentStep_;
+    if (!failedAgentIdList.empty()) {
+        basicJson["fault_info"] = "Failed to connect agent[" + failedAgentIdList + "]";
+        basicJson["fault_type"] = static_cast<int>(TopoDetectResult::TOPO_CONNECT_FAILED);
+    }
     rankTableJson_ = basicJson.dump();
  
     u32 socketIndex = 0;   // socket已经经过rankid（or serverip +deviceid排序）
@@ -129,13 +143,51 @@ HcclResult TopoInfoExchangeDispather::PrepareResource(
     return HCCL_SUCCESS;
 }
 
+HcclResult TopoInfoExchangeDispather::PrepareLeaderResource(
+    const std::map<std::string, std::shared_ptr<HcclSocket>> connectSockets, const GroupLeader_t &leaderInfo)
+{
+    rankNum_ = connectSockets.size();
+    InitWorkerThread();
+
+    HcclResult ret = hrtRaCreateEventHandle(epollFds_);
+    if (ret != HCCL_SUCCESS) {
+        HCCL_ERROR("[TopoInfoExchangeDispather][PrepareEpollResource]hrtRaCreateEventHandle create"\
+            " epollFds_ failed, ret[%d]", ret);
+        return HCCL_E_TCP_TRANSFER;
+    }
+
+    nlohmann::json basicJson;
+    CHK_RET(topoInfoExchangeServer_->TopoInfoExchangeBase::GrpLeader2Json(leaderInfo, basicJson));
+    basicJson[PROP_STEP] = topoInfoExchangeServer_->TopoInfoExchangeBase::currentStep_;
+    rankTableJson_ = basicJson.dump();
+ 
+    u32 socketIndex = 0;   // socket已经经过rankid（or serverip +deviceid排序）
+    for (auto it : connectSockets) {
+        FdContext fdcontext;
+        fdcontext.socket = it.second;
+        if (topoInfoExchangeServer_->TopoInfoExchangeBase::isByMasterInfo_) {  // masterInfo场景下无法获取rankid
+            fdcontext.txState.indentify = socketIndex;
+        }
+        fdcontext.txState.bodyLen = rankTableJson_.length();
+        fdcontext.txState.data    = &rankTableJson_[0];
+        fdcontext.txState.rankId  = socketIndex;
+        socketIndex++;
+        HCCL_DEBUG("[TopoInfoExchangeDispather][PrepareLeaderResource]socketIndex:%u, bodyLen:%u, data:%u", socketIndex,
+            fdcontext.txState.bodyLen, fdcontext.txState.data);
+        fdHandleToFdContextMap_.emplace(it.second->GetFdHandle(), fdcontext);
+    }
+
+    HCCL_DEBUG("[TopoInfoExchangeDispather][PrepareEpollResource]fdHandleToFdContextMap_ size[%d]",
+        fdHandleToFdContextMap_.size());
+    return HCCL_SUCCESS;
+}
+
 void TopoInfoExchangeDispather::WakeWoker()
 {
     std::unique_lock <std::mutex> lck(wakeMutex_);
     ready_ = true;
     wakeManager_.notify_all();
 }
-
 
 void TopoInfoExchangeDispather::CleanResource()
 {

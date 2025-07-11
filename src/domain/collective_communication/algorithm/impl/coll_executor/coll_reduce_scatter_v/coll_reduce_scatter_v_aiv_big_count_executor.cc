@@ -8,7 +8,6 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include <algorithm>
-#include "alg_profiling.h"
 #include "coll_reduce_scatter_v_aiv_big_count_executor.h"
 
 namespace hccl {
@@ -16,6 +15,7 @@ CollReduceScatterVAIVBigCountExecutor::CollReduceScatterVAIVBigCountExecutor(con
     std::unique_ptr<TopoMatcher> &topoMatcher)
     : CollReduceScatterVExecutor(dispatcher, topoMatcher)
 {
+    desc_.isAivMode = true;
 }
 
 HcclResult CollReduceScatterVAIVBigCountExecutor::GetIfNeedAivBuffer(bool &needAivBuffer)
@@ -69,6 +69,7 @@ u32 CollReduceScatterVAIVBigCountExecutor::CalBlockDim(u32 rankSize, u64 dataSiz
 
 HcclResult CollReduceScatterVAIVBigCountExecutor::Orchestrate(OpParam& param, AlgResourceResponse& algRes)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollReduceScatterVAIVBigCountExecutor][Orchestrate] aiv reducescatterv start");
     HcclUs startut = TIME_NOW();
     tag_ = param.tag;
     algResResp_ = &algRes;
@@ -92,6 +93,11 @@ HcclResult CollReduceScatterVAIVBigCountExecutor::Orchestrate(OpParam& param, Al
 
     HCCL_INFO("tag[%s], ReduceScatterV executor orchestrate success, take time [%lld]us",
         param.tag.c_str(), DURATION_US(TIME_NOW() - startut));
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollReduceScatterVAIVBigCountExecutor::GetAdjInfo(AlgResourceResponse& algRes, AdjInfo& adjInfo)
+{
     return HCCL_SUCCESS;
 }
 
@@ -122,10 +128,6 @@ HcclResult CollReduceScatterVAIVBigCountExecutor::KernelRun(const OpParam &param
         extraArgs.maxCount = std::max(extraArgs.maxCount, extraArgs.sendCounts[i]);
     }
 
-    if (aivClearEnable_) {
-        ClearAivSyncBuf(buffersOut, localRank, localRankSize, param.stream.ptr());
-    }
-
     bool isOpbase = (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE);
 
     execMem.count = (static_cast<const u64 *>(param.VDataDes.counts))[topoAttr_.userRank];
@@ -137,21 +139,21 @@ HcclResult CollReduceScatterVAIVBigCountExecutor::KernelRun(const OpParam &param
     AivTopoArgs topoArgs { localRank, localRankSize };
     blockDim_ = CalBlockDim(localRankSize);
     AivResourceArgs resourceArgs {
-        param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size(), blockDim_
+        param.tag, param.stream.ptr(), buffersIn, buffersOut, execMem.inputMem.size(), blockDim_, param.aivTag
     };
     AivAlgArgs algArgs {};
     struct AivProfilingInfo aivProfilingInfo;
     aivProfilingInfo.counter = opCounter_;
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
-        HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
+        HCCL_PROFILER_ADD_TAG_AIV(param.tag, algoAttr_.identifier, workflowMode_);
         HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
     }
 
+    if (aivClearEnable_) {
+        ClearAivSyncBuf(buffersOut, param.stream.ptr(), topoArgs);
+    }
+
     HcclResult ret = ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, extraArgs, aivProfilingInfo);
-    
-    TaskAivProfiler(opArgs.cmdType, aivProfilingInfo.tag, opArgs.count * sizeof(opArgs.dataType),
-        aivProfilingInfo.blockDim, topoArgs.rankSize, resourceArgs.buffersOut[topoArgs.rank], resourceArgs.stream,
-        algArgs.step, aivProfilingInfo.beginTime);
 
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){ 
         HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());

@@ -30,7 +30,7 @@ bool CollAllReduceMeshSmallCountExecutor::CalcScratchMemFlag(const u64 totalSize
 {
     bool isDeter910B = workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OPS_KERNEL_INFO_LIB &&
         topoAttr_.deviceType == DevType::DEV_TYPE_910B &&
-        topoMatcher_->GetExternalInputHcclDeterministic() &&
+        topoMatcher_->GetExternalInputHcclDeterministic() != DETERMINISTIC_DISABLE &&
         topoAttr_.deviceNumPerAggregation > DEVICE_TWO &&
         topoAttr_.deviceNumPerAggregation < DEVICE_EIGHT &&
         totalSize <= HCCL_SMALL_COUNT_GRAPH_64_KB;
@@ -153,8 +153,15 @@ HcclResult CollAllReduceMeshSmallCountExecutor::Orchestrate(OpParam& param, AlgR
     return HCCL_SUCCESS;
 }
 
+HcclResult CollAllReduceMeshSmallCountExecutor::GetAdjInfo(AlgResourceResponse& algRes, AdjInfo& adjInfo)
+{
+    return HCCL_SUCCESS;
+}
+
 HcclResult CollAllReduceMeshSmallCountExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG,
+        "[CollAllReduceMeshSmallCountExecutor][KernelRun] userRank[%u] starts.", topoAttr_.userRank);
     std::vector<Slice> dataSegsSlice; // 数据分成ranksize份，每份的起始偏移和大小
     if (!CalcScratchMemFlag(totalSize_)) {
         execMem.scratchMem = execMem.outputMem;
@@ -167,9 +174,9 @@ HcclResult CollAllReduceMeshSmallCountExecutor::KernelRun(const OpParam &param, 
         (param.DataDes.dataType != HCCL_DATA_TYPE_INT64)) ?
         ReduceType::INLINE_REDUCE : ReduceType::TBE_REDUCE;
     auto originalAlgTypeLevel1 = static_cast<u32>(algType_.algoLevel1);
-    bool isDeterministic = topoMatcher_->GetExternalInputHcclDeterministic();
+    u8 deterministic = topoMatcher_->GetExternalInputHcclDeterministic();
     auto opMeta = HcclOpMetaInfo::GetOneForAllReduce(originalAlgTypeLevel1, param.DataDes.dataType, reduceType,
-        true, 1, false, CopyPattern::BCOPY, 1, false, true, false, isDeterministic);
+        true, 1, false, CopyPattern::BCOPY, 1, false, true, false, deterministic);
     CHK_RET(InitTask(dispatcher_, const_cast<Stream&>(param.stream), opMeta.isEnableCache, opMeta.GetCacheKey()));
 
     CHK_RET(ActiveSlaveStreams(param.stream));
@@ -183,12 +190,14 @@ HcclResult CollAllReduceMeshSmallCountExecutor::KernelRun(const OpParam &param, 
     std::unique_ptr<AlgTemplateBase> level0TempAlg;
     if (topoAttr_.deviceType == DevType::DEV_TYPE_910_93) {
         bool aicpu = true;
+        #ifndef CCL_KERNEL_AICPU
         aicpu = false;
+        #endif
         level0TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_REDUCE_HD_OPTIM, dispatcher_);
         CHK_SMART_PTR_NULL(level0TempAlg);
         CHK_RET(level0TempAlg->Prepare(reduceAttr, algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
             level0CommInfo.localRank, &opInfo, aicpu));
-    } else if (!topoMatcher_->GetExternalInputHcclDeterministic()) {
+    } else if (topoMatcher_->GetExternalInputHcclDeterministic() == DETERMINISTIC_DISABLE) {
         isUsedRegister = true;
         level0TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
             TemplateType::TEMPLATE_ALL_REDUCE_REDUCE_BCAST, dispatcher_);

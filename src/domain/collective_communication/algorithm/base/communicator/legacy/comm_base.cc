@@ -17,7 +17,7 @@
 #include "device_capacity.h"
 #include "p2p_mgmt_pub.h"
 #include "rank_consistentcy_checker.h"
-#include "transport_common.h"
+#include "coll_alg_param.h"
 
 namespace hccl {
 constexpr s32 HCCL_DEFAULT_INITIAL_VALUE = -1;
@@ -247,8 +247,9 @@ HcclResult CommBase::SetTransportType(const u32 dstRank)
         } else {
             // Server内判断是否使用rdma
             if (isUsedRdmaLevel0_ || isAlltoAllCommMesh_ ||
+                (paraVector_[rank_].deviceType != DevType::DEV_TYPE_310P3 &&
                 (paraVector_[rank_].devicePhyId / HCCL_AISERVER_DEVICE_NUM != 
-                paraVector_[dstRank].devicePhyId / HCCL_AISERVER_DEVICE_NUM)) {
+                paraVector_[dstRank].devicePhyId / HCCL_AISERVER_DEVICE_NUM))) {
                 transportType_[dstRank] = TransportType::TRANS_TYPE_IBV_EXP;
             } else {
                 transportType_[dstRank] = TransportType::TRANS_TYPE_P2P;

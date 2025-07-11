@@ -22,7 +22,7 @@ CollReduceScatterMeshOpbasePipelineExecutor::CollReduceScatterMeshOpbasePipeline
 
 HcclResult CollReduceScatterMeshOpbasePipelineExecutor::RunLoop(OpParam &param, AlgResourceResponse &algRes)
 {
-    HCCL_INFO("[CollReduceScatterMeshOpbasePipelineExecutor][RunLoop] begins.");
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollReduceScatterMeshOpbasePipelineExecutor][RunLoop] begins.");
 
     u32 unitSize = SIZE_TABLE[param.DataDes.dataType];
     ReduceType reduceType = ((param.reduceType != HCCL_REDUCE_PROD) &&
@@ -61,14 +61,14 @@ HcclResult CollReduceScatterMeshOpbasePipelineExecutor::RunLoop(OpParam &param, 
         curCount = (countLeft > maxCountPerLoop) ? maxCountPerLoop : countLeft;
         curSize = curCount * unitSize;
 
-        HCCL_DEBUG("[CollReduceScatterMeshOpbasePipelineExecutor][RunLoop]tag[%s], curOffset[%llu], " \
+        HCCL_CONFIG_DEBUG(HCCL_ALG, "[CollReduceScatterMeshOpbasePipelineExecutor][RunLoop]tag[%s], curOffset[%llu]," \
             "curInputPtr[%p], curOutputPtr[%p], curCount[%llu], dataType[%d].",
             param.tag.c_str(), curOffset, curInputPtr, curOutputPtr, curCount, param.DataDes.dataType);
 
         bool hugeData = IsHugeData(curSize);
-        bool isDeterministic = topoMatcher_->GetExternalInputHcclDeterministic();
+        u8 deterministic = topoMatcher_->GetExternalInputHcclDeterministic();
         auto meta = HcclOpMetaInfo::GetOneForReduceScatter(originalAlgTypeLevel1, param.DataDes.dataType, reduceType,
-            hugeData, false, CopyPattern::BCOPY, false, isDeterministic, false);
+            hugeData, false, CopyPattern::BCOPY, false, deterministic, false);
         CHK_RET(InitTask(dispatcher_, const_cast<Stream&>(param.stream), meta.isEnableCache, meta.GetCacheKey()));
 
         ExecMem execMem;
@@ -96,6 +96,7 @@ HcclResult CollReduceScatterMeshOpbasePipelineExecutor::RunLoop(OpParam &param, 
 
         curOffset += curSize;
     }
+
     return HCCL_SUCCESS;
 }
 
@@ -167,6 +168,29 @@ bool CollReduceScatterMeshOpbasePipelineExecutor::IsHugeData(const u64 curSize, 
 {
     bool hugeData = curSize > RDMA_SEND_MAX_SIZE || curSize > SDMA_SEND_MAX_SIZE;
     return hugeData;
+}
+
+
+HcclResult CollReduceScatterMeshOpbasePipelineExecutor::Getlevel1CommRank(SubCommInfo& level1CommInfo)
+{
+    CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
+    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+
+    u32 commIndex = level0CommInfo.localRank; // 找到rank所在的节点间平面
+    CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
+
+    level1CommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
+    return HCCL_SUCCESS;
+}
+
+HcclResult CollReduceScatterMeshOpbasePipelineExecutor::SelectTempAlg(std::unique_ptr<AlgTemplateBase> &level1TempAlg, u32 level1RankSize)
+{
+    if (level1RankSize > 1) {
+        level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
+            TemplateType::TEMPLATE_REDUCESCATTER_PIPELINE, dispatcher_);
+        CHK_SMART_PTR_NULL(level1TempAlg);
+    }
+    return HCCL_SUCCESS;
 }
 
 REGISTER_EXEC("ReduceScatterMeshOpbasePipelineExecutor", ReduceScatterMeshOpbasePipeline,

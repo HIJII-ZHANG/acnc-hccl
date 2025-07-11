@@ -12,6 +12,8 @@
 #define COLL_ALG_COMM_H
 
 #include <string>
+#include <vector>
+#include <map>
 #include <set>
 #include <unordered_set>
 
@@ -23,22 +25,78 @@
 #include "hccl_trace_info.h"
 #include "common.h"
 #include "threadManage.h"
-#include "transport_common.h"
-#include "common_pub.h"
+#include "template_v1_utils.h"
 
 namespace hccl {
 using RankId = u32;
 
-enum OpMode {
+enum class OpMode {
     OPBASE = 0,
     OFFLOAD = 1
 };
 
-enum DeviceMode {
+enum class DeviceMode {
     HOST = 0,
     AICPU = 1
 };
 
+enum class AlgExpansionMode {
+    SUPERK_HOST = 0,
+    SUPERK_AICPU = 1,
+    SUPERK_AIV = 2,
+    // SUPERK_CCU = 3,
+    SUPERK_RECURSIVE = 4
+};
+
+enum class TransportStatus {
+    INIT,
+    READY,
+    STOP
+};
+
+enum TransportMemType {
+    CCL_INPUT = 0,
+    CCL_OUTPUT,
+    SCRATCH,
+    PARAM_INPUT,
+    PARAM_OUTPUT,
+    AIV_INPUT,
+    AIV_OUTPUT,
+    RESERVED
+};
+
+enum class TransportLinkType : int {
+    RESERVED = -1,
+    HCCS = 0,
+    SIO = 1,
+    RDMA = 2,
+    MAX_NUM
+};
+
+struct TransportRequest {
+    bool isValid = false;
+    RankId localUserRank = 0;
+    RankId remoteUserRank = 0;
+    TransportMemType inputMemType = TransportMemType::RESERVED;
+    TransportMemType outputMemType = TransportMemType::RESERVED;
+    bool isUsedRdma = false;
+    u32 notifyNum = 0;
+    TransportLinkType linkType = TransportLinkType::RESERVED;
+};
+
+struct SingleSubCommTransport {
+    std::vector<TransportRequest> transportRequests;
+    std::vector<LINK> links;
+    std::vector<TransportStatus> status; // 代表该transport是否ready, stop后为stop, 建链后为ready
+    u64 taskNum = 0;
+    std::map<u32, u32> userRank2subCommRank;
+    std::map<u32, u32> subCommRank2UserRank;
+    bool supportDataReceivedAck = false;
+    LinkMode linkMode = LinkMode::LINK_DUPLEX_MODE;
+    bool enableUseOneDoorbell = false;
+    bool needVirtualLink = false; // for alltoall 多线程性能提升使用
+    std::vector<LINK> virtualLinks; // for alltoall 多线程性能提升使用
+};
 using LevelNSubCommTransport = std::vector<SingleSubCommTransport>;
 using OpCommTransport = std::vector<LevelNSubCommTransport>;
 
@@ -49,6 +107,7 @@ struct AlgResourceRequest {
     bool needAivBuffer = false;
     DeviceMode mode = DeviceMode::HOST;     // 用于区分是host模式，还是aicpu模式
     OpCommTransport opTransport;
+    bool isInGraphCaptureZeroCopy = false;
     void Describe()
     {
         HCCL_DEBUG("[AlgResourceRequest], scratchMemSize[%u], streamNum[%u], notifyNum[%u], needAivBuffer[%u], "
@@ -95,6 +154,7 @@ struct OpParam {
     RankId dstRank = 0;
     RankId srcRank = 0;
     bool aicpuUnfoldMode = false;
+    bool isCapture = false;
     HcclTraceInfo* opBaseAtraceInfo = nullptr;
     union {
         struct {
@@ -123,10 +183,28 @@ struct OpParam {
             u32 curIterNum;
             BatchSendRecvCurMode curMode;
         } BatchSendRecvDataDes;
+        struct {
+            u32 itemNum;
+            u32 queueNum;
+            u32 queueIdx;
+        } BatchWriteDataDes;
     };
     HcclCMDType opType = HcclCMDType::HCCL_CMD_INVALID;
+    bool supportZeroCopy = false;
     bool isZeroCopy = false;
+    s32 aivTag = 0; // AIV场景使用的软同步标记位
     u32 index = 0;
+    bool isInplaceError = false;
 };
+
+struct AlgDesc {
+    bool isZeroCopy = false;
+    bool isAivMode = false;
+    s32 aivTagNum = 1;
+};
+
+struct ResourceLimit {
+};
+
 }   // namespace hccl
 #endif

@@ -73,7 +73,7 @@ HcclResult CollBroadCastMix::CalcLevel0CommInfo(TransportMemType inputType,
 
 HcclResult CollBroadCastMix::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollBroadCastMix][KernelRun] The CollBroadCastMix starts.");
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollBroadCastMix][KernelRun] The CollBroadCastMix starts.");
     u32 perDataSize = 0;
     CHK_RET(SalGetDataTypeSize(param.DataDes.dataType, perDataSize));
     CHK_PRT_RET(perDataSize == 0, 

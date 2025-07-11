@@ -9,7 +9,6 @@
  */
 
 #include "coll_all_reduce_small_count_aiv_rdma_executor.h"
-#include "alg_profiling.h"
 #include "sender.h"
 #include "reducer.h"
 
@@ -28,6 +27,8 @@ CollAllReduceSmallCountAivRdmaExecutor::CollAllReduceSmallCountAivRdmaExecutor(c
     : CollAllReduceExecutor(dispatcher, topoMatcher)
 {
     DMAReduceFlag_ = false;
+    desc_.isAivMode = true;
+    desc_.aivTagNum = AIV_A2_ALL_REDUCE_RDMA_KERNEL_NUM;
 }
 
 HcclResult CollAllReduceSmallCountAivRdmaExecutor::CalcStreamNum(u32& streamNum)
@@ -131,6 +132,11 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::Orchestrate(OpParam& param, A
     return HCCL_SUCCESS;
 }
 
+HcclResult CollAllReduceSmallCountAivRdmaExecutor::GetAdjInfo(AlgResourceResponse& algRes, AdjInfo& adjInfo)
+{
+    return HCCL_SUCCESS;
+}
+
 HcclResult CollAllReduceSmallCountAivRdmaExecutor::InterServerHDOneshot(const OpParam &param, ExecMem &execMem,
     u32 &outputOffset, u64 sliceCount, u32 dbOffset, u32 interRankSize, u32 interRankId, bool isOpbase,
     std::vector<LINK> &interLinks)
@@ -225,10 +231,6 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::KernelRun(const OpParam &para
     // RS总数据量最大1m，rs的结果存储到2m处
     void* rsOutput = static_cast<u8 *>(execMem.inputMem.ptr()) + HCCL_SMALL_COUNT_2_MB;
 
-    if (aivClearEnable_) {
-        ClearAivSyncBuf(flagBuffers, intraRankId, intraRankSize, param.stream.ptr());
-    }
-
     AivOpArgs opArgs {
         HcclCMDType::HCCL_CMD_ALLREDUCE, execMem.inputPtr, rsOutput, execMem.count,
         param.DataDes.dataType, param.reduceType, 0, isOpbase
@@ -238,21 +240,22 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::KernelRun(const OpParam &para
     };
     blockDim_ = CalBlockDim(intraRankSize);
     AivResourceArgs resourceArgs {
-        param.tag, param.stream.ptr(), dataBuffers, flagBuffers, execMem.inputMem.size(), blockDim_
+        param.tag, param.stream.ptr(), dataBuffers, flagBuffers, execMem.inputMem.size(), blockDim_, param.aivTag
     };
     AivAlgArgs algArgs { INTRA_RS_STEP, true };
     struct AivProfilingInfo aivProfilingInfo;
     aivProfilingInfo.counter = opCounter_;
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){
-        HCCL_PROFILER_ADD_TAG(param.tag, algoAttr_.identifier, workflowMode_);
+        HCCL_PROFILER_ADD_TAG_AIV(param.tag, algoAttr_.identifier, workflowMode_);
         HCCL_PROFILER_ADD_STREAM_BY_STREAMID(param.stream.id(), param.tag, 0, algType_);
+    }
+
+    if (aivClearEnable_) {
+        ClearAivSyncBuf(flagBuffers, param.stream.ptr(), topoArgs);
     }
 
     CHK_RET(ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, aivProfilingInfo));
 
-    TaskAivProfiler(opArgs.cmdType, aivProfilingInfo.tag, opArgs.count * sizeof(opArgs.dataType),
-        aivProfilingInfo.blockDim, topoArgs.rankSize, resourceArgs.buffersOut[topoArgs.rank], resourceArgs.stream,
-        algArgs.step, aivProfilingInfo.beginTime);
     // use hd algo
     u32 arOutputOffset = 0;  // 跨机allreduce的结果的位置，相对于inputMem的偏移
     CHK_RET(InterServerHDOneshot(param, execMem, arOutputOffset, dataSegsSlice[commIndex].size / perDataSize,
@@ -268,13 +271,10 @@ HcclResult CollAllReduceSmallCountAivRdmaExecutor::KernelRun(const OpParam &para
     opArgs.output = execMem.outputPtr;
     resourceArgs.buffersIn = dataBuffers;
     resourceArgs.buffersOut = flagBuffers;
+    resourceArgs.aivTag = GetNextAivTag(resourceArgs.aivTag);
     algArgs.step = INTRA_AG_STEP;
 
     CHK_RET(ExecuteKernelLaunch(opArgs, topoArgs, resourceArgs, algArgs, aivProfilingInfo));
-
-    TaskAivProfiler(opArgs.cmdType, aivProfilingInfo.tag, opArgs.count * sizeof(opArgs.dataType),
-        aivProfilingInfo.blockDim, topoArgs.rankSize, resourceArgs.buffersOut[topoArgs.rank], resourceArgs.stream,
-        algArgs.step, aivProfilingInfo.beginTime);
 
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE){ 
         HCCL_PROFILER_DEL_STREAM_BY_STREAMID(param.stream.id());

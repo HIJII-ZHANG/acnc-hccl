@@ -100,7 +100,7 @@ HcclResult CollRunAlltoAllVFor310PExecutor::CalcCommInfo(std::vector<LevelNSubCo
 
 HcclResult CollRunAlltoAllVFor310PExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
-    HCCL_INFO("[CollRunAlltoAllVFor310PExecutor][KernelRun] alltoall for 310p start.");
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollRunAlltoAllVFor310PExecutor][KernelRun] alltoall for 310p start.");
 
     // 获取通信域
     CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));

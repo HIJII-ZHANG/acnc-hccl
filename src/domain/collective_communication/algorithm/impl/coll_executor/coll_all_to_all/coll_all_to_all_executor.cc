@@ -66,6 +66,47 @@ HcclResult CollAlltoAllExecutor::Orchestrate(OpParam& param, AlgResourceResponse
     return HCCL_SUCCESS;
 }
 
+HcclResult CollAlltoAllExecutor::GetAdjInfo(AlgResourceResponse& algRes, AdjInfo& adjInfo)
+{
+    algResResp_ = &algRes;
+    SubCommInfo levelCommInfo = {0};
+    AdjInfo nslbAdjInfo = {0};
+    u32 devNumInlocalPod = INVALID_VALUE_RANKSIZE;
+
+    if (Getlevel1CommRank(levelCommInfo) != HCCL_SUCCESS) {
+        return HCCL_SUCCESS;
+    }
+    u32 localRank= levelCommInfo.localRank;
+    u32 localRankSize = levelCommInfo.localRankSize;
+
+    std::unique_ptr<AlgTemplateBase> levelTempAlg;
+    if (SelectTempAlg(levelTempAlg, localRankSize) != HCCL_SUCCESS) {
+        return HCCL_SUCCESS;
+    }
+    GetDevNumInlocalPod(devNumInlocalPod);
+    if (devNumInlocalPod == INVALID_VALUE_RANKSIZE) {
+        HCCL_INFO("[GetAdjInfo-nslbdp] devNumInlocalPod == INVALID_VALUE_RANKSIZE.");
+        return HCCL_SUCCESS;
+    }
+
+    nslbAdjInfo.dstRankNum = devNumInlocalPod;
+    CHK_RET(levelTempAlg->GetNslbAdjInfo(localRank, localRankSize, levelCommInfo.links, nslbAdjInfo));
+
+    adjInfo.dstRankNum = nslbAdjInfo.dstRankNum;
+    HCCL_INFO("[GetAdjInfo-nslbdp] adjInfo.dstRankNum[%u].", adjInfo.dstRankNum);
+    
+    for (size_t i = 0; i < nslbAdjInfo.nsAdjInfo.size(); i++) {
+        NslbDpAdjInfo dpAdjInfo = {0};
+        dpAdjInfo.dstLocalRankId = nslbAdjInfo.nsAdjInfo[i].dstLocalRankId;
+        dpAdjInfo.phaseId = nslbAdjInfo.nsAdjInfo[i].phaseId;
+        dpAdjInfo.rev = 0;
+        adjInfo.nsAdjInfo.push_back(dpAdjInfo); 
+        HCCL_INFO("[nslbdp]GetAdjInfo dstLocalRankId[%u], phaseId[%u].",
+                   nslbAdjInfo.nsAdjInfo[i].dstLocalRankId, nslbAdjInfo.nsAdjInfo[i].phaseId);
+    }
+    return HCCL_SUCCESS;
+}
+
 // override----------------------资源计算接口----------------------
 HcclResult CollAlltoAllExecutor::CalcResRequest(const OpParam& param, AlgResourceRequest& resourceRequest)
 {
@@ -117,16 +158,16 @@ HcclResult CollAlltoAllExecutor::CheckNeedCreateVirtualLinks(AlgResourceRequest 
     return HCCL_SUCCESS;
 }
 
-HcclResult CollAlltoAllExecutor::SetExcutorExtraInfo(const std::vector<SendRecvInfo> &allMeshAggregationSendRecvInfo)
+HcclResult CollAlltoAllExecutor::SetExcutorExtraInfo(const std::vector<SendRecvInfo> &allMeshAggregationSendRecvInfo, u64 cclbufferSize)
 {
     allMeshAggregationSendRecvInfo_.clear();
     allMeshAggregationSendRecvInfo_ = allMeshAggregationSendRecvInfo;
-    UpdateAlltoAllZCopyMode(allMeshAggregationSendRecvInfo_);
+    UpdateAlltoAllZCopyMode(allMeshAggregationSendRecvInfo_, cclbufferSize);
 
     return HCCL_SUCCESS;
 }
 
-void CollAlltoAllExecutor::UpdateAlltoAllZCopyMode(std::vector<SendRecvInfo> &allMeshAggregationSendRecvInfo)
+void CollAlltoAllExecutor::UpdateAlltoAllZCopyMode(std::vector<SendRecvInfo> &allMeshAggregationSendRecvInfo, u64 cclbufferSize)
 {
     if (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE) {
         u64 maxSendSize = 0;
@@ -139,13 +180,13 @@ void CollAlltoAllExecutor::UpdateAlltoAllZCopyMode(std::vector<SendRecvInfo> &al
                 maxRecvSize = std::max(maxRecvSize, curRecvSize);
             }
         }
-        bool isAlltoAllZCopyMode = (maxSendSize <= GetExternalInputCCLBuffSize()) &&
-                                   (maxRecvSize <= GetExternalInputCCLBuffSize());
+        bool isAlltoAllZCopyMode = (maxSendSize <= cclbufferSize) &&
+                                   (maxRecvSize <= cclbufferSize);
         if (isAlltoAllZCopyMode) {
            isAlltoAllZCopyMode_ = true;
         }
         HCCL_INFO("[CollAlltoAllExecutor][UpdateAlltoAllZCopyMode] maxSendSize[%llu], maxRecvSize[%llu], "\
-            "cclBufferSize[%llu]", maxSendSize, maxRecvSize, GetExternalInputCCLBuffSize());
+            "cclBufferSize[%llu]", maxSendSize, maxRecvSize, cclbufferSize);
     } else {
         // 图模式走ZCopy实现
         isAlltoAllZCopyMode_ = true;
@@ -385,7 +426,9 @@ HcclResult CollAlltoAllExecutor::SetVirtualDispatcher(const HcclDispatcher vDisp
 
 HcclResult CollAlltoAllExecutor::SetParallelTaskLoader(ParallelTaskLoader* parallelTaskLoader)
 {
+#ifndef CCL_KERNEL_AICPU
     parallelTaskLoader_ = parallelTaskLoader;
+#endif
     return HCCL_SUCCESS;
 }
 

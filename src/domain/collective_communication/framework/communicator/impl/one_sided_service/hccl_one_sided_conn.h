@@ -24,20 +24,26 @@ namespace hccl {
 
 class HcclOneSidedConn {
 public:
+    struct ProcessInfo {
+        u32 pid;
+        u32 sdid;
+        u32 serverId;
+    };
+
     // 参数超过5个，最终交付前完成优化
     HcclOneSidedConn(const HcclNetDevCtx &netDevCtx, const HcclRankLinkInfo &localRankInfo,
         const HcclRankLinkInfo &remoteRankInfo, std::unique_ptr<HcclSocketManager> &socketManager,
         std::unique_ptr<NotifyPool> &notifyPool, const HcclDispatcher &dispatcher,
-        const bool &useRdma, u32 sdid, u32 serverId);
+        const bool &useRdma, u32 sdid, u32 serverId,
+        u32 trafficClass = HCCL_COMM_TRAFFIC_CLASS_CONFIG_NOT_SET,
+        u32 serviceLevel = HCCL_COMM_SERVICE_LEVEL_CONFIG_NOT_SET);
 
     ~HcclOneSidedConn();
 
     HcclResult Connect(const std::string &commIdentifier, s32 timeoutSec);
 
-    HcclResult RegMem(HcclMem &localMem, HcclMemDesc &localMemDesc);
-    HcclResult DeregMem(const HcclMemDesc &localMemDesc);
-    HcclResult ExchangeMemDesc(const HcclMemDescs &localMemDescs, HcclMemDescs &remoteMemDescs, u32 &actualNumOfRemote,
-        const std::string &commIdentifier, s32 timeoutSec);
+    HcclResult ExchangeIpcProcessInfo(const ProcessInfo &localProcess, ProcessInfo &remoteProcess);
+    HcclResult ExchangeMemDesc(const HcclMemDescs &localMemDescs, HcclMemDescs &remoteMemDescs, u32 &actualNumOfRemote);
 
     void EnableMemAccess(const HcclMemDesc &remoteMemDesc, HcclMem &remoteMem);
     void DisableMemAccess(const HcclMemDesc &remoteMemDesc);

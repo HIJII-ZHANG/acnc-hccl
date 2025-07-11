@@ -24,6 +24,8 @@
 #include "coll_executor_base.h"
 #include "coll_alg_utils.h"
 #include "alg_configurator.h"
+#include "hccl_aiv.h"
+#include "config_log.h"
 
 namespace hccl {
 struct PreProcessMetaInfo {
@@ -41,10 +43,15 @@ public:
 
     virtual HcclResult SelectAlg(const std::string& tag,
         const OpParam& param, std::string& algName, std::string& newTag);
+    HcclResult SelectAlg(const std::string& tag, const OpParam &param, const ResourceLimit &limit,
+        std::string &algName, AlgDesc &algDesc, std::string &newTag);
     virtual HcclResult CalcResRequest(const std::string& algName,
         const OpParam& param, AlgResourceRequest& resourceRequest);
     virtual HcclResult Orchestrate(const std::string& algName,
         OpParam& param, AlgResourceResponse& algResource);
+    // AIV判断是否需要拷贝通信域信息到device上
+    HcclResult PrepareCommInfoToDevice(const std::string& algName, AlgResourceResponse& algResource);
+    virtual HcclResult GetAdjInfo(const std::string& algName, OpParam& param, AlgResourceResponse& algResource, AdjInfo& nslbAdjInfo);
     // batchsendrecv判断是否需要增量建链
     HcclResult CalcIncreLinkRequest(const std::string& algName, const OpParam& param,
         AlgResourceRequest& resourceRequest);
@@ -52,11 +59,14 @@ public:
     void SetLegacyHcclImpl(std::unique_ptr<hcclImpl> &hcclImpl);
     HcclResult SetAlgOpContext(AlgOpContext algOpContext);
     HcclResult SetRetryEnable(bool retryEnable);
+    HcclResult GetAivExecParam(std::string& algName, const OpParam& param,
+        AlgResourceResponse& algRes, AivSuperKernelArgs &args);
+    HcclResult CalBlockDim(std::string& algName, const OpParam& param, u32 &blockDim);
     HcclResult SetAivClearEnable(bool aivClearEnable);
     bool SupportRetryWithInplaceCheck(
         const HcclCMDType &opType, OpParam &param, std::string& algName, u8 &isInplaceStatus,
         InplaceSupportRetryStatus &inPlaceSupportRetryStatus);
-    HcclResult GetBlockDim(u32& blcckDim);
+    HcclResult GetBlockDim(u32& blockDim);
     HcclResult SetOpCounter(const OpCounterInfo& opCounter);
 protected:
     std::string GenerateNewTagByAlgTypeLevel1(std::string tag, std::string algTypeLevel1Tag) const;

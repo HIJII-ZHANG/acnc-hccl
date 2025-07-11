@@ -51,6 +51,7 @@ struct ParaAiv{
     u32 rankSize;
     s32 aivRdmaStep;
     void* flagMem;
+    u32 rank;
 };
 struct TaskInfo {
     u32 streamID;
@@ -143,6 +144,8 @@ private:
     static void PrintTaskContextInfo(const std::shared_ptr<std::deque<TaskInfo>> &taskQue);
     static void PrintTaskAivBuffer(const std::shared_ptr<std::deque<TaskInfo>> &taskQue);
     static void PrintTaskAivInfo(const std::shared_ptr<std::deque<TaskInfo>> &taskQue);
+    static void ParseTaskSyncFlag(s32 *flagMem, u32 flagMemSize, u32 rankSize, u32 rank, u32 index);
+    static std::string SerializeSyncFlag(s32 *buf, u32 num, u32 interval);
     static void PrintOpDataInfo(OpDataInfo &opDataInfo, bool isFftsPlus);
     static void TimeStruct2Str(struct timeval &tv, std::string &opDataContent);
     static bool DealExceptionOp(rtExceptionInfo *exceptionInfo);

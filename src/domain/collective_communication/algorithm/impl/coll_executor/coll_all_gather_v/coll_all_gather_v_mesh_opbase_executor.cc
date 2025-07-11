@@ -78,6 +78,7 @@ bool CollAllGatherVMeshOpbaseExecutor::IsHugeData(const u64 curSize)
 
 HcclResult CollAllGatherVMeshOpbaseExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollAllGatherVMeshOpbaseExecutor][KernelRun] userRank[%u] starts.", topoAttr_.userRank);
     HcclDataType dataType = HCCL_DATA_TYPE_RESERVED;
     dataType = param.VDataDes.dataType;
     const u32 unitSize = SIZE_TABLE[dataType];

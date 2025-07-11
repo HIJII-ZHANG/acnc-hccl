@@ -151,6 +151,7 @@ bool CollReduceScatterDeterExecutor::IsSmallData(const u64 totalSize, const u64 
 
 HcclResult CollReduceScatterDeterExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
 {
+    HCCL_CONFIG_INFO(HCCL_ALG, "[CollReduceScatterDeterExecutor][KernelRun] userRank[%u] starts.", topoAttr_.userRank);
     u32 unitSize = SIZE_TABLE[param.DataDes.dataType];
     std::vector<Slice> dataSegsSlice; // 数据分成ranksize份，每份的起始偏移和大小
     std::unique_ptr<AlgTemplateBase> level0TempAlg;
