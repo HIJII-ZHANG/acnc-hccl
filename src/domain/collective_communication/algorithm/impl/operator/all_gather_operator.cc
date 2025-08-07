@@ -36,10 +36,14 @@ AllGatherOperator::~AllGatherOperator()
 HcclResult AllGatherOperator::SelectAlg(const std::string& tag, const OpParam& param, std::string& algName,
                                         std::string& newTag)
 {
-    if (userRankSize_ == 1 && (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE)) {
-        algName = "AllGatherSingleExecutor";
-        return HCCL_SUCCESS;
-    }
+    
+    // if (userRankSize_ == 1 && (workflowMode_ == HcclWorkflowMode::HCCL_WORKFLOW_MODE_OP_BASE)) {
+    //     algName = "AllGatherSingleExecutor";
+    //     return HCCL_SUCCESS;
+    // }
+    algName = "AllGatherNewExecutor";
+    return HCCL_SUCCESS;
+    /*
     HcclResult ret;
 
     if (isDiffDeviceType_) {
@@ -79,6 +83,7 @@ HcclResult AllGatherOperator::SelectAlg(const std::string& tag, const OpParam& p
     }
 
     return ret;
+    */
 }
 
 HcclResult AllGatherOperator::SelectAlgforMix(const OpParam& param, std::string& algName)
