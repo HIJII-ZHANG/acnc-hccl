@@ -96,4 +96,5 @@ void AllGatherStripedPipeline::RunOnePlane(int plane)
         }
     }
 
+REGISTER_TEMPLATE(TemplateType::TEMPLATE_ALL_GATHER_STRIPED_PIPELINE, AllGatherStripedPipeline);
 }
