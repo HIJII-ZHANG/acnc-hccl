@@ -55,13 +55,24 @@ namespace hccl {
         // 先把 8 个 plane 都填成同一个 CommInfo（确保能跑起来；之后再按真实 NIC 拆分）
         for (size_t i=0; i<kPlaneNum; ++i) subInfo[i] = level1;
 
-        // 调模板：注意把参数名改成 subInfo
+        auto &slaveStreams = algResResp_->slaveStreams;
+        auto &notifiesMain = algResResp_->notifiesMain;
+        auto &notifiesAux  = algResResp_->notifiesAux;
+
+        // 模板实例
+        std::unique_ptr<AlgTemplateBase> tmpl =
+            AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_ALL_GATHER_STRIPED_PIPELINE, dispatcher_);
+        CHK_SMART_PTR_NULL(tmpl);
+
+        // 准备并运行
         CHK_RET(tmpl->Prepare(execMem.inputMem, execMem.outputMem, execMem.count, GetDataType(param),
                             param.stream, slaveStreams, notifiesMain, notifiesAux,
                             topoAttr_.userRank, topoAttr_.userRankSize, /*localHop=*/7, subInfo));
-        
-        CHK_RET(ActiveSlaveStreams(param.stream));  // 基类 helper
+
+        CHK_RET(ActiveSlaveStreams(param.stream));
         CHK_RET(tmpl->RunAsync());
+
         HCCL_INFO("[CollAllGatherNewExecutor][KernelRun] striped-pipeline done");
         return HCCL_SUCCESS;
     }
