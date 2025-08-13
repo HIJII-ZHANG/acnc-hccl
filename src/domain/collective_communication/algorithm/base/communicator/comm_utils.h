@@ -52,6 +52,7 @@ enum class CommType {
     COMM_TAG_PARTIAL_MESH_COMBINED,
     COMM_TAG_HCCS_PLUS_SIO,
     COMM_TAG_MAX,
+    COMM_TAG_384
 };
 
 // 通信域建链信息

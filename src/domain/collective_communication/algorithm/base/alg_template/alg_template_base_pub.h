@@ -167,6 +167,7 @@ enum TemplateType {
     TEMPLATE_CUSTOM_MAX_NUM = 2000                  // 用户自定义template最大值
 
     TEMPLATE_ALL_GATHER_STRIPED_PIPELINE = 1001
+    TEMPLATE_ALL_TO_ALL_CM128SLICE = 1002
 };
 
 enum class SliceType {
