@@ -50,10 +50,22 @@ HcclResult CollAlltoAllCM128SliceExecutor::KernelRun(const OpParam& param, ExecM
   }
 
   // 标准 Prepare：数据/主流/计数等（手册接口）
-  CHK_RET(tempAlg->Prepare(execMem.outputMem, execMem.outputMem, execMem.inputMem,
-                           execMem.count, param.DataDes.dataType, param.stream,
-                           HCCL_REDUCE_RESERVED, INVALID_VALUE_RANKID,
-                           std::vector<Slice>{}, /*baseOffset*/0));
+  StageAlltoAllVAddrInfo sendAddrInfo{};
+  StageAlltoAllVAddrInfo recvAddrInfo{};
+  CHK_RET(tmpl->Prepare(
+      /*sendMem           */ execMem.inputMem,
+      /*recvMem           */ execMem.outputMem,
+      /*scratchInputMem   */ execMem.scratchInputMem,
+      /*scratchOutputMem  */ execMem.scratchOutputMem,
+      /*sendAddrInfo      */ sendAddrInfo,
+      /*recvAddrInfo      */ recvAddrInfo,
+      /*isAlltoAllZCopy   */ isAlltoAllZCopyMode_,
+      /*userRank          */ topoAttr_.userRank,
+      /*mainStream        */ param.stream,                 // 主流（由框架传入）
+      /*subStreams        */ algResResp_->slaveStreams,    // 7 个从流
+      /*notifyMainToSub   */ algResResp_->notifiesMain,    // 信号（可选）
+      /*notifySubToMain   */ algResResp_->notifiesAux      // 信号（可选）
+  ));
 
   // 三段：Gather → Inter → Scatter（每段在相应子通信域上 RunTemplate）
   CHK_RET(tempAlg->SetMode(0));  // Gather（机内）

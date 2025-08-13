@@ -63,8 +63,9 @@ namespace hccl {
         //for(int i=0;i<kPlaneNum;++i) { start[i]=LocalNotify::Create(dispatcher_); done[i]=LocalNotify::Create(dispatcher_);}        
 
 
-        CHK_RET(tmpl->Prepare(param, subInfo, param.stream, slaveStreams, notifiesMain, notifiesAux,
-                             topoAttr_.userRank, topoAttr_.userRankSize, /*localHop=*/7));
+        CHK_RET(tmpl->Prepare(execMem.inputMem, execMem.outputMem, execMem.count, GetDataType(param),
+                      param.stream, slaveStreams, notifiesMain, notifiesAux,
+                      topoAttr_.userRank, topoAttr_.userRankSize, /*localHop=*/7, commPlanes));
         
         CHK_RET(ActiveSlaveStreams(param.stream));  // 基类 helper
         CHK_RET(tmpl->RunAsync());
