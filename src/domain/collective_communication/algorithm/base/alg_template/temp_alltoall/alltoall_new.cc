@@ -4,17 +4,25 @@
 namespace hccl {
 
 HcclResult AlltoAllCM128Slice::Prepare(
-    DeviceMem &inputMem, DeviceMem &outputMem, DeviceMem &scratchMem,
-    const u64 count, const HcclDataType dataType, const Stream &stream,
-    const HcclReduceOp, const u32, const std::vector<Slice> &, const u64 baseOffset)
+    DeviceMem &sendMem, DeviceMem &recvMem, DeviceMem &scratchInputMem,
+    DeviceMem &scratchOutputMem, StageAlltoAllVAddrInfo &/*sendAddrInfo*/,
+    StageAlltoAllVAddrInfo &/*recvAddrInfo*/, bool isAlltoAllZCopyMode,
+    u32 userRank, Stream &mainStream, std::vector<Stream> &subStreams,
+    std::vector<std::shared_ptr<LocalNotify>> &meshSignalMainToSub,
+    std::vector<std::shared_ptr<LocalNotify>> &meshSignalSubToMain)
 {
-  inputMem_   = inputMem;
-  outputMem_  = outputMem;
-  scratchMem_ = scratchMem;
-  count_      = count;
-  dataType_   = dataType;
-  stream_     = stream;
-  baseOffset_ = baseOffset;
+  // 保存运行期对象（与手册“Prepare 接参 → RunAsync 执行”一致）
+  sendMem_   = sendMem;
+  recvMem_   = recvMem;
+  scratchIn_ = scratchInputMem;
+  scratchOut_= scratchOutputMem;
+  zcopy_     = isAlltoAllZCopyMode;
+  userRank_  = userRank;
+  mainStream_= mainStream;
+  slaveStreams_ = subStreams;            // 7 个从流
+  notifyM2S_    = meshSignalMainToSub;   // 可选使用
+  notifyS2M_    = meshSignalSubToMain;
+
   return HCCL_SUCCESS;
 }
 
@@ -28,63 +36,59 @@ void AlltoAllCM128Slice::BuildSlices(u64 bytesPerPair, SliceMap& sm) const
     sm.off[s]   = acc;
     acc        += avg;
   }
-  if (acc < bytesPerPair) sm.len[127] += (bytesPerPair - acc);  // 余数补到最后一片（可按 4KB 对齐）
+  if (acc < bytesPerPair) sm.len[127] += (bytesPerPair - acc); // 余数补到最后一片（可做 4KB 对齐）
 }
 
-inline HcclResult AlltoAllCM128Slice::TxOne(const LINK &link, u64 off, u64 sz, const Stream &s)
+inline HcclResult AlltoAllCM128Slice::TxOne(const LINK &link, u64 off, u64 sz, Stream &s)
 {
-  DeviceMem src = outputMem_.range(off, sz);
-  return link->TxAsync(UserMemType::OUTPUT_MEM, baseOffset_ + off, src.ptr(), sz, s);
+  DeviceMem src = sendMem_.range(off, sz);
+  return link->TxAsync(UserMemType::OUTPUT_MEM, /*userAddr*/ off, src.ptr(), sz, s);
 }
 
-inline HcclResult AlltoAllCM128Slice::RxOne(const LINK &link, u64 off, u64 sz, const Stream &s)
+inline HcclResult AlltoAllCM128Slice::RxOne(const LINK &link, u64 off, u64 sz, Stream &s)
 {
-  DeviceMem dst = outputMem_.range(off, sz);
-  return link->RxAsync(UserMemType::OUTPUT_MEM, baseOffset_ + off, dst.ptr(), sz, s);
+  DeviceMem dst = recvMem_.range(off, sz);
+  return link->RxAsync(UserMemType::OUTPUT_MEM, /*userAddr*/ off, dst.ptr(), sz, s);
 }
 
 HcclResult AlltoAllCM128Slice::RunAsync(const u32 my, const u32 size, const std::vector<LINK> &links)
 {
+  // 这里按“每对卡等长数据”的 All-to-All：bytesPerPair = count_ * sizeof(elem)
+  // 如果你们框架把 count_/dataType_ 交给其他 Prepare，请根据实际来源获取
   const u64 elemSz       = DataUnitSize(dataType_);
   const u64 bytesPerPair = count_ * elemSz;
 
   SliceMap sm; BuildSlices(bytesPerPair, sm);
 
-  auto planeAgg     = [&](u32 k)->u32 { return aggsByPlane_[k]; };
-  auto planeStream  = [&](u32 k)->const Stream& { return PlaneStream(k); };
+  auto planeAgg  = [&](u32 k)->u32 { return aggsByPlane_[k]; };
+  auto& main     = mainStream_;
 
-  // —— 阶段 0：Gather（机内，各 plane 的非聚合者 → 对应 plane 的聚合者）——
+  // —— 0) Gather（机内：非聚合者 → 各 plane 的聚合者）——
   if (mode_ == 0) {
     for (u32 s=0; s<128; ++s) if (sm.len[s]) {
       const u32 k   = sm.plane[s];
       const u32 agg = planeAgg(k);
+      Stream &sub   = PlaneStream(k);
       const u64 off = PairBase(/*peer=*/my, bytesPerPair) + SliceOff(sm, s);
       if (my != agg) {
-        CHK_RET(TxOne(links[agg], off, sm.len[s], planeStream(k)));
+        CHK_RET(TxOne(links[agg], off, sm.len[s], sub));
       } else {
-        CHK_RET(RxOne(links[my],  off, sm.len[s], planeStream(k))); // 有的实现使用自环/内部搬运；按你们链接口替换
+        // 聚合者接收本地域其它成员（如果自环无意义，可在外层由执行器安排对等 Rx）
       }
     }
-    // 统一等待（必要时；也可分 peer 等待）
-    for (u32 p=0; p<size; ++p) {
-      CHK_RET(links[p]->RxWaitDone(stream_));
-      CHK_RET(links[p]->TxWaitDone(stream_));
-    }
+    for (u32 p=0; p<size; ++p) { CHK_RET(links[p]->RxWaitDone(main)); CHK_RET(links[p]->TxWaitDone(main)); }
     return HCCL_SUCCESS;
   }
 
-  // —— 阶段 1：Inter（跨机，仅“我是该 plane 的聚合者”的切片参与）——
+  // —— 1) Inter（跨机：仅“我是该 plane 的聚合者”的切片参与）——
   if (mode_ == 1) {
-    // 只处理我是聚合者的那些 plane
     for (u32 s=0; s<128; ++s) if (sm.len[s]) {
       const u32 k   = sm.plane[s];
       const u32 agg = planeAgg(k);
       if (my != agg) continue;
-
-      // 与所有对端聚合者互发（pairwise 全双工）
+      Stream &sub = PlaneStream(k);
       for (u32 peer=0; peer<size; ++peer) if (peer != my) {
         const u64 off = PairBase(/*peer=*/peer, bytesPerPair) + SliceOff(sm, s);
-        const Stream& sub = planeStream(k);
         CHK_RET(TxOne(links[peer], off, sm.len[s], sub));
         CHK_RET(RxOne(links[peer], off, sm.len[s], sub));
         CHK_RET(links[peer]->TxWaitDone(sub));
@@ -94,30 +98,23 @@ HcclResult AlltoAllCM128Slice::RunAsync(const u32 my, const u32 size, const std:
     return HCCL_SUCCESS;
   }
 
-  // —— 阶段 2：Scatter（机内，聚合者 → 本地其他 NPU；非聚合者只接收）——
+  // —— 2) Scatter（机内：聚合者 → 本地其他 NPU；非聚合者只接收）——
   if (mode_ == 2) {
     for (u32 s=0; s<128; ++s) if (sm.len[s]) {
       const u32 k   = sm.plane[s];
       const u32 agg = planeAgg(k);
-      const u64 off = PairBase(/*peer=*/my, bytesPerPair) + SliceOff(sm, s);
-      const Stream& sub = planeStream(k);
-
+      Stream &sub   = PlaneStream(k);
       if (my == agg) {
-        // 从聚合者向所有本地域成员“按对端 rank 的区域”分发
         for (u32 dst=0; dst<size; ++dst) if (dst != agg) {
           const u64 offDst = PairBase(/*peer=*/dst, bytesPerPair) + SliceOff(sm, s);
           CHK_RET(TxOne(links[dst], offDst, sm.len[s], sub));
         }
       } else {
-        // 非聚合者只收属于自己的区域
-        CHK_RET(RxOne(links[agg], off, sm.len[s], sub));
+        const u64 offMy = PairBase(/*peer=*/my, bytesPerPair) + SliceOff(sm, s);
+        CHK_RET(RxOne(links[agg], offMy, sm.len[s], sub));
       }
     }
-    // 可选：等待完成
-    for (u32 p=0; p<size; ++p) {
-      CHK_RET(links[p]->TxWaitDone(stream_));
-      CHK_RET(links[p]->RxWaitDone(stream_));
-    }
+    for (u32 p=0; p<size; ++p) { CHK_RET(links[p]->TxWaitDone(main)); CHK_RET(links[p]->RxWaitDone(main)); }
     return HCCL_SUCCESS;
   }
 
