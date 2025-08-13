@@ -42,8 +42,7 @@ private:
     // 简单的主从流同步（仿照你们 Mesh 模板）
     HcclResult StartSubs();
     HcclResult FinishSubs();
-    void RunOnePlane(int plane);
-
+    HcclResult RunOnePlaneWithRingTemplate(int plane);
     // ===== 成员 =====
     DeviceMem  inMem_{};
     DeviceMem  outMem_{};

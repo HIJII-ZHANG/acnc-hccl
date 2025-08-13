@@ -1,5 +1,6 @@
 #include "all_gather_striped_pipeline.h"
 #include "alg_template_register.h"
+#include "coll_executor_base.h"
 
 namespace hccl {
 AllGatherStripedPipeline::AllGatherStripedPipeline(const HcclDispatcher dispatcher)
@@ -51,52 +52,60 @@ HcclResult AllGatherStripedPipeline::FinishSubs()
 HcclResult AllGatherStripedPipeline::RunAsync()
 {
     // STEP-0: 本地 copy input→output 自己段
-    DeviceMem dstSelf = outMem_.range(bytesPerRank_*userRank_, bytesPerRank_);
+    DeviceMem dstSelf = outMem_.range(bytesPerRank_ * userRank_, bytesPerRank_);
     CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dstSelf, inMem_, mainStream_));
 
-    // 启动从流
     CHK_RET(StartSubs());
 
-    // STEP-1: 8 个 plane 并行
-    for (int p=0; p<kPlaneNum; ++p) RunOnePlane(p);
+    // STEP-1：8 个 plane 并行（每个 plane 走一次 RING 模板）
+    for (int p = 0; p < kPlaneNum; ++p) {
+        CHK_RET(RunOnePlaneWithRingTemplate(p));
+    }
 
-    // 收尾
     CHK_RET(FinishSubs());
     return HCCL_SUCCESS;
 }
 
-void AllGatherStripedPipeline::RunOnePlane(int plane)
+HcclResult AllGatherStripedPipeline::RunOnePlaneWithRingTemplate(int plane)
 {
+    // 每个 plane 的条纹大小 / 切块
     const u64 seg   = segBytes_[plane];
-    const u64 chunk = seg / rankSize_;
-    const u64 slice = chunk / kSliceK;
+    const u64 chunk = seg / rankSize_;                // 均匀切成 rankSize 份
+    // 这个 plane 在用户输出内存中的基址
+    DeviceMem outSeg = outMem_.range(plane * seg, seg);
+    CHK_SMART_PTR_NULL(outSeg);
 
-    u8 *baseSend = static_cast<u8*>(inMem_.ptr())  + plane*seg + userRank_*chunk;
-    u8 *baseRecv = static_cast<u8*>(outMem_.ptr()) + plane*seg;
-
-    Stream s = subStreams_[plane];
-
-    for (u32 r=0; r<rankSize_-1; ++r) {
-        const u32 right = (userRank_ + 1) % rankSize_;
-        const u32 left  = (userRank_ - 1 + rankSize_) % rankSize_;
-        const u32 txIdx = (userRank_ + r) % rankSize_;
-        const u32 rxIdx = (userRank_ - 1 - r + rankSize_) % rankSize_;
-        u8 *txBase = baseSend + (txIdx - userRank_) * chunk;
-        u8 *rxBase = baseRecv + rxIdx * chunk;
-
-        // Node-first: 前 localHop_ 跳在本节点内
-        const bool sameNodePhase = (r < localHop_);
-        const HcclLinkType lt = sameNodePhase ? LINK_RDMA_LOCAL
-                                : (plane < 7 ? LINK_RDMA_HCCS : LINK_RDMA_ROCE);
-
-        for (int sl=0; sl<kSliceK; ++sl) {
-            u8 *tx = txBase + sl*slice;
-            u8 *rx = rxBase + sl*slice;
-            // 发送到右邻，接收左邻
-            CHK_RET(HcclSendAsync(dispatcher_, lt, right, tx, slice, s));
-            CHK_RET(HcclRecvAsync(dispatcher_, lt, left , rx, slice, s));
-        }
+    // 生成 RING 模板所需的 Slice 列表（每个 rank 一块）
+    std::vector<Slice> slices(rankSize_);
+    for (u32 i = 0; i < rankSize_; ++i) {
+        slices[i].offset = i * chunk;
+        slices[i].size   = chunk;
     }
+
+    // 取一份 RING 模板（仓库已有）
+    std::unique_ptr<AlgTemplateBase> ringTmpl =
+        AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_GATHER_RING, dispatcher_);
+    CHK_SMART_PTR_NULL(ringTmpl);
+
+    // 准备：把“plane 条纹”映射成一次子 AllGather
+    // 注意：这里把 input 也指向 outSeg，让模板在 outSeg 内部搬运各 rank 的块（符合 AllGather）
+    // 若你的 RING 模板需要 input/out 分离，可把 input 指向 inMem_ 对应 plane 的条纹：
+    //   DeviceMem inSeg = inMem_.range(plane * seg, seg);
+    //   然后把下面的第1、2参数分别改成 inSeg / outSeg。
+    CHK_RET(ringTmpl->Prepare(
+        /*outputMem*/ outSeg,
+        /*outputMem*/ outSeg,
+        /*inputMem */ outSeg,                   // 或 inSeg（取决于你们 RING 模板签名）
+        /*count    */ seg / SIZE_TABLE[dataType_],
+        /*dtype    */ dataType_,
+        /*stream   */ subStreams_[plane],
+        /*reduce   */ HCCL_REDUCE_RESERVED,
+        /*bridgeId */ INVALID_VALUE_RANKID,
+        /*slices   */ slices,
+        /*baseOff  */ 0));
+
+    // 按该 plane 的通信域运行（把 commPlanes_[plane] 传进去）
+    return CollExecutorBase::RunTemplate(ringTmpl, commPlanes_[plane]);
 }
 
 REGISTER_TEMPLATE(TemplateType::TEMPLATE_ALL_GATHER_STRIPED_PIPELINE, AllGatherStripedPipeline);

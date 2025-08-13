@@ -20,8 +20,8 @@ set(src_list_pub
     ${CMAKE_CURRENT_SOURCE_DIR}/all_gather_ahc_broke.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/all_gather_hd_stage.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/all_gather_sio_hccs.cc
-    #${CMAKE_CURRENT_SOURCE_DIR}/all_gather_striped_pipeline.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/all_gather_new.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/all_gather_striped_pipeline.cc
+    #${CMAKE_CURRENT_SOURCE_DIR}/all_gather_new.cc
 )
 
 target_sources(hccl_alg PRIVATE
