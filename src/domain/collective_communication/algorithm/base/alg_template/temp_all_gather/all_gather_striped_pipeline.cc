@@ -28,13 +28,22 @@ HcclResult AllGatherStripedPipeline::Prepare(
     commPlanes_  = commPlanes;
 
     bytesPerRank_ = count_ * SIZE_TABLE[dataType_];
-    for (int p=0;p<kPlaneNum;++p) segBytes_[p] = GetSegBytes(bytesPerRank_, p);
+    //for (int p=0;p<kPlaneNum;++p) segBytes_[p] = GetSegBytes(bytesPerRank_, p);
+    const u64 unit = HCCL_MIN_SLICE_ALIGN; // 你分支里已有此常量；若没有就用 256/512 代替
+    u64 acc = 0;
+    const u64 avg = bytesPerRank_ / kPlaneNum;
+    for (int p = 0; p < kPlaneNum - 1; ++p) {
+        u64 sz = (avg / unit) * unit;
+        segBytes_[p] = sz;
+        acc += sz;    
+    }
+    segBytes_[kPlaneNum - 1] = (bytesPerRank_ > acc) ? ((bytesPerRank_ - acc) / unit * unit) : 0;
     return HCCL_SUCCESS;
 }
 
 HcclResult AllGatherStripedPipeline::StartSubs()
 {
-    for (size_t i=0;i<subStreams_.size();++i) {
+    for (size_t i=0;i<std::min(notifyAux_.size(), subStreams_.size());++i) {
         CHK_RET(LocalNotify::Post(mainStream_, dispatcher_, notifyAux_[i], INVALID_VALUE_STAGE));
         CHK_RET(LocalNotify::Wait(subStreams_[i], dispatcher_, notifyAux_[i], INVALID_VALUE_STAGE));
     }
@@ -42,7 +51,7 @@ HcclResult AllGatherStripedPipeline::StartSubs()
 }
 HcclResult AllGatherStripedPipeline::FinishSubs()
 {
-    for (size_t i=0;i<subStreams_.size();++i) {
+    for (size_t i=0;i<std::min(notifyMain_.size(), subStreams_.size());++i) {
         CHK_RET(LocalNotify::Post(subStreams_[i], dispatcher_, notifyMain_[i], INVALID_VALUE_STAGE));
         CHK_RET(LocalNotify::Wait(mainStream_, dispatcher_, notifyMain_[i], INVALID_VALUE_STAGE));
     }
@@ -69,17 +78,26 @@ HcclResult AllGatherStripedPipeline::RunAsync()
 HcclResult AllGatherStripedPipeline::RunOnePlaneWithRingTemplate(int plane)
 {
     // 每个 plane 的条纹大小 / 切块
-    const u64 seg   = segBytes_[plane];
-    const u64 chunk = seg / rankSize_;                // 均匀切成 rankSize 份
+    const u64 seg = segBytes_[plane];
+    if (seg == 0) return HCCL_SUCCESS;
+
+    const u64 perSize   = SIZE_TABLE[dataType_];
+    const u64 cntPlane  = seg / perSize;
+    const u64 planeBase = [&]{
+        u64 off = 0;
+        for (int i=0;i<plane;i++) off += segBytes_[i];
+        return off;                       // 该平面在“每 rank 数据块”内的偏移
+    }();
+    const u64 stridePerRank = bytesPerRank_;               // 均匀切成 rankSize 份
     // 这个 plane 在用户输出内存中的基址
-    DeviceMem outSeg = outMem_.range(plane * seg, seg);
-    CHK_SMART_PTR_NULL(outSeg);
+    DeviceMem outGlobal = outMem_;
+    CHK_SMART_PTR_NULL(outGlobal);
 
     // 生成 RING 模板所需的 Slice 列表（每个 rank 一块）
     std::vector<Slice> slices(rankSize_);
     for (u32 i = 0; i < rankSize_; ++i) {
-        slices[i].offset = i * chunk;
-        slices[i].size   = chunk;
+        slices[i].offset = i * stridePerRank + planeBase;
+        slices[i].size   = seg;
     }
 
     // 取一份 RING 模板（仓库已有）
@@ -92,17 +110,17 @@ HcclResult AllGatherStripedPipeline::RunOnePlaneWithRingTemplate(int plane)
     // 若你的 RING 模板需要 input/out 分离，可把 input 指向 inMem_ 对应 plane 的条纹：
     //   DeviceMem inSeg = inMem_.range(plane * seg, seg);
     //   然后把下面的第1、2参数分别改成 inSeg / outSeg。
-    CHK_RET(ringTmpl->Prepare(
-        /*outputMem*/ outSeg,
-        /*outputMem*/ outSeg,
-        /*inputMem */ outSeg,                   // 或 inSeg（取决于你们 RING 模板签名）
-        /*count    */ seg / SIZE_TABLE[dataType_],
-        /*dtype    */ dataType_,
-        /*stream   */ subStreams_[plane],
-        /*reduce   */ HCCL_REDUCE_RESERVED,
-        /*bridgeId */ INVALID_VALUE_RANKID,
-        /*slices   */ slices,
-        /*baseOff  */ 0));
+    Stream s = subStreams_.empty() ? mainStream_ : subStreams_[plane % subStreams_.size()];
+    CHK_RET(ringTmpl->Prepare(/*output*/ outGlobal,
+                              /*output*/ outGlobal,
+                              /*input */ outGlobal,
+                              /*count */ cntPlane,
+                              /*dtype */ dataType_,
+                              /*stream*/ s,
+                              /*op    */ HCCL_REDUCE_RESERVED,
+                             /*bridge*/ INVALID_VALUE_RANKID,
+                             /*slices*/ slices,
+                             /*baseOf*/ 0));
 
     // 按该 plane 的通信域运行（把 commPlanes_[plane] 传进去）
     return CollExecutorBase::RunTemplate(ringTmpl, commPlanes_[plane]);

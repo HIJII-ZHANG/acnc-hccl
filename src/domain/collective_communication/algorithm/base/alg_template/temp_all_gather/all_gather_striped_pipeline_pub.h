@@ -11,15 +11,15 @@ public:
     ~AllGatherStripedPipeline() override = default;
 
     // 常量（在头里自带，避免未定义）
-    static constexpr int  kPlaneNum = 8;     // 7×HCCS + 1×RoCE
-    static constexpr int  kSliceK   = 8;
-    static constexpr float kBwHccs  = 28.0f; // GB/s
-    static constexpr float kBwRoce  = 50.0f; // GB/s
-    static constexpr float kSumBw   = 7*kBwHccs + kBwRoce;
+    static constexpr int  kPlaneNum = 7;     // 7×HCCS + 1×RoCE
+    //static constexpr int  kSliceK   = 8;
+    //static constexpr float kBwHccs  = 28.0f; // GB/s
+    //static constexpr float kBwRoce  = 50.0f; // GB/s
+    // static constexpr float kSumBw   = 7*kBwHccs + kBwRoce;
 
-    static inline uint64_t GetSegBytes(uint64_t total, int p) {
-        return static_cast<uint64_t>( total * ((p < 7 ? kBwHccs : kBwRoce)/kSumBw) + 0.5 );
-    }
+    // static inline uint64_t GetSegBytes(uint64_t total, int p) {
+    //     return static_cast<uint64_t>( total * ((p < 7 ? kBwHccs : kBwRoce)/kSumBw) + 0.5 );
+    // }
 
     // 与 fe401bf8db 模板风格一致：不用 OpParam；直接传入内存/流/通知/秩信息/comm 列表
     HcclResult Prepare(

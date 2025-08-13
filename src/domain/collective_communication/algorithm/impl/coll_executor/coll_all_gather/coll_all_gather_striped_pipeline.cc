@@ -26,6 +26,8 @@ namespace hccl {
         TransportMemType outputType,
         std::vector<LevelNSubCommTransport>& opTransport)
     {
+        CommParaInfo commParaLevel0(COMM_LEVEL0, CommType::COMM_TAG_RING_INNER);
+        CHK_RET(CalcCommPlaneInfo(tag_, commParaLevel0, opTransport[COMM_LEVEL0], inputType, outputType));
         return HCCL_SUCCESS;
     }
     HcclResult CollAllGatherNewExecutor::CalcTransportMemType(TransportMemType &inputType, TransportMemType &outputType)
@@ -38,46 +40,55 @@ namespace hccl {
     }
     u64 CollAllGatherNewExecutor::CalcLoopMaxCount(const u64 cclBuffSize, const u32 unitSize)
     {
-        return UINT64_MAX;
+        return (cclBuffSize / topoAttr_.userRankSize / HCCL_MIN_SLICE_ALIGN) * HCCL_MIN_SLICE_ALIGN / unitSize;
     }
     HcclResult CollAllGatherNewExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
     {
         HCCL_INFO("[CollAllGatherNewExecutor][KernelRun] algorithm start");
 
-        constexpr size_t kPlaneNum = 8;        // 7 HCCS + 1 RoCE
-        // —— 把基类 RunContext 拆解后直接调用模板 ——
-        std::array<SubCommInfo,kPlaneNum> subInfo{};
+        const HcclDataType dtype = GetDataType(param);
+        const u64 inputMemSize   = execMem.inputMem.size();
+        const u64 bytesPerRank   = inputMemSize;  // AllGather：每 rank 等长
+
+        // —— 取 L0：用来确定 commIndex（与 Mesh 一致）——
         CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
         SubCommInfo level0 = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
-        u32 commIndex = level0.localRank;                 // Mesh 里就用这个索引到 Level-1
+        u32 commIndex      = level0.localRank;
+        HCCL_INFO("[StripedPipeline] L0 rankSize=%u localRank=%u", level0.localRankSize, level0.localRank);
+
+        // —— 取 L1：跨节点子平面（TopoMatcher 需返回 UB 子平面的 SubCommInfo）——
         CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
         SubCommInfo level1 = GetSubCommInfo(COMM_LEVEL1, commIndex);
+        HCCL_INFO("[StripedPipeline] L1 rankSize=%u localRank=%u", level1.localRankSize, level1.localRank);
 
-        // 先把 8 个 plane 都填成同一个 CommInfo（确保能跑起来；之后再按真实 NIC 拆分）
-        for (size_t i=0; i<kPlaneNum; ++i) subInfo[i] = level1;
+        // —— 准备 7 个子平面的 SubCommInfo（当前先全部复用同一份 L1；若 TopoMatcher 已能按子平面拆分，替换为 7 份即可）——
+        constexpr size_t kPlaneNum = AllGatherStripedPipeline::kPlaneNum;
+        std::array<SubCommInfo, kPlaneNum> commPlanes{};
+        for (size_t i = 0; i < kPlaneNum; ++i) commPlanes[i] = level1;
 
+        // —— 取得模板，按“你给的 Prepare 签名”调用 —— 
         auto &slaveStreams = algResResp_->slaveStreams;
         auto &notifiesMain = algResResp_->notifiesMain;
         auto &notifiesAux  = algResResp_->notifiesAux;
 
-        // 模板实例
-        std::unique_ptr<AlgTemplateBase> tmpl =
+        std::unique_ptr<AlgTemplateBase> basePtr =
             AlgTemplateRegistry::Instance().GetAlgTemplate(
                 TemplateType::TEMPLATE_ALL_GATHER_STRIPED_PIPELINE, dispatcher_);
+        CHK_SMART_PTR_NULL(basePtr);
+        auto *tmpl = dynamic_cast<AllGatherStripedPipeline*>(basePtr.get());
         CHK_SMART_PTR_NULL(tmpl);
 
-        auto *bptr = dynamic_cast<AllGatherStripedPipeline *>(tmpl.get());
-        CHK_SMART_PTR_NULL(bptr);
-
-        // 准备并运行
-        CHK_RET(bptr->Prepare(execMem.inputMem, execMem.outputMem, execMem.count, GetDataType(param),
+        // 只要把 L1（跨节点 UB 子平面）塞给模板，模板就会在 7 个平面上并行环传
+        CHK_RET(tmpl->Prepare(execMem.inputMem, execMem.outputMem, execMem.count, dtype,
                             param.stream, slaveStreams, notifiesMain, notifiesAux,
-                            topoAttr_.userRank, topoAttr_.userRankSize, /*localHop=*/7, subInfo));
+                            topoAttr_.userRank, topoAttr_.userRankSize,
+                            /*localHop*/ (u32)(topoAttr_.deviceNumPerAggregation - 1),
+                            commPlanes));
 
         CHK_RET(ActiveSlaveStreams(param.stream));
-        CHK_RET(bptr->RunAsync());
+        CHK_RET(tmpl->RunAsync());
 
-        HCCL_INFO("[CollAllGatherNewExecutor][KernelRun] striped-pipeline done");
+        HCCL_INFO("[StripedPipeline][KernelRun] done");
         return HCCL_SUCCESS;
     }
     HcclResult CollAllGatherNewExecutor::Getlevel1CommRank(SubCommInfo& level1CommInfo)
@@ -89,5 +100,5 @@ namespace hccl {
         return HCCL_E_UNAVAIL;
     }
 
-    REGISTER_EXEC("AllGatherNewExecutor", AllGatherNew, CollAllGatherNewExecutor);
+    REGISTER_EXEC("CollAllGatherNewExecutor", AllGatherNew, CollAllGatherNewExecutor);
 } // namespace hccl
