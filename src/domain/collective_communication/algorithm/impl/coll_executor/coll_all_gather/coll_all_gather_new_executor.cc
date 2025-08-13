@@ -164,5 +164,5 @@ HcclResult CollAllGatherNewExecutor::KernelRun(const OpParam &param, ExecMem &ex
     return HCCL_SUCCESS;
 }
 
-REGISTER_EXEC("AllGatherNewExecutor", AllGatherNew, CollAllGatherNewExecutor);
+REGISTER_EXEC("CollAllGatherNewExecutor", AllGatherNew, CollAllGatherNewExecutor);
 } // namespace hccl
