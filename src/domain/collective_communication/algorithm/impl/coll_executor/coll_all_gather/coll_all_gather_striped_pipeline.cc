@@ -65,13 +65,16 @@ namespace hccl {
                 TemplateType::TEMPLATE_ALL_GATHER_STRIPED_PIPELINE, dispatcher_);
         CHK_SMART_PTR_NULL(tmpl);
 
+        auto *bptr = dynamic_cast<AllGatherStripedPipelineTemplateBase *>(tmpl.get());
+        CHK_SMART_PTR_NULL(bptr);
+
         // 准备并运行
-        CHK_RET(tmpl->Prepare(execMem.inputMem, execMem.outputMem, execMem.count, GetDataType(param),
+        CHK_RET(bptr->Prepare(execMem.inputMem, execMem.outputMem, execMem.count, GetDataType(param),
                             param.stream, slaveStreams, notifiesMain, notifiesAux,
                             topoAttr_.userRank, topoAttr_.userRankSize, /*localHop=*/7, subInfo));
 
         CHK_RET(ActiveSlaveStreams(param.stream));
-        CHK_RET(tmpl->RunAsync());
+        CHK_RET(bptr->RunAsync());
 
         HCCL_INFO("[CollAllGatherNewExecutor][KernelRun] striped-pipeline done");
         return HCCL_SUCCESS;
