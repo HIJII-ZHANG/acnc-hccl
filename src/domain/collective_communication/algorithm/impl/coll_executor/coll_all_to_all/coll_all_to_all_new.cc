@@ -4,6 +4,14 @@
 
 namespace hccl {
 
+CollAlltoAllCM128SliceExecutor::CollAlltoAllCM128SliceExecutor(
+    const HcclDispatcher dispatcher, std::unique_ptr<TopoMatcher>& topoMatcher)
+    : CollAlltoAllExecutor(dispatcher, topoMatcher)
+{
+  DMAReduceFlag_ = false;  // 默认不使用 DMA Reduce
+}
+
+
 HcclResult CollAlltoAllCM128SliceExecutor::CalcStreamNum(u32& streamNum) override
 {
   // 7 个子平面各一条从流（主流+7从流）；最少也允许 3（gather/inter/scatter）

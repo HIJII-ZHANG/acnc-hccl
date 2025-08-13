@@ -5,6 +5,7 @@ namespace hccl {
         std::unique_ptr<TopoMatcher> &topoMatcher)
         : CollAllGatherExecutor(dispatcher, topoMatcher)
     {
+        DMAReduceFlag_ = false;
     }
     HcclResult CollAllGatherNewExecutor::CalcStreamNum(u32& streamNum) override
     {
