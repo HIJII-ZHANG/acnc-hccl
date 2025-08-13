@@ -22,6 +22,7 @@ set(src_list
   ${CMAKE_CURRENT_SOURCE_DIR}/coll_all_gather_ring_zerocopy_exchange_executor.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/coll_all_gather_mesh_graph_pipeline_executor.cc
   #${CMAKE_CURRENT_SOURCE_DIR}/coll_all_gather_striped_pipeline.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/coll_all_gather_new_executor.cc
 )
 
 target_sources(hccl_alg PRIVATE
