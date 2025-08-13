@@ -1,4 +1,5 @@
 #include "coll_all_gather_striped_pipeline.h"
+#include "all_gather_striped_pipeline_pub.h"
 
 namespace hccl {
     CollAllGatherNewExecutor::CollAllGatherNewExecutor(const HcclDispatcher dispatcher,
@@ -65,7 +66,7 @@ namespace hccl {
                 TemplateType::TEMPLATE_ALL_GATHER_STRIPED_PIPELINE, dispatcher_);
         CHK_SMART_PTR_NULL(tmpl);
 
-        auto *bptr = dynamic_cast<AllGatherStripedPipelineTemplateBase *>(tmpl.get());
+        auto *bptr = dynamic_cast<AllGatherStripedPipeline *>(tmpl.get());
         CHK_SMART_PTR_NULL(bptr);
 
         // 准备并运行
