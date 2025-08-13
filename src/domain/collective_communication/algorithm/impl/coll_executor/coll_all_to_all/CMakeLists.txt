@@ -9,7 +9,7 @@ set(src_list
     ${CMAKE_CURRENT_SOURCE_DIR}/coll_all_to_all_v_direct_fullmesh_executor.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/coll_all_to_all_staged_aiv_rdma_executor.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/coll_all_to_all_mesh_aiv_for_910_93_executor.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/coll_all_to_all_new.cc
+    #${CMAKE_CURRENT_SOURCE_DIR}/coll_all_to_all_new.cc
 )
 
 target_sources(hccl_alg PRIVATE

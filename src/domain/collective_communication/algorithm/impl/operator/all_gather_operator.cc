@@ -41,7 +41,7 @@ HcclResult AllGatherOperator::SelectAlg(const std::string& tag, const OpParam& p
         algName = "AllGatherSingleExecutor";
         return HCCL_SUCCESS;
     }
-    algName = "AllGatherNewExecutor";
+    algName = "AllGatherDoubleRingConcurrentExecutor";
     /*
     HcclResult ret;
 
