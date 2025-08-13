@@ -64,7 +64,26 @@ namespace hccl {
         // —— 准备 7 个子平面的 SubCommInfo（当前先全部复用同一份 L1；若 TopoMatcher 已能按子平面拆分，替换为 7 份即可）——
         constexpr size_t kPlaneNum = AllGatherStripedPipeline::kPlaneNum;
         std::array<SubCommInfo, kPlaneNum> commPlanes{};
-        for (size_t i = 0; i < kPlaneNum; ++i) commPlanes[i] = level1;
+        for (size_t p = 0; p < kPlaneNum; ++p) {
+            if (CheckCommSize(COMM_LEVEL1, p + 1) == HCCL_SUCCESS) {
+                commPlanes[p] = GetSubCommInfo(COMM_LEVEL1, p);
+            } else {
+                // 兜底：还没拆成7份就复用 commIndex 对应的那份
+                commPlanes[p] = GetSubCommInfo(COMM_LEVEL1, commIndex);
+            }
+        }
+
+
+        //debug
+        auto peekLinkType = [](const SubCommInfo& ci, const char* tag) {
+            int n = std::min<int>(ci.links.size(), 4);
+            for (int i=0;i<n;++i) {
+                LinkType lt = ci.links[i]->GetLinkType();  // 注意你们分支枚举名是 LinkType
+                HCCL_INFO("[L1/%s] link[%d] type=%d peer=%u", tag, i, (int)lt, ci.links[i]->GetPeerRank());
+            }
+        };
+        for (int p=0; p<(int)kPlaneNum; ++p) peekLinkType(commPlanes[p], "plane");
+
 
         // —— 取得模板，按“你给的 Prepare 签名”调用 —— 
         auto &slaveStreams = algResResp_->slaveStreams;
