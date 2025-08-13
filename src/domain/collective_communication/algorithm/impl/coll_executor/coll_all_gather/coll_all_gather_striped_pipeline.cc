@@ -75,14 +75,18 @@ namespace hccl {
 
 
         //debug
-        auto peekLinkType = [](const SubCommInfo& ci, const char* tag) {
-            int n = std::min<int>(ci.links.size(), 4);
-            for (int i=0;i<n;++i) {
-                LinkType lt = ci.links[i]->GetLinkType();  // 注意你们分支枚举名是 LinkType
-                HCCL_INFO("[L1/%s] link[%d] type=%d peer=%u", tag, i, (int)lt, ci.links[i]->GetPeerRank());
+        auto dumpLinks = [](const SubCommInfo& ci, const char* tag) {
+            size_t n = std::min<size_t>(ci.links.size(), 4);
+            for (size_t i = 0; i < n; ++i) {
+                auto &lk = ci.links[i];
+                LinkType lt = lk->GetLinkType();
+                u32 peer = lk->GetRemoteRank();                   // ← 这里替换
+                HCCL_INFO("[L1/%s] link[%zu] type=%d remoteRank=%u", tag, i, (int)lt, peer);
             }
         };
-        for (int p=0; p<(int)kPlaneNum; ++p) peekLinkType(commPlanes[p], "plane");
+        for (size_t p = 0; p < kPlaneNum; ++p) {
+            dumpLinks(commPlanes[p], std::to_string(p).c_str());
+        }
 
 
         // —— 取得模板，按“你给的 Prepare 签名”调用 —— 
