@@ -40,9 +40,10 @@ namespace hccl {
     }
     u64 CollAllGatherNewExecutor::CalcLoopMaxCount(const u64 cclBuffSize, const u32 unitSize)
     {
-        u64 perLoop = cclBuffSize / topoAttr_.userRankSize / HCCL_MIN_SLICE_ALIGN
-                  * HCCL_MIN_SLICE_ALIGN / unitSize;
-        return std::max<u64>(perLoop, 1);
+        return (cclBuffSize / topoAttr_.userRankSize / HCCL_MIN_SLICE_ALIGN) * HCCL_MIN_SLICE_ALIGN / unitSize;
+        //u64 perLoop = cclBuffSize / topoAttr_.userRankSize / HCCL_MIN_SLICE_ALIGN
+        //          * HCCL_MIN_SLICE_ALIGN / unitSize;
+        //return std::max<u64>(perLoop, 1);
     }
     HcclResult CollAllGatherNewExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
     {
