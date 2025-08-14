@@ -63,6 +63,11 @@ HcclResult CollAllGatherExecutor::Orchestrate(OpParam& param, AlgResourceRespons
         execMem.outputPtr = param.outputPtr;
         ret = KernelRun(param, execMem);
     } else if (desc_.isZeroCopy) {
+        //debug
+        HCCL_INFO("[CollAllGatherExecutor][Orchestrate] zero copy mode");
+
+
+
         u64 totalSize = param.DataDes.count * SIZE_TABLE[param.DataDes.dataType];
         // 在Level1和Level2执行RunLoop
         if (topoAttr_.serverNum > 1) {
@@ -85,6 +90,9 @@ HcclResult CollAllGatherExecutor::Orchestrate(OpParam& param, AlgResourceRespons
         execMem.outputPtr = param.outputPtr;
         ret = KernelRunIntraServerPost(param, execMem);
     } else {
+        //debug
+        HCCL_INFO("[CollAllGatherExecutor][Orchestrate] opbase none zero copy mode");
+
         if (isAllGatherV_) {
             ret = RunLoopV(param, algRes);
         } else {
@@ -285,6 +293,9 @@ HcclResult CollAllGatherExecutor::RunLoop(OpParam &param, AlgResourceResponse &a
             CHK_RET(InitTask(dispatcher_, param.stream, opMeta.isEnableCache, opMeta.GetCacheKey()));
         }
 
+        //debug
+        HCCL_INFO("set label complete");
+
         // 执行
         if (!DMAReduceFlag_) {
             // 如果使用in CCL buffer，需要将user buffer in中的结果拷贝到CCL buffer in
@@ -303,6 +314,20 @@ HcclResult CollAllGatherExecutor::RunLoop(OpParam &param, AlgResourceResponse &a
         execMem.scratchMem = algRes.scratchMem;
         execMem.inputPtr = curInputPtr;
         execMem.outputPtr = curOutputPtr;
+
+        //debug
+        if (algRes.cclInputMem.size() < curSize) {
+            HCCL_ERROR("[RunLoop] cclInputMem too small: have=%llu, need=%llu",
+                    algRes.cclInputMem.size(), curSize);
+        }
+        // 2) CCL output 必须 >= curSize * userRankSize
+        u64 needOut = curSize * topoAttr_.userRankSize;
+        if (algRes.cclOutputMem.size() < needOut) {
+            HCCL_ERROR("[RunLoop] cclOutputMem too small: have=%llu, need=%llu (curSize=%llu, ranks=%u)",
+                    algRes.cclOutputMem.size(), needOut, curSize, topoAttr_.userRankSize);
+        }
+
+
         HcclResult ret = HCCL_SUCCESS;
         if (!desc_.isZeroCopy) {
             ret = KernelRun(param, execMem);

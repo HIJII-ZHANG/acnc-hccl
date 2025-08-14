@@ -40,7 +40,9 @@ namespace hccl {
     }
     u64 CollAllGatherNewExecutor::CalcLoopMaxCount(const u64 cclBuffSize, const u32 unitSize)
     {
-        return (cclBuffSize / topoAttr_.userRankSize / HCCL_MIN_SLICE_ALIGN) * HCCL_MIN_SLICE_ALIGN / unitSize;
+        u64 perLoop = cclBuffSize / topoAttr_.userRankSize / HCCL_MIN_SLICE_ALIGN
+                  * HCCL_MIN_SLICE_ALIGN / unitSize;
+        return std::max<u64>(perLoop, 1);
     }
     HcclResult CollAllGatherNewExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
     {
@@ -98,8 +100,24 @@ namespace hccl {
             AlgTemplateRegistry::Instance().GetAlgTemplate(
                 TemplateType::TEMPLATE_ALL_GATHER_STRIPED_PIPELINE, dispatcher_);
         CHK_SMART_PTR_NULL(basePtr);
+
+        // debug
+        if(!basePtr) {
+            HCCL_ERROR("[CollAllGatherNewExecutor][KernelRun] failed to get alg template");
+            return HCCL_E_UNAVAIL;
+        }
+
         auto *tmpl = dynamic_cast<AllGatherStripedPipeline*>(basePtr.get());
         CHK_SMART_PTR_NULL(tmpl);
+
+        //debug
+        if(!tmpl) {
+            HCCL_ERROR("[CollAllGatherNewExecutor][KernelRun] failed to get alg template");
+            return HCCL_E_UNAVAIL;
+        }
+        HCCL_INFO("[StripedPipeline][KernelRun] start tag[%s] rank[%u/%u] slaveStreams=%zu",
+          tag_.c_str(), topoAttr_.userRank, topoAttr_.userRankSize, algResResp_->slaveStreams.size());
+
 
         // 只要把 L1（跨节点 UB 子平面）塞给模板，模板就会在 7 个平面上并行环传
         CHK_RET(tmpl->Prepare(execMem.inputMem, execMem.outputMem, execMem.count, dtype,
@@ -108,7 +126,12 @@ namespace hccl {
                             /*localHop*/ (u32)(topoAttr_.deviceNumPerAggregation - 1),
                             commPlanes));
 
+        HCCL_INFO("[StripedPipeline][KernelRun] Prepare done");
+
         CHK_RET(ActiveSlaveStreams(param.stream));
+
+        HCCL_INFO("[StripedPipeline][KernelRun] ActiveSlaveStreams done");
+
         CHK_RET(tmpl->RunAsync());
 
         HCCL_INFO("[StripedPipeline][KernelRun] done");
