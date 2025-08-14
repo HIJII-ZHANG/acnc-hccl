@@ -10,7 +10,10 @@ namespace hccl {
     }
     HcclResult CollAllGatherNewExecutor::CalcStreamNum(u32& streamNum)
     {
-        streamNum = 8 - 1;  // 7 HCCS + 1 RoCE
+        u32 totalStreamNum = topoAttr_.deviceNumPerAggregation > 1U ? topoAttr_.deviceNumPerAggregation - 1U : 1U;
+        streamNum = totalStreamNum - 1U;
+        HCCL_INFO("[CollAllGatherMeshExecutor][CalcStreamNum] tag[%s] streamNum[%u]",
+            tag_.c_str(), streamNum);
         return HCCL_SUCCESS;
     }
     HcclResult CollAllGatherNewExecutor::CalcCommInfo(std::vector<LevelNSubCommTransport>& opTransport)

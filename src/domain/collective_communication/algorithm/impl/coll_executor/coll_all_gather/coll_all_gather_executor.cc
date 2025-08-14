@@ -24,6 +24,9 @@ HcclResult CollAllGatherExecutor::Orchestrate(OpParam& param, AlgResourceRespons
     tag_ = param.tag;
     algResResp_ = &algRes;
 
+    //debug
+    HCCL_INFO("[CollAllGatherExecutor][Orchestrate] start");
+
     const u64 count = GetCount(param);
     const HcclDataType dataType = GetDataType(param);
 
