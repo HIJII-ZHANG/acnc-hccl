@@ -42,6 +42,8 @@ HcclResult AllGatherOperator::SelectAlg(const std::string& tag, const OpParam& p
         return HCCL_SUCCESS;
     }
     algName = "CollAllGatherNewExecutor";
+
+    HCCL_INFO("[SelectAlg] all_gather SelectAlg is algName [%s]", algName.c_str());
     //algName = "AllGatherSemiRingExecutor";
     /*
     HcclResult ret;
