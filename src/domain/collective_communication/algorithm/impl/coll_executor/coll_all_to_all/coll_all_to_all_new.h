@@ -12,9 +12,10 @@ namespace hccl {
 class CollAlltoAllCM128SliceExecutor final : public CollAlltoAllExecutor {
 public:
   explicit CollAlltoAllCM128SliceExecutor(const HcclDispatcher dispatcher,
-                                          std::unique_ptr<TopoMatcher>& topoMatcher)
-    : CollAlltoAllExecutor(dispatcher, topoMatcher) {}
+                                          std::unique_ptr<TopoMatcher>& topoMatcher);
+  ~CollAlltoAllCM128SliceExecutor() = default;
 
+  HcclResult Orchestrate(OpParam& param, AlgResourceResponse& algRes) override;
 private:
   // 资源/建链（手册要求的两个关键钩子）
   HcclResult CalcStreamNum(u32& streamNum) override;                           // 7 个子平面 → 7 从流
@@ -22,7 +23,7 @@ private:
 
   // 三段式执行：Gather(机内) → Inter(跨机, 聚合者间) → Scatter(机内)
   HcclResult KernelRun(const OpParam& param, ExecMem& execMem) override;
-  HcclResult Orchestrate(OpParam& param, AlgResourceResponse& algRes) override;
+
 };
 
 } // namespace hccl
