@@ -10,11 +10,10 @@ CollAlltoAllCM128SliceExecutor::CollAlltoAllCM128SliceExecutor(
     const HcclDispatcher dispatcher, std::unique_ptr<TopoMatcher>& topoMatcher)
     : CollAlltoAllExecutor(dispatcher, topoMatcher)
 {
-  DMAReduceFlag_ = false;  // 默认不使用 DMA Reduce
 }
 
 
-HcclResult CollAlltoAllCM128SliceExecutor::CalcStreamNum(u32& streamNum) override
+HcclResult CollAlltoAllCM128SliceExecutor::CalcStreamNum(u32& streamNum)
 {
   // 7 个子平面各一条从流（主流+7从流）；最少也允许 3（gather/inter/scatter）
   streamNum = 7;
@@ -100,7 +99,7 @@ HcclResult CollAlltoAllCM128SliceExecutor::KernelRun(const OpParam &param, ExecM
 {
  // 取模板实例（模板类型枚举需与你工程匹配）
   auto tempAlg = AlgTemplateRegistry::Instance()
-                   .GetAlgTemplate(TemplateType::TEMPLATE_ALL_2_ALL_V_NEW, dispatcher_);
+                   .GetAlgTemplate(TemplateType::TEMPLATE_ALL_TO_ALL_CM128SLICE, dispatcher_);
   CHK_SMART_PTR_NULL(tempAlg);
 
   // 子通信域
@@ -116,8 +115,8 @@ HcclResult CollAlltoAllCM128SliceExecutor::KernelRun(const OpParam &param, ExecM
   DeviceMem scratchB = execMem.scratchMem;
 
   // 从资源获取主/从流与信号
-  Stream &mainStream = param.stream; // 非 const 引用
-  std::vector<Stream> &subStreams = algResResp_->slaveStreams;
+  Stream mainStream = param.stream; // 非 const 引用
+  std::vector<Stream> &ubStreams = algResResp_->slaveStreams;
   auto &notifyMainToSub = algResResp_->notifiesMain;
   auto &notifySubToMain = algResResp_->notifiesAux;
 

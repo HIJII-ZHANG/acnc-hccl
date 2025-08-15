@@ -23,7 +23,7 @@ private:
 
   // 三段式执行：Gather(机内) → Inter(跨机, 聚合者间) → Scatter(机内)
   HcclResult KernelRun(const OpParam& param, ExecMem& execMem) override;
-
+  std::array<u32,7> PickAggregatorsByPlane(const SubCommInfo& level0) const;
 };
 
 } // namespace hccl
