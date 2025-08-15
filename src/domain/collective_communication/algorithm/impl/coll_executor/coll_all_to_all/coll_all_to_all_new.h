@@ -22,9 +22,7 @@ private:
 
   // 三段式执行：Gather(机内) → Inter(跨机, 聚合者间) → Scatter(机内)
   HcclResult KernelRun(const OpParam& param, ExecMem& execMem) override;
-
-  // 按子平面选择聚合者：返回 size=7 的本地域内聚合 rank 向量
-  std::array<u32,7> PickAggregatorsByPlane(const SubCommInfo& level0) const;
+  HcclResult Orchestrate(OpParam& param, AlgResourceResponse& algRes) override;
 };
 
 } // namespace hccl

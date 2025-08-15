@@ -222,6 +222,10 @@ HcclResult AlltoAllOperator::SelectAlgforAiv(const OpParam& param, std::string& 
 
 HcclResult AlltoAllOperator::SelectAlgforAlltoAll(const OpParam& param, std::string& algName, std::string& copyMode)
 {
+    algName = "CollAlltoAllNew";
+    return HCCL_SUCCESS;
+
+
     if (IsSatisfyAlltoAllAivCondition(param)) {
         CHK_RET(SelectAlgforAiv(param, algName));
         return HCCL_SUCCESS; // alltoall aiv不需要后面操作，直接返回
