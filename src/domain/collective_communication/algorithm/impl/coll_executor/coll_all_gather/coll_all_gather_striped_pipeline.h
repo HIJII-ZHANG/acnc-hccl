@@ -6,6 +6,7 @@ class CollAllGatherNewExecutor : public CollAllGatherExecutor {
 public:
     explicit CollAllGatherNewExecutor(const HcclDispatcher dispatcher, std::unique_ptr<TopoMatcher> &topoMatcher);
     ~CollAllGatherNewExecutor() = default;
+    HcclResult Orchestrate(OpParam &param, AlgResourceResponse &algRes) override;
 
 private:
     /* *************** 资源计算 *************** */
@@ -14,12 +15,14 @@ private:
     HcclResult CalcLevel0CommInfo(TransportMemType inputType, TransportMemType outputType,
         std::vector<LevelNSubCommTransport>& opTransport) override;
     HcclResult CalcTransportMemType(TransportMemType &inputType, TransportMemType &outputType);
+    
 
     /* *************** 算法编排 *************** */
     u64 CalcLoopMaxCount(const u64 cclBuffSize, const u32 unitSize) override;
     HcclResult KernelRun(const OpParam &param, ExecMem &execMem) override;
     HcclResult Getlevel1CommRank(SubCommInfo& level1CommInfo) override;
     HcclResult SelectTempAlg(std::unique_ptr<AlgTemplateBase> &level1TempAlg, u32 level1RankSize) override;
+    HcclResult PreCopyToCclUsingCommStream(const OpParam& param, ExecMem& m);
 };
 
 } // namespace hccl

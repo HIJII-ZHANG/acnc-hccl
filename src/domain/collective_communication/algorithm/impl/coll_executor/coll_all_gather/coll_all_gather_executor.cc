@@ -299,16 +299,16 @@ HcclResult CollAllGatherExecutor::RunLoop(OpParam &param, AlgResourceResponse &a
         //debug
         HCCL_INFO("set label complete");
 
-        auto memcpyStream = (algResResp_ && !algResResp_->slaveStreams.empty())
-                          ? algResResp_->slaveStreams[0]
-                          : param.stream;  // 兜底
+        //auto memcpyStream = (algResResp_ && !algResResp_->slaveStreams.empty())
+         //                 ? algResResp_->slaveStreams[0]
+          //                : param.stream;  // 兜底
 
         // 执行
         if (!DMAReduceFlag_) {
             // 如果使用in CCL buffer，需要将user buffer in中的结果拷贝到CCL buffer in
             DeviceMem srcMem = DeviceMem::create(curInputPtr, curSize);
             DeviceMem dstMem = DeviceMem::create(commInputPtr, curSize);
-            CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dstMem, srcMem, memcpyStream));//param.stream
+            CHK_RET(HcclD2DMemcpyAsync(dispatcher_, dstMem, srcMem, param.stream/*memcpyStream*/));
             HCCL_DEBUG("[CollAllGatherExecutor][RunLoop]copy from user in to ccl in.");
         }
 
