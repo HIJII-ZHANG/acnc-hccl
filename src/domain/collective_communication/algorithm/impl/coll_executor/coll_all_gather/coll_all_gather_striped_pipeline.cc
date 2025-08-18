@@ -53,63 +53,57 @@ namespace hccl {
 
     HcclResult CollAllGatherNewExecutor::Orchestrate(OpParam &param, AlgResourceResponse &algRes)
     {
-        HCCL_INFO("[AllGatherStripedPipeline][Orchestrate] start");
+  HCCL_INFO("[AllGatherStripedPipeline][Orchestrate] start");
 
-            HcclUs start = TIME_NOW();
-    tag_ = param.tag;
-    algResResp_ = &algRes;
+  tag_ = param.tag;
+  algResResp_ = &algRes;
 
-    ExecMem m;
-    m.count     = param.DataDes.count;
-    m.inputPtr  = param.inputPtr;
-    m.outputPtr = param.outputPtr;
+  ExecMem m;
+  m.count     = param.DataDes.count;
+  m.inputPtr  = param.inputPtr;
+  m.outputPtr = param.outputPtr;
 
-    // 输入内存选择逻辑：与现有模板保持一致
-    m.inputMem  = algRes.cclInputMem;     // 需要 CCL 提供的 staging buf 的场景
+  const u64 typeSize   = GetTypeSize(GetDataType(param));
+  const u64 sendBytes  = m.count * typeSize;
+  const u64 recvBytes  = sendBytes * topoAttr_.userRankSize;
 
-    // 输出走 AIV/CCL 管理的输出缓冲
-    m.outputMem = algRes.cclOutputMem;
+  // 只给出“视图”范围，不要把整块 200MiB 都暴露给本次 op
+  CHK_PRT_RET(algRes.cclInputMem.size()  < sendBytes, HCCL_E_INTERNAL,
+              HCCL_ERROR("cclInputMem too small, need %llu", sendBytes), HCCL_E_INTERNAL);
+  CHK_PRT_RET(algRes.cclOutputMem.size() < recvBytes, HCCL_E_INTERNAL,
+              HCCL_ERROR("cclOutputMem too small, need %llu", recvBytes), HCCL_E_INTERNAL);
 
-    // 【方案A关键点】如果需要预拷贝，也只在同一条通信流上做
-    // 多数情况下 m.inputMem 已指到用户 buffer 的包装，预拷贝可以是 no-op
-    HcclResult ret = PreCopyToCclUsingCommStream(param, m);
-    CHK_PRT_RET(ret != HCCL_SUCCESS,
-        HCCL_ERROR("[CollAllGatherNewExecutor][Orchestrate] pre-copy failed, tag[%s]", tag_.c_str()), ret);
+  m.inputMem  = algRes.cclInputMem.range(0, sendBytes);
+  m.outputMem = algRes.cclOutputMem.range(0, recvBytes);
 
-    // KernelRun 内部所有操作（包含可能的 D2D memcpy 到输出布局）也走 param.stream
-    ret = KernelRun(param, m);
-    CHK_PRT_RET(ret != HCCL_SUCCESS,
-        HCCL_ERROR("[CollAllGatherNewExecutor][Orchestrate] kernel run failed, tag[%s], err[0x%016llx]",
-            tag_.c_str(), HCCL_ERROR_CODE(ret)), ret);
+  // 预拷只拷“本 rank 的 sendBytes”
+  CHK_RET(PreCopyToCclUsingCommStream(param, m, sendBytes));
 
-    HCCL_INFO("tag[%s], AllGather striped-pipeline orchestrate success, time [%lld]us.",
-              tag_.c_str(), DURATION_US(TIME_NOW() - start));
-    return HCCL_SUCCESS;
+  CHK_RET(KernelRun(param, m));
+
+  // 把聚合后的 recvBytes 从 CCL 输出拷回用户输出
+  CHK_RET(PostCopyFromCclUsingCommStream(param, m, recvBytes));
+
+  HCCL_INFO("tag[%s], AllGather striped-pipeline orchestrate success.", tag_.c_str());
+  return HCCL_SUCCESS;
     }
 
 HcclResult CollAllGatherNewExecutor::PreCopyToCclUsingCommStream(const OpParam& param, ExecMem& m)
 {
-    // 如果 m.inputMem 已经代表用户数据的 device 内存包装（最常见），这里不需要任何操作
-    if (m.inputMem.size() == 0 || m.inputPtr == nullptr) {
-        // 没有可拷贝的数据或无需预拷贝
-        return HCCL_SUCCESS;
-    }
+  if (sendBytes == 0 || m.inputPtr == nullptr) return HCCL_SUCCESS;
 
-    // 根据你的工程约定：当 workflowMode 是 OP_BASE 才需要把用户数据拷到 CCL staging
-        // 将用户 device 指针视作源，按 m.inputMem 的大小做一次 D2D 拷贝到 CCL 输入缓冲
-        const u64 copyBytes = m.inputMem.size();
-        DeviceMem dst = m.inputMem.range(0, copyBytes);
-        CHK_SMART_PTR_NULL(dst);
+  DeviceMem dst = m.inputMem; // CCL staging (sendBytes 视图)
+  DeviceMem src(reinterpret_cast<uint8_t*>(m.inputPtr), sendBytes); // 用户输入(设备指针)
+  return HcclD2DMemcpyAsync(dispatcher_, dst, src, const_cast<Stream&>(param.stream)); // 用户→CCL
+}
 
-        // 将用户指针包装成 DeviceMem（如果已有帮助函数就用它；没有就改成工程已有的包装方式）
-        DeviceMem src(reinterpret_cast<uint8_t*>(m.inputPtr), copyBytes);
+HcclResult CollAllGatherNewExecutor::PostCopyFromCclUsingCommStream(
+    const OpParam& param, ExecMem& m, u64 recvBytes) {
+  if (recvBytes == 0 || m.outputPtr == nullptr) return HCCL_SUCCESS;
 
-        HcclResult ret = HcclD2DMemcpyAsync(dispatcher_, dst, src, const_cast<Stream&>(param.stream));
-        CHK_PRT_RET(ret != HCCL_SUCCESS,
-            HCCL_ERROR("[CollAllGatherNewExecutor][PreCopy] memcpy to CCL input failed, bytes[%llu]", copyBytes), ret);
-
-    // 不做任何跨流事件/等待：后续 KernelRun 仍在 param.stream 顺序执行
-    return HCCL_SUCCESS;
+  DeviceMem src = m.outputMem; // CCL 输出( recvBytes 视图 )
+  DeviceMem dst(reinterpret_cast<uint8_t*>(m.outputPtr), recvBytes); // 用户输出(设备指针)
+  return HcclD2DMemcpyAsync(dispatcher_, dst, src, const_cast<Stream&>(param.stream)); // CCL→用户
 }
 
 

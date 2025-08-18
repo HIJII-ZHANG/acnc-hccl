@@ -23,6 +23,7 @@ private:
     HcclResult Getlevel1CommRank(SubCommInfo& level1CommInfo) override;
     HcclResult SelectTempAlg(std::unique_ptr<AlgTemplateBase> &level1TempAlg, u32 level1RankSize) override;
     HcclResult PreCopyToCclUsingCommStream(const OpParam& param, ExecMem& m);
+    HcclResult PostCopyFromCclUsingCommStream(const OpParam& param, ExecMem& m, u64 recvBytes);
 };
 
 } // namespace hccl

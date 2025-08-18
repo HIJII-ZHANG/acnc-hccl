@@ -9,6 +9,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include "coll_all_gather_new_executor.h"
+#include "all_gather_striped_pipeline_pub.h"
 
 namespace hccl {
 CollAllGatherNewExecutor::CollAllGatherNewExecutor(const HcclDispatcher dispatcher,
@@ -53,116 +54,99 @@ u64 CollAllGatherNewExecutor::CalcLoopMaxCount(const u64 cclBuffSize, const u32 
     return maxCountPerLoop;
 }
 
-HcclResult CollAllGatherNewExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
-{
-    HCCL_CONFIG_INFO(HCCL_ALG, "[CollAllGatherNewExecutor][KernelRun]allgather new start");
-    u32 perDataSize = SIZE_TABLE[param.DataDes.dataType];
+    HcclResult CollAllGatherNewExecutor::KernelRun(const OpParam &param, ExecMem &execMem)
+    {
+        HCCL_INFO("[CollAllGatherNewExecutor][KernelRun] algorithm start");
 
-    // 获取子通信域信息
-    CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
-    SubCommInfo level0CommInfo = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
-    u32 level0RankSize = level0CommInfo.localRankSize;
-    u32 commIndex = level0CommInfo.localRank;
-    CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
-    SubCommInfo level1CommInfo = GetSubCommInfo(COMM_LEVEL1, commIndex);
-    u32 serverIndex = level1CommInfo.localRank;
+        const HcclDataType dtype = GetDataType(param);
+        const u64 inputMemSize   = execMem.inputMem.size();
+        const u64 bytesPerRank   = inputMemSize;  // AllGather：每 rank 等长
+
+        // —— 取 L0：用来确定 commIndex（与 Mesh 一致）——
+        CHK_RET(CheckCommSize(COMM_LEVEL0, COMM_INDEX_0 + 1));
+        SubCommInfo level0 = GetSubCommInfo(COMM_LEVEL0, COMM_INDEX_0);
+        u32 commIndex      = level0.localRank;
+        HCCL_INFO("[StripedPipeline] L0 rankSize=%u localRank=%u", level0.localRankSize, level0.localRank);
+
+        // —— 取 L1：跨节点子平面（TopoMatcher 需返回 UB 子平面的 SubCommInfo）——
+        CHK_RET(CheckCommSize(COMM_LEVEL1, commIndex + 1));
+        SubCommInfo level1 = GetSubCommInfo(COMM_LEVEL1, commIndex);
+        HCCL_INFO("[StripedPipeline] L1 rankSize=%u localRank=%u", level1.localRankSize, level1.localRank);
+
+        // —— 准备 7 个子平面的 SubCommInfo（当前先全部复用同一份 L1；若 TopoMatcher 已能按子平面拆分，替换为 7 份即可）——
+        constexpr size_t kPlaneNum = AllGatherStripedPipeline::kPlaneNum;
+        std::array<SubCommInfo, kPlaneNum> commPlanes{};
+        for (size_t p = 0; p < kPlaneNum; ++p) {
+            if (CheckCommSize(COMM_LEVEL1, p + 1) == HCCL_SUCCESS) {
+                commPlanes[p] = GetSubCommInfo(COMM_LEVEL1, p);
+            } else {
+                // 兜底：还没拆成7份就复用 commIndex 对应的那份
+                commPlanes[p] = GetSubCommInfo(COMM_LEVEL1, commIndex);
+            }
+        }
 
 
-    u64 inputMemSize = execMem.inputMem.size();
-    u64 baseOffset = serverIndex * inputMemSize * level0RankSize;
-    u64 level0Offset = commIndex * inputMemSize;
-    DeviceMem dstMem = execMem.outputMem.range(baseOffset + level0Offset, inputMemSize);
-    CHK_SMART_PTR_NULL(dstMem);
-    //  第一步，将数据从input内存拷贝到output内存的对应位置
-    HcclResult ret = HcclD2DMemcpyAsync(dispatcher_, dstMem, execMem.inputMem, const_cast<Stream&>(param.stream));
-    CHK_PRT_RET(ret != HCCL_SUCCESS,
-        HCCL_ERROR("[CollAllGatherNewExecutor][KernelRun]all gather 4PmeshHD memcpy Failed, Offset[%llu], Size[%llu].",
-        baseOffset + level0Offset, inputMemSize), ret);
+        //debug
+        auto dumpLinks = [](const SubCommInfo& ci, const char* tag) {
+            size_t n = std::min<size_t>(ci.links.size(), 4);
+            for (size_t i = 0; i < n; ++i) {
+                auto &lk = ci.links[i];
+                LinkType lt = lk->GetLinkType();
+                u32 peer = lk->GetRemoteRank();                   // ← 这里替换
+                HCCL_INFO("[L1/%s] link[%zu] type=%d remoteRank=%u", tag, i, (int)lt, peer);
+            }
+        };
+        for (size_t p = 0; p < kPlaneNum; ++p) {
+            dumpLinks(commPlanes[p], std::to_string(p).c_str());
+        }
 
-    // 第二步，各个AI Server 内  all gather
-    std::vector<Slice> dataSegsSlice;                 // 数据分成ranksize份，每份的起始偏移和大小
-    std::vector<std::vector<Slice>> multiStreamSlice; // 每个stream使用的数据基于用户buffer的偏移
-    u32 sliceNum = level0RankSize;
-    CHK_RET(PrepareAllgatherSlice(sliceNum, inputMemSize, dataSegsSlice));
 
-    //mesh算法stream数量为server内rank数减1
-    CHK_RET(AlgTemplateBase::PrepareSliceMeshStreams(dataSegsSlice, sliceNum - 1, multiStreamSlice));
+        // —— 取得模板，按“你给的 Prepare 签名”调用 —— 
+        auto &slaveStreams = algResResp_->slaveStreams;
+        auto &notifiesMain = algResResp_->notifiesMain;
+        auto &notifiesAux  = algResResp_->notifiesAux;
 
-    CHK_RET(ActiveSlaveStreams(param.stream));
+        std::unique_ptr<AlgTemplateBase> basePtr =
+            AlgTemplateRegistry::Instance().GetAlgTemplate(
+                TemplateType::TEMPLATE_ALL_GATHER_STRIPED_PIPELINE, dispatcher_);
+        CHK_SMART_PTR_NULL(basePtr);
 
-    //  抽取当前用于多环all gather 的output内存数据
-    DeviceMem currentOutputMem = execMem.outputMem.range(baseOffset, inputMemSize * level0RankSize);
-    CHK_SMART_PTR_NULL(currentOutputMem);
-    
+        // debug
+        if(!basePtr) {
+            HCCL_ERROR("[CollAllGatherNewExecutor][KernelRun] failed to get alg template");
+            return HCCL_E_UNAVAIL;
+        }
 
-    std::unique_ptr<AlgTemplateBase> level0TempAlg;
-    level0TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(TemplateType::TEMPLATE_ALL_GATHER_NEW,
-                                                                      dispatcher_);
-    CHK_SMART_PTR_NULL(level0TempAlg);
-    CHK_RET(level0TempAlg->Prepare(algResResp_->slaveStreams, algResResp_->notifiesMain, algResResp_->notifiesAux,
-        topoAttr_.userRank, nullptr, commIndex, level0RankSize));
-    CHK_RET(level0TempAlg->Prepare(currentOutputMem, currentOutputMem, execMem.inputMem,
-        execMem.count * level0RankSize, param.DataDes.dataType, param.stream, HCCL_REDUCE_RESERVED,
-        LEVEL0_BRIDGE_RANK_ID, dataSegsSlice, baseOffset));
-    u32 rankSize = level0RankSize;
-    CHK_RET(level0TempAlg->RegisterProfiler((rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + commIndex,
-        PROF_STAGE_1, HCCL_EXEC_STEP_NOT_SET, param.stream));
-    CHK_RET(RunTemplate(level0TempAlg, level0CommInfo));
-    HCCL_INFO("all gather mesh HD level0 run success");
+        auto *tmpl = dynamic_cast<AllGatherStripedPipeline*>(basePtr.get());
+        CHK_SMART_PTR_NULL(tmpl);
 
-    //  第三步， AI server 间  all gather
-    u64 hdSize = inputMemSize * level0RankSize;
-    u64 hdCount = hdSize / perDataSize;
+        //debug
+        if(!tmpl) {
+            HCCL_ERROR("[CollAllGatherNewExecutor][KernelRun] failed to get alg template");
+            return HCCL_E_UNAVAIL;
+        }
+        HCCL_INFO("[StripedPipeline][KernelRun] start tag[%s] rank[%u/%u] slaveStreams=%zu",
+          tag_.c_str(), topoAttr_.userRank, topoAttr_.userRankSize, algResResp_->slaveStreams.size());
 
-    std::unique_ptr<AlgTemplateBase> level1TempAlg;
-    //level1可以按照注释掉的模块选择已有的算法模板   也可以直接指定
-    // if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_RING || (topoAttr_.isDiffDeviceModule && topoAttr_.serverNum == 1)) {
-    //     // 1-单server-SDMA
-    //     HCCL_ERROR("1");
-    //     level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
-    //             TemplateType::TEMPLATE_ALL_GATHER_RING, dispatcher_);
-    //     HCCL_INFO("allgather mesh: using ring algo inter-server.");
-    // } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR) {
-    //     HCCL_ERROR("2");
-    //     level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
-    //             TemplateType::TEMPLATE_ALL_GATHER_RING, dispatcher_);
-    //     HCCL_INFO("allgather mesh: using nhr algo inter-server.");
-    // } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NHR_V1) {
-    //     HCCL_ERROR("3");
-    //     level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
-    //             TemplateType::TEMPLATE_ALL_GATHER_NHRV1, dispatcher_);
-    //     HCCL_INFO("allgather mesh: using nhr_v1 algo inter-server.");
-    // } else if (algType_.algoLevel1 == AlgTypeLevel1::ALG_LEVEL1_NB) {
-    //     HCCL_ERROR("4");
-    //     level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
-    //             TemplateType::TEMPLATE_ALL_GATHER_NB, dispatcher_);
-    //     HCCL_INFO("allgather mesh: using nonuniform-bruck algo inter-server.");
-    // } else {
-    //     HCCL_ERROR("5");
-    //     level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
-    //             //TemplateType::TEMPLATE_ALL_GATHER_RECURSIVE_HALVING_DOUBLING, dispatcher_);
-    //             TemplateType::TEMPLATE_ALL_GATHER_NEW, dispatcher_);
-    //     HCCL_INFO("allgather mesh: using halving-doubling algo inter-server.");
-    // }
-    level1TempAlg = AlgTemplateRegistry::Instance().GetAlgTemplate(
-                //TemplateType::TEMPLATE_ALL_GATHER_RECURSIVE_HALVING_DOUBLING, dispatcher_);
-                TemplateType::TEMPLATE_ALL_GATHER_RING, dispatcher_);
 
-    CHK_SMART_PTR_NULL(level1TempAlg);
+        // 只要把 L1（跨节点 UB 子平面）塞给模板，模板就会在 7 个平面上并行环传
+        CHK_RET(tmpl->Prepare(execMem.inputMem, execMem.outputMem, execMem.count, dtype,
+                            param.stream, slaveStreams, notifiesMain, notifiesAux,
+                            topoAttr_.userRank, topoAttr_.userRankSize,
+                            /*localHop*/ (u32)(topoAttr_.deviceNumPerAggregation - 1),
+                            commPlanes));
 
-    //  此处虽然带入inputMem作为scratch mem, 但inputMem 不能被使用
-    CHK_RET(level1TempAlg->Prepare(execMem.outputMem, execMem.outputMem, execMem.inputMem, hdCount,
-        param.DataDes.dataType, param.stream, HcclReduceOp::HCCL_REDUCE_RESERVED, INVALID_VALUE_RANKID,
-        std::vector<Slice>(COMM_INDEX_0), 0));
+        HCCL_INFO("[StripedPipeline][KernelRun] Prepare done");
 
-    rankSize = level1CommInfo.localRankSize;
-    CHK_RET(level1TempAlg->RegisterProfiler((rankSize << PROF_RANKSIZE_OFFSET_OF_PLANEID) + serverIndex,
-        PROF_STAGE_2, HCCL_EXEC_STEP_NOT_SET, param.stream));
+        CHK_RET(ActiveSlaveStreams(param.stream));
 
-    CHK_RET(RunTemplate(level1TempAlg, level1CommInfo));
-    HCCL_INFO("all gather mesh HD level1 run success");
-    return HCCL_SUCCESS;
-}
+        HCCL_INFO("[StripedPipeline][KernelRun] ActiveSlaveStreams done");
+
+        CHK_RET(tmpl->RunAsync());
+
+        HCCL_INFO("[StripedPipeline][KernelRun] done");
+        return HCCL_SUCCESS;
+    }
 
 REGISTER_EXEC("CollAllGatherNewExecutor", AllGatherNew, CollAllGatherNewExecutor);
 } // namespace hccl
